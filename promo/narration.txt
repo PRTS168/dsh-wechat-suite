@@ -1,0 +1,40 @@
+dsh-chatnode-wechat — promo narration (~1 min, read aloud while advancing)
+================================================================================
+Each block is timed to its slide. Total ~195 words ≈ 60–65 seconds at a
+conversational pace. Advance the slide on the first beat of each block.
+
+--------------------------------------------------------------------------------
+[SLIDE 1 — title, 0:00–0:09]
+Meet dsh-chatnode-wechat — your DeepSeek Harness agent, now right inside
+WeChat. Chat with it, watch it work, approve what it does — all from the app
+you already live in.
+
+[SLIDE 2 — features, 0:09–0:19]
+Plain text, both ways. Need a status update? Just send it. The agent needs
+your permission to run a command? Answer with /yes or /no. And instead of
+drowning you in tool-call noise, it sends clean progress digests.
+
+[SLIDE 3 — the gap, 0:19–0:28]
+DeepSeek Harness has a web UI, and a headless runner — but your attention
+lives in WeChat. So check in, steer, and approve, while you're away from
+the desk.
+
+[SLIDE 4 — quick demo, 0:28–0:38]
+Here's what that looks like. "What's the build status?" The agent jumps in,
+hits a risky step, asks you directly — one /yes — and reports back. Done.
+
+[SLIDE 5 — commands, 0:38–0:46]
+It behaves like a CLI inside your chat: list sessions, switch, start fresh,
+stop, approve or deny.
+
+[SLIDE 6 — safe by default, 0:46–0:54]
+Safe by default: a hard allowlist keeps strangers out, credentials live in
+the DSH credentials service, and every risky action needs your explicit yes.
+
+[SLIDE 7 — one-command install, 0:54–1:02]
+Getting started is one command. Clone the repo, add the plugin, scan a QR
+once — and your agent is on WeChat.
+
+[SLIDE 8 — outro, 1:02–1:08]
+Chat with your agent. From WeChat. dsh-chatnode-wechat — MIT, open source,
+on GitHub. Go install it.
