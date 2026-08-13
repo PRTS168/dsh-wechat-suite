@@ -1,0 +1,9 @@
+node_modules/
+lib/
+dist/
+*.tgz
+*.tsbuildinfo
+.DS_Store
+*.log
+.dsh/
+.dsh-home/
