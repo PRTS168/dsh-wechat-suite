@@ -14,6 +14,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import { MAX_MESSAGE_CHARS } from '../gateway/types.ts'
 import { WechatConversationNode, type NodeConfig } from './core.ts'
 
@@ -58,13 +59,47 @@ export const Config = z.object({
 export const name = 'dsh-chatnode-wechat'
 
 /** Services required by the conversation node. */
-export const inject = ['wechat', 'sessions', 'agents', 'approval']
+export const inject = ['wechat', 'sessions', 'agents', 'approval', 'tools']
 
 /** Mount the conversation node on a context that already provides `wechat`. */
 export function apply(ctx: Context, config: Config): void {
   const node = new WechatConversationNode(ctx, config as NodeConfig)
   ctx.effect(() => {
     return () => node.dispose()
+  })
+  const unregisterTool = ctx.tools.register(
+    defineTool({
+      name: 'wechat_send_image',
+      description:
+        'Send a local image file to the current WeChat peer through the chatnode-wechat bridge. ' +
+        'The peer is the last WeChat contact who messaged the bot, so at least one inbound WeChat ' +
+        'message must have arrived since the profile started. Pass the absolute path of the image file.',
+      parameters: {
+        path: { type: 'string', required: true, description: 'Absolute path to the image file (jpg/png/webp/gif).' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value: string) => [{ type: 'text', text: value }],
+      },
+      execute: async (args) => {
+        const path = typeof args.path === 'string' ? args.path.trim() : ''
+        if (!path) throw new Error('wechat_send_image: path is required')
+        const peer = node.peerId
+        if (!peer) {
+          throw new Error(
+            'wechat_send_image: no WeChat peer yet — send the bot a WeChat message first ' +
+            'so the bridge knows who to reply to',
+          )
+        }
+        const result = await node.ctx.wechat.sendImage(peer, path)
+        if (!result.success) throw new Error(`wechat_send_image: ${result.error}`)
+        return `✅ 图片已发送到微信: ${path}`
+      },
+      timeoutMs: 180_000,
+    }),
+  )
+  ctx.effect(() => {
+    return () => unregisterTool()
   })
 }
 
