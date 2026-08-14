@@ -27,6 +27,8 @@ export interface Config {
     sendChunkDelayMs?: number;
     /** Working directory for `/new` sessions. */
     cwd?: string;
+    /** Directory inbound images are saved to (defaults under $DSH_HOME). */
+    mediaDir?: string;
     /** Agent preset name for `/new` sessions. */
     agentPreset?: string;
     /** Provider route for `/new` agents. */
@@ -41,6 +43,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     maxMessageChars: z<number, number>;
     sendChunkDelayMs: z<number, number>;
     cwd: z<string, string>;
+    mediaDir: z<string, string>;
     agentPreset: z<string, string>;
     agentProvider: z<string, string>;
     agentModel: z<string, string>;
@@ -51,6 +54,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     maxMessageChars: z<number, number>;
     sendChunkDelayMs: z<number, number>;
     cwd: z<string, string>;
+    mediaDir: z<string, string>;
     agentPreset: z<string, string>;
     agentProvider: z<string, string>;
     agentModel: z<string, string>;
@@ -72,6 +76,7 @@ export declare const wechatConversationNode: {
         maxMessageChars: z<number, number>;
         sendChunkDelayMs: z<number, number>;
         cwd: z<string, string>;
+        mediaDir: z<string, string>;
         agentPreset: z<string, string>;
         agentProvider: z<string, string>;
         agentModel: z<string, string>;
@@ -82,6 +87,7 @@ export declare const wechatConversationNode: {
         maxMessageChars: z<number, number>;
         sendChunkDelayMs: z<number, number>;
         cwd: z<string, string>;
+        mediaDir: z<string, string>;
         agentPreset: z<string, string>;
         agentProvider: z<string, string>;
         agentModel: z<string, string>;

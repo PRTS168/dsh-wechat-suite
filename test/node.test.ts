@@ -7,6 +7,9 @@
 
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import AgentRegistry, { type Agent, type AgentFactory } from '@deepseek-ai/dsh-agent'
@@ -14,7 +17,7 @@ import ApprovalService from '@deepseek-ai/dsh-user-approval'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { WechatGateway } from '../src/gateway/index.ts'
 import { wechatConversationNode } from '../src/node/index.ts'
-import { startFakeIlinkServer, type FakeIlinkServer } from './fake-ilink-server.ts'
+import { startFakeIlinkServer, mediaKey, type FakeIlinkServer } from './fake-ilink-server.ts'
 import type { InboundMessage } from '../src/gateway/types.ts'
 import { splitForWechat } from '../src/node/outbound.ts'
 
@@ -86,6 +89,7 @@ beforeEach(async () => {
     accountId: 'wxid_bot_fake',
     baseUrl: server.url,
     cdnBaseUrl: server.url,
+    allowCdnHosts: ['127.0.0.1'],
     pollIdleDelayMs: 5,
     longPollTimeoutMs: 1000,
   })
@@ -354,4 +358,36 @@ test('digest heartbeat emits a one-line summary while a turn runs', async () => 
   session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
   await handle.dispose()
   await nodeCtx.wechat.stop()
+})
+
+test('image-only message: download, save to mediaDir, route path to the agent', async () => {
+  const mediaDir = join(tmpdir(), `dsh-wechat-media-${Date.now()}`)
+  await mountNode({ mediaDir })
+  // minimal PNG magic bytes — enough for media-type detection (not a decodable image)
+  const plaintext = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+  const key = mediaKey()
+  server.media.set('eqp-img-node', { key, plaintext })
+  server.enqueue({
+    from_user_id: 'wxid_allow1',
+    to_user_id: 'wxid_bot_fake',
+    message_id: 'msg-img-node',
+    msg_type: 1,
+    context_token: 'ctx-img-node',
+    item_list: [{
+      type: 2,
+      image_item: {
+        media: {
+          encrypt_query_param: 'eqp-img-node',
+          aes_key: Buffer.from(key).toString('base64'),
+        },
+      },
+    }],
+  })
+  await waitFor(() => followedUp.length === 1, 3000)
+  const text = (followedUp[0]!.content[0] as { text: string }).text
+  const match = /\[微信图片\]\s*(\S+)/.exec(text)
+  assert.ok(match, `followup should carry an image path, got: ${text}`)
+  const absPath = match![1]!
+  assert.ok(absPath.endsWith('.png'), `expected .png path, got: ${absPath}`)
+  assert.deepEqual([...readFileSync(absPath)], [...plaintext])
 })

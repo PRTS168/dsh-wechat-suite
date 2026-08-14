@@ -31,6 +31,8 @@ export interface Config {
   sendChunkDelayMs?: number
   /** Working directory for `/new` sessions. */
   cwd?: string
+  /** Directory inbound images are saved to (defaults under $DSH_HOME). */
+  mediaDir?: string
   /** Agent preset name for `/new` sessions. */
   agentPreset?: string
   /** Provider route for `/new` agents. */
@@ -46,6 +48,7 @@ export const Config = z.object({
   maxMessageChars: z.number().default(MAX_MESSAGE_CHARS),
   sendChunkDelayMs: z.number().default(1_500),
   cwd: z.string(),
+  mediaDir: z.string(),
   agentPreset: z.string(),
   agentProvider: z.string(),
   agentModel: z.string(),

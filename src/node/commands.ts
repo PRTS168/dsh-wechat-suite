@@ -103,6 +103,23 @@ export async function routeCommand(node: WechatConversationNode, text: string): 
       return true
     }
 
+    case 'send': {
+      const target = rest.join(' ').trim()
+      if (!target) {
+        await sendTextToPeer(node, '❌ 用法: /send <图片文件路径>')
+        return true
+      }
+      const peer = node.peerId
+      if (!peer) {
+        await sendTextToPeer(node, '❌ 没有可回复的联系人')
+        return true
+      }
+      await sendTextToPeer(node, '🖼 正在发送图片…')
+      const result = await node.ctx.wechat.sendImage(peer, target)
+      await sendTextToPeer(node, result.success ? '✅ 图片已发送' : `❌ 发送失败: ${result.error}`)
+      return true
+    }
+
     default:
       await sendTextToPeer(node, `❓ 未知命令 /${command}\n${helpText()}`)
       return true
@@ -139,6 +156,7 @@ function helpText(): string {
     '/new <prompt> — 新建会话并开始',
     '/stop — 停止当前任务',
     '/status — 查看状态',
+    '/send <路径> — 发送一张图片',
     '/yes /no 或 1/2 — 回应权限请求',
     '/help — 本帮助',
   ].join('\n')
