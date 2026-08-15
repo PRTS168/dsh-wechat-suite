@@ -13,22 +13,7 @@
 import { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import type { WechatConversationNode } from './core.ts'
 import { sendTextToPeer } from './outbound.ts'
-
-/** The active session's first user prompt, for list labels. */
-function sessionLabel(session: Session): string {
-  for (const event of session.events) {
-    if (event.type === 'user/message') {
-      const blocks = event.data.content as unknown as Array<{ type: string; text?: string }>
-      const text = blocks
-        .filter((block) => block.type === 'text')
-        .map((block) => block.text ?? '')
-        .join(' ')
-        .trim()
-      if (text) return text.length > 24 ? `${text.slice(0, 24)}…` : text
-    }
-  }
-  return '(空会话)'
-}
+import { sessionBadge, sessionName } from './labels.ts'
 
 /** Sessions ordered most-recent-first. */
 export function listSessions(node: WechatConversationNode): Session[] {
@@ -68,7 +53,7 @@ export async function routeCommand(node: WechatConversationNode, text: string): 
       }
       const session = sessions[index - 1]!
       node.setActiveSession(session)
-      await sendTextToPeer(node, `✅ 已切换到会话 #${index}（${session.id}）`)
+      await sendTextToPeer(node, `✅ 已切换到会话 #${index} ${sessionBadge(node, session)}`)
       return true
     }
 
@@ -99,7 +84,7 @@ export async function routeCommand(node: WechatConversationNode, text: string): 
       const status = agent?.status ?? 'idle'
       const lastTurn = [...session.events].reverse().find((e) => e.type === 'turn/end')
       const reason = lastTurn ? describeTurnEnd(lastTurn.data.reason) : '尚未运行'
-      await sendTextToPeer(node, `📊 状态\n会话: ${session.id}\nagent: ${status}\n事件: ${session.seq} 条\n最近: ${reason}`)
+      await sendTextToPeer(node, `📊 状态\n会话: ${sessionBadge(node, session)}\nagent: ${status}\n事件: ${session.seq} 条\n最近: ${reason}`)
       return true
     }
 
@@ -143,7 +128,7 @@ function renderSessions(node: WechatConversationNode): string {
   if (sessions.length === 0) return '📋 没有会话。发送 /new <prompt> 开始。'
   const lines = sessions.map((session, i) => {
     const marker = session.id === node.activeSessionId ? ' ▶' : ''
-    return `${i + 1}. ${sessionLabel(session)} — ${session.id}${marker}`
+    return `${i + 1}. ${sessionName(node, session)} — ${session.id}${marker}`
   })
   return `📋 会话列表（/use N 切换）\n${lines.join('\n')}`
 }
