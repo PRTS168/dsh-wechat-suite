@@ -14,6 +14,9 @@ import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import AgentRegistry, { type Agent, type AgentFactory } from '@deepseek-ai/dsh-agent'
 import ApprovalService from '@deepseek-ai/dsh-user-approval'
+import SessionTitleService from '@deepseek-ai/dsh-session-title'
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { WechatGateway } from '../src/gateway/index.ts'
 import { wechatConversationNode } from '../src/node/index.ts'
@@ -84,6 +87,9 @@ beforeEach(async () => {
   await ctx.plugin(AgentRegistry)
   ctx.agents.setFactory(factory)
   await ctx.plugin(ApprovalService)
+  await ctx.plugin(SessionTitleService, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 })
+  await ctx.plugin(SystemPrompt)
+  await ctx.plugin(ToolRuntime)
   await ctx.plugin(WechatGateway, {
     token: 'test-token',
     accountId: 'wxid_bot_fake',
@@ -192,6 +198,7 @@ test('assistant/message outbound is delivered to the peer with a task-started di
   await waitFor(() => followedUp.length === 1)
 
   const session = activeHandle.agent.session
+  session.append('user/message', { content: [{ type: 'text', text: 'first task' }], source: { kind: 'user' } }, { surfaceOp: 'append' })
   session.append('turn/start', { turn: 1 })
   session.append('assistant/message', {
     turn: 1,
@@ -201,8 +208,12 @@ test('assistant/message outbound is delivered to the peer with a task-started di
   session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
 
   await waitFor(() => sentTexts().some((t) => t === 'the answer'))
-  assert.ok(sentTexts().includes('⏳ 收到，开始处理…'))
-  assert.ok(sentTexts().indexOf('⏳ 收到，开始处理…') < sentTexts().indexOf('the answer'))
+  const started = sentTexts().find((t) => t.includes('收到，开始处理…'))
+  assert.ok(started, sentTexts().join('\n'))
+  // 状态消息必须携带会话 badge（名称回退标签 + 会话 id）
+  assert.ok(started.includes('first task'), started)
+  assert.ok(started.includes('session-a'), started)
+  assert.ok(sentTexts().indexOf(started) < sentTexts().indexOf('the answer'))
   // outbound targets the allowlisted sender
   assert.ok(server.sent.some((s) => s.to === 'wxid_allow1' && s.text === 'the answer'))
 })
@@ -255,6 +266,23 @@ test('/sessions lists numbered sessions and /use switches the active session', a
   assert.ok(list.includes('1.') && list.includes('2.'), list)
   assert.ok(list.includes('session-b'))
   await second.dispose()
+})
+
+test('/sessions prefers the real session title over the first-prompt label', async () => {
+  await mountNode()
+  ctx.sessionTitle.rename(activeHandle.agent.session, '我的自定义标题')
+  server.enqueue(textMessage('/sessions'))
+  await waitFor(() => sentTexts().some((t) => t.includes('会话列表')), 3000)
+  const list = sentTexts().find((t) => t.includes('会话列表'))!
+  assert.ok(list.includes('我的自定义标题'), list)
+  assert.ok(list.includes('session-a'), list)
+})
+
+test('/status carries the real session title and keeps the session id', async () => {
+  await mountNode()
+  ctx.sessionTitle.rename(activeHandle.agent.session, '状态标题')
+  server.enqueue(textMessage('/status'))
+  await waitFor(() => sentTexts().some((t) => t.includes('状态标题') && t.includes('session-a')), 3000)
 })
 
 test('/new creates an agent+session and follows up the prompt', async () => {
@@ -342,6 +370,9 @@ test('digest heartbeat emits a one-line summary while a turn runs', async () => 
   await nodeCtx.plugin(AgentRegistry)
   nodeCtx.agents.setFactory(factory)
   await nodeCtx.plugin(ApprovalService)
+  await nodeCtx.plugin(SessionTitleService, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 })
+  await nodeCtx.plugin(SystemPrompt)
+  await nodeCtx.plugin(ToolRuntime)
   await nodeCtx.plugin(WechatGateway, { token: 't', accountId: 'wxid_bot_fake', baseUrl: server.url, pollIdleDelayMs: 5 })
   // The factory creates sessions/agents in the CURRENT runtime context, so
   // point it at nodeCtx — otherwise appends would dispatch on the outer bus
