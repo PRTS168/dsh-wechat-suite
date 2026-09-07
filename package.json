@@ -15,11 +15,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Jesse-njx/dsh-chatnode-wechat.git"
+    "url": "git+https://github.com/PRTS168/dsh-chatnode-wechat.git"
   },
-  "homepage": "https://github.com/Jesse-njx/dsh-chatnode-wechat#readme",
+  "homepage": "https://github.com/PRTS168/dsh-chatnode-wechat#readme",
   "bugs": {
-    "url": "https://github.com/Jesse-njx/dsh-chatnode-wechat/issues"
+    "url": "https://github.com/PRTS168/dsh-chatnode-wechat/issues"
   },
   "type": "module",
   "main": "./lib/index.js",
