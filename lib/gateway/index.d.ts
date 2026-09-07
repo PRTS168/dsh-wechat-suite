@@ -193,6 +193,8 @@ export declare class WechatGateway extends Service {
     private rateLimitHits;
     private rateLimitUntil;
     constructor(ctx: Context, config: Config);
+    /** Diagnostic logger (surfaced on the gateway's host context). */
+    private log;
     /** Current gateway status. */
     get status(): GatewayStatus;
     /** Whether credentials are present (polling is possible). */
@@ -248,6 +250,13 @@ export declare class WechatGateway extends Service {
         mediaType: RasterImageMediaType;
     } | null>;
     /**
+     * Download and decrypt one inbound voice item's media into raw bytes.
+     * Voice notes arrive as encrypted CDN references just like images; the
+     * decrypted bytes are the raw audio (silk/amr/m4a — whatever WeChat sent).
+     * @returns decoded bytes, or null when the item carries no usable media.
+     */
+    downloadVoice(item: WireItem): Promise<Uint8Array | null>;
+    /**
      * Send one image file to a peer: AES-encrypt → getuploadurl ticket → upload
      * ciphertext to the CDN → sendmessage with an image item. Uses the peer's
      * cached context_token (the wire REQUIRES it — tokenless sends fail with
@@ -255,6 +264,25 @@ export declare class WechatGateway extends Service {
      * mirroring {@link sendText}.
      */
     sendImage(to: string, filePath: string): Promise<SendResult>;
+    /**
+     * Send one voice-note file (WeChat silk v3 bytes) to a peer. Native voice
+     * bubbles are unreliable on iLink — prefer {@link sendFile} with an mp3
+     * for guaranteed delivery.
+     */
+    sendVoice(to: string, filePath: string, durationSec?: number): Promise<SendResult>;
+    /**
+     * Send one generic file attachment (documents, mp3 audio, …) to a peer.
+     * This is the reliable path Hermes/OpenClaw use: the file arrives as a
+     * downloadable attachment the phone can open. mp3 audio opens and plays
+     * directly in WeChat.
+     */
+    sendFile(to: string, filePath: string, fileName?: string): Promise<SendResult>;
+    /**
+     * Shared attachment pipeline: AES-encrypt → getuploadurl ticket → CDN upload
+     * → sendmessage with the requested item kind (voice_item or file_item).
+     * Session-expired and rate-limit handling mirror {@link sendText}.
+     */
+    private sendMediaAttachment;
     /** Show or hide the typing indicator for a peer (best-effort). */
     sendTyping(to: string, status: 1 | 2): Promise<void>;
     /** Fetch (or refresh) the 600s-TTL typing ticket for a peer. */

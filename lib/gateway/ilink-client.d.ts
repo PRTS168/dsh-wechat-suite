@@ -117,6 +117,28 @@ export declare function sendImageMessage(opts: {
     timeoutMs?: number;
     fetchImpl?: typeof fetch;
 }): Promise<SendMessageResponse>;
+/** Send one media-item message (voice or file) to a peer. */
+export declare function sendFileItemMessage(opts: {
+    baseUrl?: string;
+    token: string;
+    to: string;
+    /** Message item kind: ITEM_VOICE or ITEM_FILE. */
+    itemType: number;
+    encryptQueryParam: string;
+    /** base64(ascii(hex(aesKey))) — NOT base64(raw key bytes). */
+    aesKeyB64Hex: string;
+    ciphertextSize: number;
+    /** Plaintext (unencrypted) size — file items report `len` as this. */
+    plaintextSize?: number;
+    /** Voice duration in seconds, when known (voice items). */
+    durationSec?: number;
+    /** File name, when known (file items). */
+    fileName?: string;
+    contextToken?: string;
+    clientId: string;
+    timeoutMs?: number;
+    fetchImpl?: typeof fetch;
+}): Promise<SendMessageResponse>;
 /** Fetch the per-peer typing ticket (600s TTL) used by sendTyping. */
 export declare function getConfig(opts: {
     baseUrl?: string;

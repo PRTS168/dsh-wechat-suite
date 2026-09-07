@@ -27,6 +27,14 @@ export declare function splitForWechat(content: string, max?: number): string[];
 export declare function textOfAssistantMessage(message: AssistantMessage): string;
 /** One-line progress summary derived from the session log (cheap, replayable). */
 export declare function digestLine(session: Session, badge?: string): string;
+/** Convert markdown (model output) into a WeChat-friendly plain rendering.
+ *  WeChat renders no markdown, so fences, emphasis markers, table pipes, and
+ *  ATX headings would show as raw punctuation. This strips the syntax while
+ *  keeping readable structure: code becomes an indented block, tables become
+ *  aligned rows, headings get blank-line separation, and inline emphasis /
+ *  code / links lose their markers.
+ */
+export declare function markdownToWechat(content: string): string;
 /** Send text to the current peer, chunked and throttled. */
 export declare function sendTextToPeer(node: WechatConversationNode, text: string): Promise<void>;
 /**

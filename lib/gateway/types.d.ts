@@ -39,8 +39,11 @@ export declare const ITEM_IMAGE = 2;
 export declare const ITEM_VOICE = 3;
 export declare const ITEM_FILE = 4;
 export declare const ITEM_VIDEO = 5;
-/** Media type ids for getuploadurl (mirrors hermes MEDIA_*). */
+/** Media type ids for getuploadurl — a SEPARATE numbering from ITEM_* kinds
+ *  (mirrors the astrbot/hermes weixin adapters): image=1, video=2, file=3. */
 export declare const MEDIA_IMAGE = 1;
+export declare const MEDIA_VIDEO = 2;
+export declare const MEDIA_FILE = 3;
 export declare const MSG_TYPE_USER = 1;
 export declare const MSG_TYPE_BOT = 2;
 export declare const MSG_STATE_FINISH = 2;

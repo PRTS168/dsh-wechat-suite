@@ -31,6 +31,34 @@ export interface Config {
     cwd?: string;
     /** Directory inbound images are saved to (defaults under $DSH_HOME). */
     mediaDir?: string;
+    /** SiliconFlow API key for DeepSeek-OCR (sk-…). Empty/absent disables OCR. */
+    ocrApiKey?: string;
+    /** DeepSeek-OCR model id (defaults to deepseek-ai/DeepSeek-OCR). */
+    ocrModel?: string;
+    /** OpenAI-compatible base URL for OCR (defaults to SiliconFlow). */
+    ocrBaseUrl?: string;
+    /** JSON file reminders persist to (defaults to $DSH_HOME/wechat-reminders.json). */
+    reminderFile?: string;
+    /** JSON file the morning-greeting config persists to (defaults under $DSH_HOME). */
+    morningFile?: string;
+    /** ESP32 PWM light base url (defaults to http://192.168.1.11:80). */
+    esp32BaseUrl?: string;
+    /** SiliconFlow API key for image generation (defaults to ocrApiKey when absent). */
+    imageGenApiKey?: string;
+    /** Image generation model id (defaults to Kwai-Kolors/Kolors). */
+    imageGenModel?: string;
+    /** Where generated images are saved (defaults to <mediaDir>/generated). */
+    imageGenDir?: string;
+    /** SiliconFlow API key for speech-to-text (defaults to ocrApiKey when absent). */
+    sttApiKey?: string;
+    /** ASR model id (defaults to XingChenAGI/XingChenASR-V3.2-Ultra). */
+    sttModel?: string;
+    /** SiliconFlow API key for TTS (defaults to ocrApiKey when absent). */
+    ttsApiKey?: string;
+    /** TTS model id (defaults to FunAudioLLM/CosyVoice2-0.5B). */
+    ttsModel?: string;
+    /** Cloned voice uri used for speech replies (e.g. speech:shiroko:…). */
+    ttsVoice?: string;
     /** Agent preset name for `/new` sessions. */
     agentPreset?: string;
     /** Provider route for `/new` agents. */
@@ -46,6 +74,20 @@ export declare const Config: z<Schemastery.ObjectS<{
     sendChunkDelayMs: z<number, number>;
     cwd: z<string, string>;
     mediaDir: z<string, string>;
+    ocrApiKey: z<string, string>;
+    ocrModel: z<string, string>;
+    ocrBaseUrl: z<string, string>;
+    reminderFile: z<string, string>;
+    morningFile: z<string, string>;
+    esp32BaseUrl: z<string, string>;
+    imageGenApiKey: z<string, string>;
+    imageGenModel: z<string, string>;
+    imageGenDir: z<string, string>;
+    sttApiKey: z<string, string>;
+    sttModel: z<string, string>;
+    ttsApiKey: z<string, string>;
+    ttsModel: z<string, string>;
+    ttsVoice: z<string, string>;
     agentPreset: z<string, string>;
     agentProvider: z<string, string>;
     agentModel: z<string, string>;
@@ -57,6 +99,20 @@ export declare const Config: z<Schemastery.ObjectS<{
     sendChunkDelayMs: z<number, number>;
     cwd: z<string, string>;
     mediaDir: z<string, string>;
+    ocrApiKey: z<string, string>;
+    ocrModel: z<string, string>;
+    ocrBaseUrl: z<string, string>;
+    reminderFile: z<string, string>;
+    morningFile: z<string, string>;
+    esp32BaseUrl: z<string, string>;
+    imageGenApiKey: z<string, string>;
+    imageGenModel: z<string, string>;
+    imageGenDir: z<string, string>;
+    sttApiKey: z<string, string>;
+    sttModel: z<string, string>;
+    ttsApiKey: z<string, string>;
+    ttsModel: z<string, string>;
+    ttsVoice: z<string, string>;
     agentPreset: z<string, string>;
     agentProvider: z<string, string>;
     agentModel: z<string, string>;
@@ -79,6 +135,20 @@ export declare const wechatConversationNode: {
         sendChunkDelayMs: z<number, number>;
         cwd: z<string, string>;
         mediaDir: z<string, string>;
+        ocrApiKey: z<string, string>;
+        ocrModel: z<string, string>;
+        ocrBaseUrl: z<string, string>;
+        reminderFile: z<string, string>;
+        morningFile: z<string, string>;
+        esp32BaseUrl: z<string, string>;
+        imageGenApiKey: z<string, string>;
+        imageGenModel: z<string, string>;
+        imageGenDir: z<string, string>;
+        sttApiKey: z<string, string>;
+        sttModel: z<string, string>;
+        ttsApiKey: z<string, string>;
+        ttsModel: z<string, string>;
+        ttsVoice: z<string, string>;
         agentPreset: z<string, string>;
         agentProvider: z<string, string>;
         agentModel: z<string, string>;
@@ -90,6 +160,20 @@ export declare const wechatConversationNode: {
         sendChunkDelayMs: z<number, number>;
         cwd: z<string, string>;
         mediaDir: z<string, string>;
+        ocrApiKey: z<string, string>;
+        ocrModel: z<string, string>;
+        ocrBaseUrl: z<string, string>;
+        reminderFile: z<string, string>;
+        morningFile: z<string, string>;
+        esp32BaseUrl: z<string, string>;
+        imageGenApiKey: z<string, string>;
+        imageGenModel: z<string, string>;
+        imageGenDir: z<string, string>;
+        sttApiKey: z<string, string>;
+        sttModel: z<string, string>;
+        ttsApiKey: z<string, string>;
+        ttsModel: z<string, string>;
+        ttsVoice: z<string, string>;
         agentPreset: z<string, string>;
         agentProvider: z<string, string>;
         agentModel: z<string, string>;
@@ -97,7 +181,8 @@ export declare const wechatConversationNode: {
     apply: typeof apply;
 };
 export { WechatConversationNode, type NodeConfig } from './core.ts';
-export { splitForWechat, digestLine, textOfAssistantMessage } from './outbound.ts';
+export { ReminderStore, type Reminder } from './reminders.ts';
+export { splitForWechat, digestLine, textOfAssistantMessage, markdownToWechat } from './outbound.ts';
 export { extractText, isGroupMessage } from './inbound.ts';
 export { listSessions } from './commands.ts';
 //# sourceMappingURL=index.d.ts.map
