@@ -6,3 +6,7 @@ dist/
 *.log
 .dsh/
 .dsh-home/
+
+# 本地敏感/开发备忘文件，勿提交
+scripts/token-check.mjs
+IMG-BRIDGE-PROGRESS.md
