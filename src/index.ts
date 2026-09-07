@@ -64,6 +64,36 @@ export interface Config {
   sendChunkDelayMs?: number
   /** Working directory for `/new` sessions. */
   cwd?: string
+  /** Directory inbound images are saved to (defaults under $DSH_HOME). */
+  mediaDir?: string
+  /** SiliconFlow API key for DeepSeek-OCR (sk-…). Empty/absent disables OCR. */
+  ocrApiKey?: string
+  /** DeepSeek-OCR model id (defaults to deepseek-ai/DeepSeek-OCR). */
+  ocrModel?: string
+  /** OpenAI-compatible base URL for OCR (defaults to SiliconFlow). */
+  ocrBaseUrl?: string
+  /** JSON file reminders persist to (defaults to $DSH_HOME/wechat-reminders.json). */
+  reminderFile?: string
+  /** JSON file the morning-greeting config persists to (defaults under $DSH_HOME). */
+  morningFile?: string
+  /** ESP32 PWM light base url (defaults to http://192.168.1.11:80). */
+  esp32BaseUrl?: string
+  /** SiliconFlow API key for image generation (defaults to ocrApiKey when absent). */
+  imageGenApiKey?: string
+  /** Image generation model id (defaults to Kwai-Kolors/Kolors). */
+  imageGenModel?: string
+  /** Where generated images are saved (defaults to <mediaDir>/generated). */
+  imageGenDir?: string
+  /** SiliconFlow API key for speech-to-text (defaults to ocrApiKey when absent). */
+  sttApiKey?: string
+  /** ASR model id (defaults to XingChenAGI/XingChenASR-V3.2-Ultra). */
+  sttModel?: string
+  /** SiliconFlow API key for TTS (defaults to ocrApiKey when absent). */
+  ttsApiKey?: string
+  /** TTS model id (defaults to FunAudioLLM/CosyVoice2-0.5B). */
+  ttsModel?: string
+  /** Cloned voice uri used for speech replies (e.g. speech:shiroko:…). */
+  ttsVoice?: string
   /** Agent preset name for `/new` sessions. */
   agentPreset?: string
   /** Provider route for `/new` agents. */
@@ -87,6 +117,21 @@ export const Config = z.object({
   maxMessageChars: z.number().default(2000),
   sendChunkDelayMs: z.number().default(1_500),
   cwd: z.string(),
+  mediaDir: z.string(),
+  ocrApiKey: z.string(),
+  ocrModel: z.string(),
+  ocrBaseUrl: z.string(),
+  reminderFile: z.string(),
+  morningFile: z.string(),
+  esp32BaseUrl: z.string(),
+  imageGenApiKey: z.string(),
+  imageGenModel: z.string(),
+  imageGenDir: z.string(),
+  sttApiKey: z.string(),
+  sttModel: z.string(),
+  ttsApiKey: z.string(),
+  ttsModel: z.string(),
+  ttsVoice: z.string(),
   agentPreset: z.string(),
   agentProvider: z.string(),
   agentModel: z.string(),
@@ -127,6 +172,21 @@ export function apply(ctx: Context, config: Config): void {
     maxMessageChars: config.maxMessageChars,
     sendChunkDelayMs: config.sendChunkDelayMs,
     cwd: config.cwd,
+    mediaDir: config.mediaDir,
+    ocrApiKey: config.ocrApiKey,
+    ocrModel: config.ocrModel,
+    ocrBaseUrl: config.ocrBaseUrl,
+    reminderFile: config.reminderFile,
+    morningFile: config.morningFile,
+    esp32BaseUrl: config.esp32BaseUrl,
+    imageGenApiKey: config.imageGenApiKey,
+    imageGenModel: config.imageGenModel,
+    imageGenDir: config.imageGenDir,
+    sttApiKey: config.sttApiKey,
+    sttModel: config.sttModel,
+    ttsApiKey: config.ttsApiKey,
+    ttsModel: config.ttsModel,
+    ttsVoice: config.ttsVoice,
     agentPreset: config.agentPreset,
     agentProvider: config.agentProvider,
     agentModel: config.agentModel,

@@ -19,6 +19,10 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { MAX_MESSAGE_CHARS } from '../gateway/types.ts'
 import { WechatConversationNode, type NodeConfig } from './core.ts'
+import { ReminderStore } from './reminders.ts'
+import { MorningService } from './morning.ts'
+import { generateImage } from './image-gen.ts'
+import { synthesizeSpeech } from './tts.ts'
 
 /** Plugin config. `allowFrom` is REQUIRED and validated at apply time. */
 export interface Config {
@@ -36,6 +40,34 @@ export interface Config {
   cwd?: string
   /** Directory inbound images are saved to (defaults under $DSH_HOME). */
   mediaDir?: string
+  /** SiliconFlow API key for DeepSeek-OCR (sk-…). Empty/absent disables OCR. */
+  ocrApiKey?: string
+  /** DeepSeek-OCR model id (defaults to deepseek-ai/DeepSeek-OCR). */
+  ocrModel?: string
+  /** OpenAI-compatible base URL for OCR (defaults to SiliconFlow). */
+  ocrBaseUrl?: string
+  /** JSON file reminders persist to (defaults to $DSH_HOME/wechat-reminders.json). */
+  reminderFile?: string
+  /** JSON file the morning-greeting config persists to (defaults under $DSH_HOME). */
+  morningFile?: string
+  /** ESP32 PWM light base url (defaults to http://192.168.1.11:80). */
+  esp32BaseUrl?: string
+  /** SiliconFlow API key for image generation (defaults to ocrApiKey when absent). */
+  imageGenApiKey?: string
+  /** Image generation model id (defaults to Kwai-Kolors/Kolors). */
+  imageGenModel?: string
+  /** Where generated images are saved (defaults to <mediaDir>/generated). */
+  imageGenDir?: string
+  /** SiliconFlow API key for speech-to-text (defaults to ocrApiKey when absent). */
+  sttApiKey?: string
+  /** ASR model id (defaults to XingChenAGI/XingChenASR-V3.2-Ultra). */
+  sttModel?: string
+  /** SiliconFlow API key for TTS (defaults to ocrApiKey when absent). */
+  ttsApiKey?: string
+  /** TTS model id (defaults to FunAudioLLM/CosyVoice2-0.5B). */
+  ttsModel?: string
+  /** Cloned voice uri used for speech replies (e.g. speech:shiroko:…). */
+  ttsVoice?: string
   /** Agent preset name for `/new` sessions. */
   agentPreset?: string
   /** Provider route for `/new` agents. */
@@ -52,6 +84,20 @@ export const Config = z.object({
   sendChunkDelayMs: z.number().default(1_500),
   cwd: z.string(),
   mediaDir: z.string(),
+  ocrApiKey: z.string(),
+  ocrModel: z.string(),
+  ocrBaseUrl: z.string(),
+  reminderFile: z.string(),
+  morningFile: z.string(),
+  esp32BaseUrl: z.string(),
+  imageGenApiKey: z.string(),
+  imageGenModel: z.string(),
+  imageGenDir: z.string(),
+  sttApiKey: z.string(),
+  sttModel: z.string(),
+  ttsApiKey: z.string(),
+  ttsModel: z.string(),
+  ttsVoice: z.string(),
   agentPreset: z.string(),
   agentProvider: z.string(),
   agentModel: z.string(),
@@ -69,7 +115,56 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => {
     return () => node.dispose()
   })
-  const unregisterTool = ctx.tools.register(
+
+  // ---- reminders: durable scheduled alerts --------------------------------
+  // Registered as tools so the agent can answer natural-language requests
+  // ("30 分钟后提醒我喝水") with real tool calls. Persisted to a JSON file so
+  // reminders survive restarts; the store pushes due alerts to their peer.
+  const reminderStore = new ReminderStore(ctx, config.reminderFile)
+  void reminderStore.start()
+  ctx.effect(() => {
+    return () => reminderStore.stop()
+  })
+
+  // ---- morning greeting: daily weather push, toggled via /早安 ------------
+  const morningService = new MorningService(ctx, {
+    file: config.morningFile,
+    targets: () => [...(config.allowFrom ?? [])],
+  })
+  node.morningService = morningService
+  void morningService.start()
+  ctx.effect(() => {
+    return () => morningService.stop()
+  })
+
+  const nowStamp = () => {
+    const d = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+
+  /** Resolve a reminder target to epoch ms from inMinutes / atTime. */
+  function resolveTarget(args: { inMinutes?: number; atTime?: string }): number {
+    const now = new Date()
+    if (typeof args.inMinutes === 'number' && Number.isFinite(args.inMinutes)) {
+      return now.getTime() + args.inMinutes * 60_000
+    }
+    if (typeof args.atTime === 'string' && /^\d{1,2}:\d{2}$/.test(args.atTime.trim())) {
+      const [h, m] = args.atTime.trim().split(':').map(Number)
+      if (h === undefined || m === undefined || h < 0 || h > 23 || m < 0 || m > 59) {
+        throw new Error(`set_reminder: invalid atTime "${args.atTime}" (use HH:MM)`)
+      }
+      const target = new Date(now)
+      target.setHours(h!, m!, 0, 0)
+      // A time earlier today means tomorrow (the natural reading of "明天9点"
+      // vs an already-passed "今天9点").
+      if (target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1)
+      return target.getTime()
+    }
+    throw new Error('set_reminder: provide inMinutes (relative) or atTime ("HH:MM", today/tomorrow)')
+  }
+
+  const unregisterSendImage = ctx.tools.register(
     defineTool({
       name: 'wechat_send_image',
       description:
@@ -101,7 +196,187 @@ export function apply(ctx: Context, config: Config): void {
     }),
   )
   ctx.effect(() => {
-    return () => unregisterTool()
+    return () => unregisterSendImage()
+  })
+
+  // generate_image — text-to-image via SiliconFlow, then send to the peer.
+  const unregisterGenerateImage = ctx.tools.register(
+    defineTool({
+      name: 'generate_image',
+      description:
+        'Generate an image from a text prompt (SiliconFlow text-to-image) and send it to the current WeChat peer. ' +
+        'Use when the user asks to 画/生成/绘一张图, an illustration, a picture of something. ' +
+        'Describe the subject, style, and composition in the prompt. The image is sent automatically; returns confirmation.',
+      parameters: {
+        prompt: { type: 'string', required: true, description: 'Image description, e.g. "a cat girl in JK uniform, anime style, soft colors"' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value: string) => [{ type: 'text', text: value }],
+      },
+      execute: async (args) => {
+        const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : ''
+        if (!prompt) throw new Error('generate_image: prompt is required')
+        const peer = node.peerId
+        if (!peer) throw new Error('generate_image: no WeChat peer yet — the user must message the bot first')
+        const apiKey = config.imageGenApiKey ?? config.ocrApiKey ?? ''
+        if (!apiKey) throw new Error('generate_image: no SiliconFlow key configured (set imageGenApiKey or ocrApiKey)')
+        await node.ctx.wechat.sendTyping(peer, 1).catch(() => {})
+        await node.ctx.wechat.sendText(peer, `🎨 正在画图：${prompt.slice(0, 120)}`).catch(() => {})
+        const outDir = config.imageGenDir ?? (config.mediaDir ? `${config.mediaDir}/generated` : undefined)
+        const result = await generateImage(
+          { apiKey, model: config.imageGenModel, outDir },
+          prompt,
+        )
+        const sendResult = await node.ctx.wechat.sendImage(peer, result.path)
+        if (!sendResult.success) throw new Error(`图片生成成功但发送失败: ${sendResult.error}`)
+        return `✅ 图已生成并发送喵～`
+      },
+      timeoutMs: 180_000,
+    }),
+  )
+  ctx.effect(() => {
+    return () => unregisterGenerateImage()
+  })
+
+  // speak — synthesize speech with the cloned voice and send a voice note.
+  // Pipeline: SiliconFlow TTS (mp3) → silk (ffmpeg + pilk) → gateway sendVoice.
+  const unregisterSpeak = ctx.tools.register(
+    defineTool({
+      name: 'speak',
+      description:
+        'Speak the given text to the user: it is converted to speech with the cloned voice (e.g. Shiroko) ' +
+        'and sent to WeChat as an mp3 FILE attachment (native voice bubbles are unreliable on the iLink ' +
+        'gateway, so the audio arrives as a file the user taps to play). ' +
+        'Use when the user asks 语音说/用语音回复/说给我听. Returns confirmation.',
+      parameters: {
+        text: { type: 'string', required: true, description: 'The exact text to speak aloud (short, natural)' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value: string) => [{ type: 'text', text: value }],
+      },
+      execute: async (args) => {
+        const text = typeof args.text === 'string' ? args.text.trim() : ''
+        if (!text) throw new Error('speak: text is required')
+        const peer = node.peerId
+        if (!peer) throw new Error('speak: no WeChat peer yet — the user must message the bot first')
+        const apiKey = config.ttsApiKey ?? config.ocrApiKey ?? ''
+        const voice = config.ttsVoice ?? ''
+        if (!apiKey || !voice) throw new Error('speak: TTS not configured (set ttsApiKey and ttsVoice)')
+        await node.ctx.wechat.sendTyping(peer, 1).catch(() => {})
+        await node.ctx.wechat.sendText(peer, '🎙 正在说话…').catch(() => {})
+        // 1) mp3 via SiliconFlow TTS.
+        const mp3 = await synthesizeSpeech({ apiKey, model: config.ttsModel, voice }, text)
+        // 2) persist mp3 and send as a file attachment (plays on tap).
+        const dir = config.imageGenDir ?? (config.mediaDir ? `${config.mediaDir}/generated` : undefined)
+        const { writeFile, mkdir } = await import('node:fs/promises')
+        const { join } = await import('node:path')
+        if (dir) await mkdir(dir, { recursive: true }).catch(() => {})
+        const name = `voice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`
+        const absPath = join(dir ?? process.cwd(), name)
+        await writeFile(absPath, Buffer.from(mp3))
+        const result = await node.ctx.wechat.sendFile(peer, absPath, name)
+        if (!result.success) throw new Error(`语音文件发送失败: ${result.error}`)
+        return '✅ 语音文件已发送喵～'
+      },
+      timeoutMs: 180_000,
+    }),
+  )
+  ctx.effect(() => {
+    return () => unregisterSpeak()
+  })
+
+  // set_reminder — create a reminder. The agent translates the user's natural
+  // language into inMinutes or atTime. The tool resolves wall-clock against
+  // the REAL current time, so it never depends on the model knowing the clock.
+  const unregisterSetReminder = ctx.tools.register(
+    defineTool({
+      name: 'set_reminder',
+      description:
+        'Create a WeChat reminder that will be pushed to the user at the scheduled time. ' +
+        `Current server time: ${nowStamp()}. Provide EITHER inMinutes (relative from now, e.g. 30 for "30 分钟后") ` +
+        'OR atTime (wall clock "HH:MM", 24h; if that time already passed today it means tomorrow, e.g. atTime "09:00" for "明早 9 点"). ' +
+        'Return the created reminder id and scheduled time to the user in a friendly way.',
+      parameters: {
+        text: { type: 'string', required: true, description: 'The reminder content, e.g. "喝水" / "给老板发周报"' },
+        inMinutes: { type: 'number', description: 'Minutes from now. Use for "X 分钟后/小时后" requests.' },
+        atTime: { type: 'string', description: 'Wall-clock "HH:MM" (24h). Use for "X 点/明早 X 点" requests.' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value: string) => [{ type: 'text', text: value }],
+      },
+      execute: async (args) => {
+        const text = typeof args.text === 'string' ? args.text.trim() : ''
+        if (!text) throw new Error('set_reminder: text is required')
+        const peer = node.peerId
+        if (!peer) throw new Error('set_reminder: no WeChat peer yet — the user must message the bot first')
+        const at = resolveTarget(args)
+        const reminder = await reminderStore.add({ at, text, peerId: peer })
+        return `✅ 提醒已设置：${ReminderStore.describe(reminder)}`
+      },
+      timeoutMs: 10_000,
+    }),
+  )
+  ctx.effect(() => {
+    return () => unregisterSetReminder()
+  })
+
+  // list_reminders — show all pending reminders for this peer.
+  const unregisterListReminders = ctx.tools.register(
+    defineTool({
+      name: 'list_reminders',
+      description:
+        'List all pending WeChat reminders for the current user, soonest first. ' +
+        'Use when the user asks "有什么提醒" / "我的闹钟" / "提醒我什么了". Returns ids usable with cancel_reminder.',
+      parameters: {},
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value: string) => [{ type: 'text', text: value }],
+      },
+      execute: async () => {
+        const peer = node.peerId
+        if (!peer) return '（还没有收到过你的消息，无法确认会话）'
+        const mine = reminderStore.list().filter((r) => r.peerId === peer)
+        if (mine.length === 0) return '📭 当前没有待触发的提醒。'
+        return mine.map((r) => `• ${ReminderStore.describe(r)}`).join('\n')
+      },
+      timeoutMs: 10_000,
+    }),
+  )
+  ctx.effect(() => {
+    return () => unregisterListReminders()
+  })
+
+  // cancel_reminder — remove a reminder by id.
+  const unregisterCancelReminder = ctx.tools.register(
+    defineTool({
+      name: 'cancel_reminder',
+      description:
+        'Cancel a pending WeChat reminder by its id (see list_reminders). ' +
+        'Use when the user says "取消提醒" / "删掉闹钟". Only reminders owned by the current user can be cancelled.',
+      parameters: {
+        id: { type: 'string', required: true, description: 'The reminder id returned by set_reminder or shown by list_reminders.' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value: string) => [{ type: 'text', text: value }],
+      },
+      execute: async (args) => {
+        const id = typeof args.id === 'string' ? args.id.trim() : ''
+        if (!id) throw new Error('cancel_reminder: id is required')
+        const peer = node.peerId
+        const mine = reminderStore.list().find((r) => r.id === id && r.peerId === peer)
+        if (!mine) return `❌ 未找到提醒 ${id}（只能取消你自己的提醒）。可用 list_reminders 查看。`
+        await reminderStore.remove(id)
+        return `🗑 已取消提醒 ${id}：${mine.text}`
+      },
+      timeoutMs: 10_000,
+    }),
+  )
+  ctx.effect(() => {
+    return () => unregisterCancelReminder()
   })
 }
 
@@ -109,6 +384,7 @@ export function apply(ctx: Context, config: Config): void {
 export const wechatConversationNode = { name, inject, Config, apply }
 
 export { WechatConversationNode, type NodeConfig } from './core.ts'
-export { splitForWechat, digestLine, textOfAssistantMessage } from './outbound.ts'
+export { ReminderStore, type Reminder } from './reminders.ts'
+export { splitForWechat, digestLine, textOfAssistantMessage, markdownToWechat } from './outbound.ts'
 export { extractText, isGroupMessage } from './inbound.ts'
 export { listSessions } from './commands.ts'
