@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Conversation-node tests: the full WeChat → DSH → WeChat loop against the
  * fake iLink server, with a real SessionStore + AgentRegistry + ApprovalService
  * and a stub agent. Covers the allowlist gate, inbound routing, commands,
@@ -104,7 +104,7 @@ beforeEach(async () => {
   })
   // seed one agent + session so zero-config targeting has something to pick
   const handle = await ctx.agents.create({
-    sessionId: SessionId('session-a'),
+    sessionId: SessionId('wechat-testa'),
     agentOptions: { provider: 'test', model: 'test-model' },
   })
   activeHandle = handle
@@ -195,7 +195,7 @@ test('voice transcription text is routed with a voice marker', async () => {
   assert.ok(text.includes('请总结 README'))
 })
 
-test('assistant/message outbound is delivered to the peer with a task-started digest', async () => {
+test('assistant/message outbound is delivered to the peer without a turn-start ack', async () => {
   await mountNode()
   server.enqueue(textMessage('first task'))
   await waitFor(() => followedUp.length === 1)
@@ -211,12 +211,10 @@ test('assistant/message outbound is delivered to the peer with a task-started di
   session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
 
   await waitFor(() => sentTexts().some((t) => t === 'the answer'))
+  // The turn-start receipt ack ('⏳ … 收到，开始处理…') is removed: the first
+  // outbound bubble is the assistant's actual answer, not a fixed notice.
   const started = sentTexts().find((t) => t.includes('收到，开始处理…'))
-  assert.ok(started, sentTexts().join('\n'))
-  // 状态消息必须携带会话 badge（名称回退标签 + 会话 id）
-  assert.ok(started.includes('first task'), started)
-  assert.ok(started.includes('session-a'), started)
-  assert.ok(sentTexts().indexOf(started) < sentTexts().indexOf('the answer'))
+  assert.ok(!started, sentTexts().join('\n'))
   // outbound targets the allowlisted sender
   assert.ok(server.sent.some((s) => s.to === 'wxid_allow1' && s.text === 'the answer'))
 })
@@ -262,12 +260,12 @@ test('splitForWechat keeps fenced code blocks intact', () => {
 test('/sessions lists numbered sessions and /use switches the active session', async () => {
   await mountNode()
   // create a second, more recent session
-  const second = await ctx.agents.create({ sessionId: SessionId('session-b') })
+  const second = await ctx.agents.create({ sessionId: SessionId('wechat-testb') })
   server.enqueue(textMessage('/sessions'))
   await waitFor(() => sentTexts().some((t) => t.includes('会话列表')), 3000)
   const list = sentTexts().find((t) => t.includes('会话列表'))!
   assert.ok(list.includes('1.') && list.includes('2.'), list)
-  assert.ok(list.includes('session-b'))
+  assert.ok(list.includes('wechat-testb'))
   await second.dispose()
 })
 
@@ -278,14 +276,14 @@ test('/sessions prefers the real session title over the first-prompt label', asy
   await waitFor(() => sentTexts().some((t) => t.includes('会话列表')), 3000)
   const list = sentTexts().find((t) => t.includes('会话列表'))!
   assert.ok(list.includes('我的自定义标题'), list)
-  assert.ok(list.includes('session-a'), list)
+  assert.ok(list.includes('wechat-testa'), list)
 })
 
 test('/status carries the real session title and keeps the session id', async () => {
   await mountNode()
   ctx.sessionTitle.rename(activeHandle.agent.session, '状态标题')
   server.enqueue(textMessage('/status'))
-  await waitFor(() => sentTexts().some((t) => t.includes('状态标题') && t.includes('session-a')), 3000)
+  await waitFor(() => sentTexts().some((t) => t.includes('状态标题') && t.includes('wechat-testa')), 3000)
 })
 
 test('/new creates an agent+session and follows up the prompt', async () => {
@@ -345,7 +343,7 @@ test('/stop cancels the active agent', async () => {
 test('/status reports the active session', async () => {
   await mountNode()
   server.enqueue(textMessage('/status'))
-  await waitFor(() => sentTexts().some((t) => t.includes('session-a')), 3000)
+  await waitFor(() => sentTexts().some((t) => t.includes('wechat-testa')), 3000)
 })
 
 test('no active session: plain text gets a hint, not a crash', async () => {
@@ -414,7 +412,7 @@ test('digest heartbeat emits a one-line summary while a turn runs', async () => 
   // point it at nodeCtx — otherwise appends would dispatch on the outer bus
   // and this node would never see them.
   runtimeCtx = nodeCtx
-  const handle = await nodeCtx.agents.create({ sessionId: SessionId('session-heartbeat') })
+  const handle = await nodeCtx.agents.create({ sessionId: SessionId('wechat-testhb') })
   await nodeCtx.plugin(wechatConversationNode, { allowFrom: ['wxid_allow1'], digestIntervalSec: 1, sendChunkDelayMs: 1 })
   await nodeCtx.wechat.start()
 
