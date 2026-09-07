@@ -34,6 +34,8 @@ import {
   QR_TIMEOUT_MS,
   ITEM_TEXT,
   ITEM_IMAGE,
+  ITEM_VOICE,
+  ITEM_FILE,
   type GetUpdatesResponse,
   type QrCodeResponse,
   type QrStatusResponse,
@@ -334,6 +336,83 @@ export async function sendImageMessage(opts: {
         mid_size: ciphertextSize,
       },
     }],
+  }
+  if (contextToken) msg.context_token = contextToken
+  return postJson<SendMessageResponse>({
+    baseUrl,
+    endpoint: EP_SEND_MESSAGE,
+    payload: { msg },
+    token,
+    timeoutMs,
+    fetchImpl,
+  })
+}
+
+/** Send one media-item message (voice or file) to a peer. */
+export async function sendFileItemMessage(opts: {
+  baseUrl?: string
+  token: string
+  to: string
+  /** Message item kind: ITEM_VOICE or ITEM_FILE. */
+  itemType: number
+  encryptQueryParam: string
+  /** base64(ascii(hex(aesKey))) — NOT base64(raw key bytes). */
+  aesKeyB64Hex: string
+  ciphertextSize: number
+  /** Plaintext (unencrypted) size — file items report `len` as this. */
+  plaintextSize?: number
+  /** Voice duration in seconds, when known (voice items). */
+  durationSec?: number
+  /** File name, when known (file items). */
+  fileName?: string
+  contextToken?: string
+  clientId: string
+  timeoutMs?: number
+  fetchImpl?: typeof fetch
+}): Promise<SendMessageResponse> {
+  const {
+    baseUrl, token, to, itemType, encryptQueryParam, aesKeyB64Hex, ciphertextSize,
+    plaintextSize, durationSec, fileName, contextToken, clientId, timeoutMs, fetchImpl,
+  } = opts
+  const media = {
+    encrypt_query_param: encryptQueryParam,
+    aes_key: aesKeyB64Hex,
+    encrypt_type: 1,
+  }
+  let item: Record<string, unknown>
+  if (itemType === ITEM_VOICE) {
+    item = {
+      type: ITEM_VOICE,
+      voice_item: {
+        media,
+        mid_size: ciphertextSize,
+        // WeChat voice expects silk v3; these fields mirror inbound voice
+        // items and help the client render a voice bubble.
+        encode_type: 6,
+        sample_rate: 24000,
+        ...(durationSec === undefined ? {} : { voice_time: Math.round(durationSec) }),
+      },
+    }
+  } else {
+    // Generic file attachment (documents, mp3, etc). Mirrors the astrbot
+    // weixin adapter exactly: file_item = media + len(PLAINTEXT size, string)
+    // + file_name. No mid_size on file items.
+    item = {
+      type: ITEM_FILE,
+      file_item: {
+        media,
+        len: String(plaintextSize ?? ciphertextSize),
+        ...(fileName === undefined ? {} : { file_name: fileName }),
+      },
+    }
+  }
+  const msg: Record<string, unknown> = {
+    from_user_id: '',
+    to_user_id: to,
+    client_id: clientId,
+    message_type: MSG_TYPE_BOT,
+    message_state: MSG_STATE_FINISH,
+    item_list: [item],
   }
   if (contextToken) msg.context_token = contextToken
   return postJson<SendMessageResponse>({
