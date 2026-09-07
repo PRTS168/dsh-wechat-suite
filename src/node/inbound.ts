@@ -14,14 +14,16 @@
  * @module @dsh-cowork/chatnode-wechat/node/inbound
  */
 
-import { writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir, appendFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { ITEM_TEXT, ITEM_VOICE, ITEM_IMAGE, type InboundMessage, type WireItem } from '../gateway/types.ts'
 import { imageExt } from '../gateway/media.ts'
+import { ocrImage } from './ocr.ts'
+import { transcribeSpeech } from './stt.ts'
 import type { WechatConversationNode } from './core.ts'
-import { routeCommand } from './commands.ts'
+import { routeCommand, routePickerReply } from './commands.ts'
 import { sendTextToPeer } from './outbound.ts'
 
 /** Whether a message is a group/room message (MVP: not supported). */
@@ -53,6 +55,12 @@ export function extractText(message: InboundMessage): string {
     }
   }
   return ''
+}
+
+/** Whether the message carries a voice item with downloadable audio. */
+function hasDownloadableVoice(message: InboundMessage): boolean {
+  const items = Array.isArray(message.item_list) ? message.item_list : []
+  return items.some((item) => item?.type === ITEM_VOICE && item.voice_item?.media && (item.voice_item.media.encrypt_query_param || item.voice_item.media.full_url))
 }
 
 /** First image item in a message, or null. */
@@ -112,17 +120,108 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
   }
 
   node.peerId = sender
-  const agent = node.activeAgent()
+  const ready = await node.ensureWechatTarget()
+  const agent = ready ? node.activeAgent() : undefined
   if (!agent) {
     await sendTextToPeer(node, '💤 没有活动会话。发送 /new <prompt> 开始一个新会话，或 /sessions 查看已有会话。')
     return
   }
 
+  // DeepSeek-OCR (SiliconFlow): when an apiKey is configured, recognize the
+  // image right away and hand the text to the agent so it can answer what is
+  // in the picture. OCR failures surface the reason to the user (not silent).
+  let ocrText: string | undefined
+  if (node.config.ocrApiKey) {
+    try {
+      ocrText = await ocrImage(
+        {
+          apiKey: node.config.ocrApiKey,
+          model: node.config.ocrModel,
+          baseUrl: node.config.ocrBaseUrl,
+        },
+        downloaded.bytes,
+      )
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      node.ctx.logger?.warn?.('[dsh-chatnode-wechat] DeepSeek-OCR failed: %s', reason)
+      try {
+        await appendFile(join(inboundMediaDir(node), 'ocr-error.log'), `${new Date().toISOString()} ${absPath}: ${reason}\n`)
+      } catch {
+        // best-effort
+      }
+      await sendTextToPeer(node, `⚠️ 图片已收到，但 OCR 识别失败：${reason.slice(0, 200)}`)
+      ocrText = undefined
+    }
+  }
+
+  const ocrSection = ocrText?.trim()
+    ? `\n\n【OCR 识别结果】\n${ocrText.trim()}`
+    : ''
   const messageValue = createUserMessage({
     content: [{
       type: 'text',
-      text: `[微信图片] ${absPath}\n\n收到一张来自微信的图片，已保存到上述路径。请用 read_image 工具查看并处理。`,
+      text: `[微信图片] ${absPath}${ocrSection}`,
     }],
+    source: { kind: 'user' },
+  })
+  agent.followup(messageValue)
+  await node.ctx.wechat.sendTyping(sender, 1).catch(() => {})
+}
+
+/**
+ * Handle a voice message that carries downloadable audio (no WeChat-supplied
+ * transcription): download → SiliconFlow ASR → hand `[语音转写]` text to the
+ * agent. When STT is not configured, the note degrades to a short notice
+ * instead of being silently dropped.
+ */
+async function handleInboundVoice(node: WechatConversationNode, sender: string, message: InboundMessage): Promise<void> {
+  const items = Array.isArray(message.item_list) ? message.item_list : []
+  const voice = items.find((item) => item?.type === ITEM_VOICE && item.voice_item?.media)
+  if (!voice) return
+
+  const apiKey = node.config.sttApiKey ?? node.config.ocrApiKey
+  if (!apiKey) {
+    await sendTextToPeer(node, '🎙 收到语音，但未配置语音转写（sttApiKey）。')
+    return
+  }
+
+  node.peerId = sender
+  await sendTextToPeer(node, '🎙 正在听…')
+  let bytes: Uint8Array | null = null
+  try {
+    bytes = await node.ctx.wechat.downloadVoice(voice)
+  } catch (error) {
+    node.ctx.logger?.warn?.('[dsh-chatnode-wechat] voice download failed: %s', error instanceof Error ? error.message : String(error))
+  }
+  if (!bytes || bytes.length === 0) {
+    await sendTextToPeer(node, '❌ 语音下载失败，请重试。')
+    return
+  }
+
+  let transcribed = ''
+  try {
+    transcribed = await transcribeSpeech(
+      { apiKey, model: node.config.sttModel },
+      bytes,
+    )
+  } catch (error) {
+    node.ctx.logger?.warn?.('[dsh-chatnode-wechat] ASR failed: %s', error instanceof Error ? error.message : String(error))
+    await sendTextToPeer(node, `❌ 语音转写失败：${error instanceof Error ? error.message.slice(0, 150) : String(error)}`)
+    return
+  }
+  if (!transcribed.trim()) {
+    await sendTextToPeer(node, '⚠️ 没听清内容，请再说一次？')
+    return
+  }
+
+  const ready = await node.ensureWechatTarget()
+  const agent = ready ? node.activeAgent() : undefined
+  if (!agent) {
+    await sendTextToPeer(node, '💤 没有活动会话。发送 /new <prompt> 开始一个新会话，或 /sessions 查看已有会话。')
+    return
+  }
+  const messageValue = createUserMessage({
+    content: [{ type: 'text', text: `[语音转写]\n${transcribed.trim()}` }],
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
@@ -149,6 +248,11 @@ export async function handleInbound(node: WechatConversationNode, message: Inbou
 
   const text = extractText(message)
   if (!text.trim()) {
+    // No usable text: prefer STT on a downloadable voice note, else images.
+    if (hasDownloadableVoice(message)) {
+      await handleInboundVoice(node, sender, message)
+      return
+    }
     await handleInboundImage(node, sender, message)
     return
   }
@@ -158,8 +262,16 @@ export async function handleInbound(node: WechatConversationNode, message: Inbou
   // ---- local command handling ---------------------------------------------
   if (await routeCommand(node, text)) return
 
+  // ---- two-step picker replies (/model, /perm): a bare number while a menu
+  // is open selects that option and is never fed to the model.
+  if (await routePickerReply(node, text)) return
+
   // ---- route to the active agent ------------------------------------------
-  const agent = node.activeAgent()
+  // The bridge must only ever talk to a WeChat session. A restart strands the
+  // live agent, and a shared SessionStore with the Web GUI can leave the
+  // bridge pointing at a web session — ensureWechatTarget corrects both.
+  const ready = await node.ensureWechatTarget()
+  const agent = ready ? node.activeAgent() : undefined
   if (!agent) {
     await sendTextToPeer(node, '💤 没有活动会话。发送 /new <prompt> 开始一个新会话，或 /sessions 查看已有会话。')
     return
