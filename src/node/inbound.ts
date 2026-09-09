@@ -18,7 +18,7 @@ import { writeFile, mkdir, appendFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { ITEM_TEXT, ITEM_VOICE, ITEM_IMAGE, type InboundMessage, type WireItem } from '../gateway/types.ts'
+import { ITEM_TEXT, ITEM_VOICE, ITEM_IMAGE, ITEM_FILE, ITEM_VIDEO, type InboundMessage, type WireItem } from '../gateway/types.ts'
 import { imageExt } from '../gateway/media.ts'
 import { ocrImage } from './ocr.ts'
 import { transcribeSpeech } from './stt.ts'
@@ -84,6 +84,18 @@ function extractImageItem(message: InboundMessage): WireItem | null {
   const items = Array.isArray(message.item_list) ? message.item_list : []
   for (const item of items) {
     if (item?.type === ITEM_IMAGE && item.image_item?.media) return item
+  }
+  return null
+}
+
+/** First downloadable file/video item in a message, or null. */
+function extractAttachment(message: InboundMessage): { item: WireItem; kind: 'file' | 'video' } | null {
+  const items = Array.isArray(message.item_list) ? message.item_list : []
+  for (const item of items) {
+    const media = item.file_item?.media ?? item.video_item?.media
+    if (media && (media.encrypt_query_param || media.full_url)) {
+      return { item, kind: item.type === ITEM_VIDEO ? 'video' : 'file' }
+    }
   }
   return null
 }
@@ -244,6 +256,82 @@ async function handleInboundVoice(node: WechatConversationNode, sender: string, 
   await node.ctx.wechat.sendTyping(sender, 1).catch(() => {})
 }
 
+/**
+ * Handle a file/video message with downloadable media: decrypt → persist →
+ * hand the path (plus the original file name when provided) to the agent.
+ * Generic documents and mp4 clips can't be decoded by a text model, but the
+ * bridge stores them under mediaDir so the agent (or a future tool) can reach
+ * them; WeChat is told the file was received so the exchange feels complete.
+ */
+async function handleInboundFile(
+  node: WechatConversationNode,
+  sender: string,
+  message: InboundMessage,
+  kind: 'file' | 'video',
+): Promise<void> {
+  const found = extractAttachment(message)
+  if (!found) return
+
+  node.peerId = sender
+  let downloaded: { bytes: Uint8Array; fileName?: string } | null
+  try {
+    downloaded = await node.ctx.wechat.downloadAttachment(found.item)
+  } catch (error) {
+    node.ctx.logger?.warn?.(
+      '[dsh-chatnode-wechat] attachment download failed: %s',
+      error instanceof Error ? error.message : String(error),
+    )
+    await sendTextToPeer(node, kind === 'video' ? '❌ 视频下载失败，请重试。' : '❌ 文件下载失败，请重试。')
+    return
+  }
+  if (!downloaded) return
+
+  const dir = inboundMediaDir(node)
+  try {
+    await mkdir(dir, { recursive: true })
+  } catch {
+    // directory may already exist; writeFile below still reports real failures
+  }
+  // Pick a safe on-disk extension: prefer the wire file name, else a default.
+  const wireName = downloaded.fileName?.trim()
+  const base = wireName
+    ? wireName.split(/[\\/]/).pop()!.replace(/[^\w.\- ]+/g, '_')
+    : ''
+  let ext = ''
+  if (base) {
+    const dot = base.lastIndexOf('.')
+    if (dot > 0 && base.length - dot <= 10) ext = base.slice(dot)
+  }
+  if (!ext) ext = kind === 'video' ? '.mp4' : '.bin'
+  const name = `wechat-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`
+  const absPath = join(dir, name)
+  try {
+    await writeFile(absPath, downloaded.bytes)
+  } catch (error) {
+    node.ctx.logger?.warn?.(
+      '[dsh-chatnode-wechat] attachment save failed: %s',
+      error instanceof Error ? error.message : String(error),
+    )
+    await sendTextToPeer(node, kind === 'video' ? '❌ 视频保存失败，请重试。' : '❌ 文件保存失败，请重试。')
+    return
+  }
+
+  const ready = await node.ensureWechatTarget()
+  const agent = ready ? node.activeAgent() : undefined
+  if (!agent) {
+    await sendTextToPeer(node, '💤 没有活动会话。发送 /new <prompt> 开始一个新会话，或 /sessions 查看已有会话。')
+    return
+  }
+  const label = kind === 'video' ? '[微信视频]' : '[微信文件]'
+  const nameNote = wireName ? `（${wireName}）` : ''
+  const messageValue = createUserMessage({
+    content: [{ type: 'text', text: stampLine(`${label} ${absPath}${nameNote}`) }],
+    source: { kind: 'user' },
+  })
+  agent.followup(messageValue)
+  await node.ctx.wechat.sendTyping(sender, 1).catch(() => {})
+}
+
 /** Handle one inbound iLink message. */
 export async function handleInbound(node: WechatConversationNode, message: InboundMessage): Promise<void> {
   const sender = String(message.from_user_id ?? '').trim()
@@ -264,12 +352,21 @@ export async function handleInbound(node: WechatConversationNode, message: Inbou
 
   const text = extractText(message)
   if (!text.trim()) {
-    // No usable text: prefer STT on a downloadable voice note, else images.
+    // No usable text: prefer STT on a downloadable voice note, then images,
+    // then file/video attachments.
     if (hasDownloadableVoice(message)) {
       await handleInboundVoice(node, sender, message)
       return
     }
-    await handleInboundImage(node, sender, message)
+    if (extractImageItem(message)) {
+      await handleInboundImage(node, sender, message)
+      return
+    }
+    const att = extractAttachment(message)
+    if (att) {
+      await handleInboundFile(node, sender, message, att.kind)
+      return
+    }
     return
   }
 

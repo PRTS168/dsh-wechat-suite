@@ -199,6 +199,83 @@ export function apply(ctx: Context, config: Config): void {
     return () => unregisterSendImage()
   })
 
+  // wechat_send_file — send any local file (documents, archives, …) to the peer.
+  const unregisterSendFile = ctx.tools.register(
+    defineTool({
+      name: 'wechat_send_file',
+      description:
+        'Send a local file (document, archive, pdf, mp3, …) to the current WeChat peer through the ' +
+        'chatnode-wechat bridge. The peer is the last WeChat contact who messaged the bot, so at least ' +
+        'one inbound WeChat message must have arrived since the profile started. ' +
+        'Pass the absolute path of the file. WeChat receives it as a downloadable file attachment.',
+      parameters: {
+        path: { type: 'string', required: true, description: 'Absolute path of the file to send.' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value: string) => [{ type: 'text', text: value }],
+      },
+      execute: async (args) => {
+        const path = typeof args.path === 'string' ? args.path.trim() : ''
+        if (!path) throw new Error('wechat_send_file: path is required')
+        const peer = node.peerId
+        if (!peer) {
+          throw new Error(
+            'wechat_send_file: no WeChat peer yet — send the bot a WeChat message first ' +
+            'so the bridge knows who to reply to',
+          )
+        }
+        const result = await node.ctx.wechat.sendFile(peer, path)
+        if (!result.success) throw new Error(`wechat_send_file: ${result.error}`)
+        return `✅ 文件已发送到微信: ${path}`
+      },
+      timeoutMs: 180_000,
+    }),
+  )
+  ctx.effect(() => {
+    return () => unregisterSendFile()
+  })
+
+  // wechat_send_video — send a local video clip (mp4/mov/…) to the peer. The
+  // iLink gateway has no reliable native video bubble, so like voice replies
+  // the clip is delivered as a playable file attachment (mp4 opens and plays
+  // directly in WeChat).
+  const unregisterSendVideo = ctx.tools.register(
+    defineTool({
+      name: 'wechat_send_video',
+      description:
+        'Send a local video file (mp4/mov/webm/…) to the current WeChat peer through the chatnode-wechat ' +
+        'bridge. The peer is the last WeChat contact who messaged the bot, so at least one inbound WeChat ' +
+        'message must have arrived since the profile started. Pass the absolute path of the video file. ' +
+        'Note: the iLink gateway has no native video bubble, so the clip arrives as a playable file attachment.',
+      parameters: {
+        path: { type: 'string', required: true, description: 'Absolute path of the video file (mp4/mov/webm/…).' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value: string) => [{ type: 'text', text: value }],
+      },
+      execute: async (args) => {
+        const path = typeof args.path === 'string' ? args.path.trim() : ''
+        if (!path) throw new Error('wechat_send_video: path is required')
+        const peer = node.peerId
+        if (!peer) {
+          throw new Error(
+            'wechat_send_video: no WeChat peer yet — send the bot a WeChat message first ' +
+            'so the bridge knows who to reply to',
+          )
+        }
+        const result = await node.ctx.wechat.sendFile(peer, path)
+        if (!result.success) throw new Error(`wechat_send_video: ${result.error}`)
+        return `✅ 视频已发送到微信: ${path}`
+      },
+      timeoutMs: 180_000,
+    }),
+  )
+  ctx.effect(() => {
+    return () => unregisterSendVideo()
+  })
+
   // generate_image — text-to-image via SiliconFlow, then send to the peer.
   const unregisterGenerateImage = ctx.tools.register(
     defineTool({

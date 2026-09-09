@@ -257,6 +257,18 @@ export declare class WechatGateway extends Service {
      */
     downloadVoice(item: WireItem): Promise<Uint8Array | null>;
     /**
+     * Download and decrypt one inbound file/video item's media into raw bytes
+     * (documents, archives, mp4 clips, …) — the same encrypted-CDN chain as
+     * {@link downloadImage} / {@link downloadVoice}, for the remaining item
+     * kinds (ITEM_FILE / ITEM_VIDEO).
+     * @returns decoded bytes plus the wire-provided file name (when present),
+     *   or null when the item carries no usable media reference.
+     */
+    downloadAttachment(item: WireItem): Promise<{
+        bytes: Uint8Array;
+        fileName?: string;
+    } | null>;
+    /**
      * Send one image file to a peer: AES-encrypt → getuploadurl ticket → upload
      * ciphertext to the CDN → sendmessage with an image item. Uses the peer's
      * cached context_token (the wire REQUIRES it — tokenless sends fail with

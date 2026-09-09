@@ -462,3 +462,72 @@ test('image-only message: download, save to mediaDir, route path to the agent', 
   assert.ok(absPath.endsWith('.png'), `expected .png path, got: ${absPath}`)
   assert.deepEqual([...readFileSync(absPath)], [...plaintext])
 })
+
+test('file message: download, save under mediaDir, route path + name to the agent', async () => {
+  const mediaDir = join(tmpdir(), `dsh-wechat-media-${Date.now()}`)
+  await mountNode({ mediaDir })
+  const plaintext = new Uint8Array([...Buffer.from('hello from dsh wechat bridge', 'utf8')])
+  const key = mediaKey()
+  server.media.set('eqp-file-node', { key, plaintext })
+  server.enqueue({
+    from_user_id: 'wxid_allow1',
+    to_user_id: 'wxid_bot_fake',
+    message_id: 'msg-file-node',
+    msg_type: 1,
+    context_token: 'ctx-file-node',
+    item_list: [{
+      type: 4,
+      file_item: {
+        file_name: '报告.pdf',
+        media: {
+          encrypt_query_param: 'eqp-file-node',
+          aes_key: Buffer.from(key).toString('base64'),
+        },
+      },
+    }],
+  })
+  await waitFor(() => followedUp.length === 1, 3000)
+  const text = (followedUp[0]!.content[0] as { text: string }).text
+  assert.ok(text.startsWith('[发送于 '), text)
+  assert.ok(text.includes('[微信文件]'), text)
+  assert.ok(text.includes('（报告.pdf）'), text)
+  const match = /\[微信文件\]\s*([^\s（]+)/.exec(text)
+  assert.ok(match, `followup should carry a file path, got: ${text}`)
+  const absPath = match![1]!
+  assert.ok(absPath.endsWith('.pdf'), `expected .pdf path, got: ${absPath}`)
+  assert.deepEqual([...readFileSync(absPath)], [...plaintext])
+})
+
+test('video message: download, save as mp4 under mediaDir, route path to the agent', async () => {
+  const mediaDir = join(tmpdir(), `dsh-wechat-media-${Date.now()}`)
+  await mountNode({ mediaDir })
+  // mp4 "ftyp" magic prefix — enough for the kind default, not a decodable file
+  const plaintext = new Uint8Array([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32, 0x00, 0x00, 0x00, 0x00])
+  const key = mediaKey()
+  server.media.set('eqp-video-node', { key, plaintext })
+  server.enqueue({
+    from_user_id: 'wxid_allow1',
+    to_user_id: 'wxid_bot_fake',
+    message_id: 'msg-video-node',
+    msg_type: 1,
+    context_token: 'ctx-video-node',
+    item_list: [{
+      type: 5,
+      video_item: {
+        media: {
+          encrypt_query_param: 'eqp-video-node',
+          aes_key: Buffer.from(key).toString('base64'),
+        },
+      },
+    }],
+  })
+  await waitFor(() => followedUp.length === 1, 3000)
+  const text = (followedUp[0]!.content[0] as { text: string }).text
+  assert.ok(text.startsWith('[发送于 '), text)
+  assert.ok(text.includes('[微信视频]'), text)
+  const match = /\[微信视频\]\s*(\S+)/.exec(text)
+  assert.ok(match, `followup should carry a video path, got: ${text}`)
+  const absPath = match![1]!
+  assert.ok(absPath.endsWith('.mp4'), `expected .mp4 path, got: ${absPath}`)
+  assert.deepEqual([...readFileSync(absPath)], [...plaintext])
+})
