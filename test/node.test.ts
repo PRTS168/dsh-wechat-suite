@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Conversation-node tests: the full WeChat → DSH → WeChat loop against the
  * fake iLink server, with a real SessionStore + AgentRegistry + ApprovalService
  * and a stub agent. Covers the allowlist gate, inbound routing, commands,
@@ -162,8 +162,10 @@ test('inbound allowlisted text reaches the active agent via followup', async () 
   await mountNode()
   server.enqueue(textMessage('你好，帮我看看这个项目'))
   await waitFor(() => followedUp.length === 1)
-  assert.equal(followedUp[0]!.content[0]!.type, 'text')
-  assert.equal((followedUp[0]!.content[0] as { text: string }).text, '你好，帮我看看这个项目')
+  assert.ok(followedUp[0]!.content[0]!.type === 'text')
+  const text = (followedUp[0]!.content[0] as { text: string }).text
+  // inbound user messages carry a send-time stamp line, then the raw text
+  assert.match(text, /^\[发送于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\n你好，帮我看看这个项目$/)
 })
 
 test('non-allowlisted senders are logged and never fed to the model', async () => {
@@ -191,6 +193,7 @@ test('voice transcription text is routed with a voice marker', async () => {
   })
   await waitFor(() => followedUp.length === 1)
   const text = (followedUp[0]!.content[0] as { text: string }).text
+  assert.ok(text.startsWith('[发送于 '), text)
   assert.ok(text.includes('[语音转写]'))
   assert.ok(text.includes('请总结 README'))
 })
@@ -452,6 +455,7 @@ test('image-only message: download, save to mediaDir, route path to the agent', 
   })
   await waitFor(() => followedUp.length === 1, 3000)
   const text = (followedUp[0]!.content[0] as { text: string }).text
+  assert.ok(text.startsWith('[发送于 '), text)
   const match = /\[微信图片\]\s*(\S+)/.exec(text)
   assert.ok(match, `followup should carry an image path, got: ${text}`)
   const absPath = match![1]!

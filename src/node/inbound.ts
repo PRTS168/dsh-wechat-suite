@@ -26,6 +26,22 @@ import type { WechatConversationNode } from './core.ts'
 import { routeCommand, routePickerReply } from './commands.ts'
 import { sendTextToPeer } from './outbound.ts'
 
+/**
+ * Local wall-clock stamp ("YYYY-MM-DD HH:mm") attached to inbound user
+ * messages so the agent always knows when a message was sent — useful for
+ * time-of-day questions, "just now" vs "yesterday" context and reminder
+ * scheduling. Server-local time (the machine running the bridge).
+ */
+function sendStamp(date = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}`
+}
+
+/** Prefix content handed to the model with the message send/receive time. */
+function stampLine(content: string): string {
+  return `[发送于 ${sendStamp()}]\n${content}`
+}
+
 /** Whether a message is a group/room message (MVP: not supported). */
 export function isGroupMessage(message: InboundMessage, accountId: string): boolean {
   const roomId = String(message.room_id ?? message.chat_room_id ?? '').trim()
@@ -160,7 +176,7 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
   const messageValue = createUserMessage({
     content: [{
       type: 'text',
-      text: `[微信图片] ${absPath}${ocrSection}`,
+      text: stampLine(`[微信图片] ${absPath}${ocrSection}`),
     }],
     source: { kind: 'user' },
   })
@@ -221,7 +237,7 @@ async function handleInboundVoice(node: WechatConversationNode, sender: string, 
     return
   }
   const messageValue = createUserMessage({
-    content: [{ type: 'text', text: `[语音转写]\n${transcribed.trim()}` }],
+    content: [{ type: 'text', text: stampLine(`[语音转写]\n${transcribed.trim()}`) }],
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
@@ -278,7 +294,7 @@ export async function handleInbound(node: WechatConversationNode, message: Inbou
   }
 
   const messageValue = createUserMessage({
-    content: [{ type: 'text', text }],
+    content: [{ type: 'text', text: stampLine(text) }],
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
