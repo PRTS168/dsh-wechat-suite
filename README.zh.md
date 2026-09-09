@@ -10,9 +10,11 @@ profile 接到微信个人账号 —— 与 hermes-agent、OpenClaw 同机制。
 你 (微信)  <=>  iLink  <=>  wechat-gateway  <=>  wechat-conversation-node  <=>  DSH agent 会话
 ```
 
-> **Fork 声明。** 本仓库是
+> **Fork 声明（非官方）。** 本仓库是对
 > [Jesse-njx/dsh-chatnode-wechat](https://github.com/Jesse-njx/dsh-chatnode-wechat)
-> 的分支并在此之上继续开发；原始提交历史与早期贡献者的署名完整保留。
+> 的个人、非官方 fork 与继续开发，fork 自上游快照 `2bd4c15`（2026-08）。
+> 本仓库**不是**上游项目或其作者的官方发布，也与上游无隶属关系；原始提交
+> 历史与早期贡献者署名完整保留并归属上游作者，基础协议以上游为准。
 
 **状态** | 版本 `v0.2.0`（见 [Releases](https://github.com/PRTS168/dsh-chatnode-wechat/releases)）· MIT · **65 项离线单测全绿** + 一轮真机微信冒烟（2026-09）
 
@@ -202,7 +204,7 @@ pnpm setup          # 交互式配置向导
 - 诚实标注的盲区（暂无单测）：OCR 成功/失败分支、语音下载→ASR 全流程、
   媒体上行（fake 服务器无 /upload）、`/send`、`/help`、ESP32 灯控、
   重启 resume。真机冒烟覆盖主路径。
-- DSH 是开发者预览版，`@deepseek-ai/*` 锁定在 `0.1.0-rc.6`。
+- DSH 是开发者预览版，`@deepseek-ai/*` 锁定在 `0.1.1-rc.2`。
 
 ## 8. 已知限制
 

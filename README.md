@@ -11,10 +11,14 @@ mechanism hermes-agent and OpenClaw use.
 you (WeChat)  <=>  iLink  <=>  wechat-gateway  <=>  wechat-conversation-node  <=>  DSH agent session
 ```
 
-> **Fork notice.** This repository is a fork and continued development of
-> [Jesse-njx/dsh-chatnode-wechat](https://github.com/Jesse-njx/dsh-chatnode-wechat).
-> The original commit history and the credit for the earliest work remain
-> intact and are attributed to the upstream authors.
+> **Fork notice (unofficial).** This repository is a personal, unofficial
+> fork and continued development of
+> [Jesse-njx/dsh-chatnode-wechat](https://github.com/Jesse-njx/dsh-chatnode-wechat),
+> forked from the upstream snapshot at commit `2bd4c15` (2026-08). It is NOT
+> an official release of, or affiliated with, the upstream project or its
+> authors. The original commit history and the credit for the earliest work
+> remain intact and are attributed to the upstream authors; upstream remains
+> the source of truth for the base protocol.
 
 **Status** | version `v0.2.0` (see [Releases](https://github.com/PRTS168/dsh-chatnode-wechat/releases)) · MIT · **65 offline unit tests green** + a live WeChat smoke pass (2026-09)
 
@@ -224,7 +228,7 @@ pnpm setup          # interactive config wizard
   voice-download-to-ASR flow, outbound media upload (the fake server has no
   `/upload`), `/send`, `/help`, ESP32 light control, restart resume. Live
   smoke covers the happy paths.
-- DSH is a developer preview; `@deepseek-ai/*` is pinned at `0.1.0-rc.6`.
+- DSH is a developer preview; `@deepseek-ai/*` is pinned at `0.1.1-rc.2`.
 
 ## 8. Known limits
 
