@@ -27,16 +27,16 @@ export interface MorningConfig {
   lat: number
   /** Longitude of the forecast location. */
   lon: number
-  /** Display name of the location, e.g. 绥化. */
+  /** Display name of the forecast location (fill in your own city). */
   place: string
 }
 
 const DEFAULT_CONFIG: MorningConfig = {
   enabled: false,
   time: '08:00',
-  lat: 46.63,
-  lon: 126.98,
-  place: '绥化',
+  lat: 0,
+  lon: 0,
+  place: '本地',
 }
 
 /** Open-Meteo API base. */
@@ -106,10 +106,9 @@ export function composeGreeting(cfg: Pick<MorningConfig, 'place'>, forecast: Dai
   const round = (n: number, suffix = ''): string => (Number.isFinite(n) ? `${Math.round(n)}${suffix}` : '?')
   const wind = Number.isFinite(forecast.windKmh) && forecast.windKmh >= 0 ? `，风 ${Math.round(forecast.windKmh)} km/h` : ''
   return [
-    `☀️ 早安主人喵～`,
-    `${cfg.place}今天：${forecast.label} ${round(forecast.tempNow, '°C')}`,
+    `☀️ 早安`,
+    `${cfg.place}：${forecast.label} ${round(forecast.tempNow, '°C')}`,
     `最高 ${round(forecast.tempMax, '°C')} / 最低 ${round(forecast.tempMin, '°C')}${wind}`,
-    `今天也要开心哦喵～`,
   ].join('\n')
 }
 

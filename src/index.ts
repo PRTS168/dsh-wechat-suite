@@ -92,7 +92,7 @@ export interface Config {
   ttsApiKey?: string
   /** TTS model id (defaults to FunAudioLLM/CosyVoice2-0.5B). */
   ttsModel?: string
-  /** Cloned voice uri used for speech replies (e.g. speech:shiroko:…). */
+  /** Cloned voice uri used for speech replies (e.g. speech:my-clone:…). */
   ttsVoice?: string
   /** Agent preset name for `/new` sessions. */
   agentPreset?: string

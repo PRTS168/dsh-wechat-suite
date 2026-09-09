@@ -40,8 +40,8 @@ test('fetchForecast throws on HTTP error', async () => {
 })
 
 test('composeGreeting produces a readable line with the place', () => {
-  const text = composeGreeting({ place: '绥化' }, { label: '晴', tempNow: 25, tempMax: 30, tempMin: 18, windKmh: 9 })
-  assert.ok(text.includes('绥化'))
+  const text = composeGreeting({ place: '本地' }, { label: '晴', tempNow: 25, tempMax: 30, tempMin: 18, windKmh: 9 })
+  assert.ok(text.includes('本地'))
   assert.ok(text.includes('晴'))
   assert.ok(text.includes('25°C'))
   assert.ok(text.includes('30°C'))
@@ -93,7 +93,7 @@ test('MorningService pushNow composes from stubbed forecast', async () => {
     try {
       const text = await svc.pushNow()
       assert.ok(text.includes('小雨'))
-      assert.ok(text.includes('绥化'))
+      assert.ok(text.includes('本地'))
     } finally {
       globalThis.fetch = realFetch
     }

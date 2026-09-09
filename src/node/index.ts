@@ -66,7 +66,7 @@ export interface Config {
   ttsApiKey?: string
   /** TTS model id (defaults to FunAudioLLM/CosyVoice2-0.5B). */
   ttsModel?: string
-  /** Cloned voice uri used for speech replies (e.g. speech:shiroko:…). */
+  /** Cloned voice uri used for speech replies (e.g. speech:my-clone:…). */
   ttsVoice?: string
   /** Agent preset name for `/new` sessions. */
   agentPreset?: string
@@ -307,7 +307,7 @@ export function apply(ctx: Context, config: Config): void {
         )
         const sendResult = await node.ctx.wechat.sendImage(peer, result.path)
         if (!sendResult.success) throw new Error(`图片生成成功但发送失败: ${sendResult.error}`)
-        return `✅ 图已生成并发送喵～`
+        return `✅ 图已生成并发送`
       },
       timeoutMs: 180_000,
     }),
@@ -322,7 +322,7 @@ export function apply(ctx: Context, config: Config): void {
     defineTool({
       name: 'speak',
       description:
-        'Speak the given text to the user: it is converted to speech with the cloned voice (e.g. Shiroko) ' +
+        'Speak the given text to the user: it is converted to speech with the configured cloned voice ' +
         'and sent to WeChat as an mp3 FILE attachment (native voice bubbles are unreliable on the iLink ' +
         'gateway, so the audio arrives as a file the user taps to play). ' +
         'Use when the user asks 语音说/用语音回复/说给我听. Returns confirmation.',
@@ -355,7 +355,7 @@ export function apply(ctx: Context, config: Config): void {
         await writeFile(absPath, Buffer.from(mp3))
         const result = await node.ctx.wechat.sendFile(peer, absPath, name)
         if (!result.success) throw new Error(`语音文件发送失败: ${result.error}`)
-        return '✅ 语音文件已发送喵～'
+        return '✅ 语音文件已发送'
       },
       timeoutMs: 180_000,
     }),

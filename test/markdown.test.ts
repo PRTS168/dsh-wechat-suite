@@ -51,7 +51,7 @@ test('strikethrough, blockquote, hr are cleaned', () => {
 })
 
 test('plain chat text is untouched apart from harmless stripping', () => {
-  const text = '好的喵～ 我帮你查了：今天天气不错。'
+  const text = '好的，我帮你查了：今天天气不错。'
   const out = markdownToWechat(text)
   assert.equal(out, text)
 })
@@ -74,7 +74,7 @@ test('realistic table renders without outer pipes', () => {
 
 test('full realistic assistant message cleans up cleanly', () => {
   const md = [
-    '主人想看看 **加粗**、*斜体*、~~删除线~~、链接（https://deepseek.com） 这些效果',
+    '用户想看看 **加粗**、*斜体*、~~删除线~~、链接（https://deepseek.com） 这些效果',
     '',
     '| A | B |',
     '|---|---|',

@@ -22,7 +22,7 @@ export interface MorningConfig {
     lat: number;
     /** Longitude of the forecast location. */
     lon: number;
-    /** Display name of the location, e.g. 绥化. */
+    /** Display name of the forecast location (fill in your own city). */
     place: string;
 }
 /** One parsed daily forecast snapshot. */
