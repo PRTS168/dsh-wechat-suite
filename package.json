@@ -1,6 +1,6 @@
 {
   "name": "@dsh-cowork/chatnode-wechat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Chat with, monitor, and approve your DSH agents from WeChat — an iLink gateway + conversation node bundle for DeepSeek Harness",
   "keywords": [
     "deepseek-harness",
@@ -42,6 +42,7 @@
     "test": "node --test \"test/*.test.ts\"",
     "login": "node scripts/login.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "setup": "node scripts/setup.mjs",
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {

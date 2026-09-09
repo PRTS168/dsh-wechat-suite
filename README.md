@@ -134,6 +134,16 @@ from this repo):
 5. Optional: `esp32BaseUrl`, `cwd`, `mediaDir`, `reminderFile`,
    `morningFile`.
 
+Most of this is a single interactive wizard that patches your profile's
+`cordis.patch.yml` (it only ever touches the `dsh-chatnode-wechat` entry and
+backs up the file first):
+
+```sh
+pnpm setup            # interactive
+pnpm setup --yes --set allowFrom=<your-wechat-id>@im.wechat \
+    --set siliconflowKey=sk-...     # non-interactive (siliconflowKey fills OCR/gen/STT/TTS)
+```
+
 The persona preset referenced above (`agentPreset: wechat`, a catgirl-style
 assistant in our test environment) lives **outside this repo** under
 `$DSH_HOME/.agent-presets/wechat/` — point `agentPreset` at any preset you
@@ -151,15 +161,11 @@ have installed, or omit it.
 | `/status` | agent status + session summary |
 | `/send <path>` | send a local image to the current contact |
 | `/model` | two-step model switcher (list → pick a digit) |
+| `/perm` | two-step permission-preset switcher (list → pick a digit) |
 | `/早安 on\|off\|status\|test\|HH:MM` (alias `/morning`) | morning weather digest |
 | `/开灯` `/开灯1\|2\|3` `/关灯` | ESP32 light control |
 | `/yes` `/no` (or `1`/`2` while one request is pending) | answer a permission request |
 | `/help` | command list |
-
-> `/perm` (permission-preset switching) is **mechanism-ready but not wired**:
-> the two-step picker exists in `core.ts`, but `commands.ts` has no `case
-> 'perm'` yet, so typing `/perm` today returns "unknown command". Wiring it is
-> a one-case change.
 
 ## Approvals
 

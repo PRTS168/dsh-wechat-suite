@@ -125,6 +125,18 @@ export async function routeCommand(node: WechatConversationNode, text: string): 
       return true
     }
 
+    case 'perm': {
+      const options = node.permissionPickerOptions()
+      if (options.length === 0) {
+        await sendTextToPeer(node, '❌ 没有可用的权限预设（permission presets 未配置）。')
+        return true
+      }
+      node.beginPicker('perm', options)
+      const menu = ['🔐 权限预设列表（回复数字切换）', ...options.map((o, i) => `${i + 1}. ${o.label}`)].join('\n')
+      await sendTextToPeer(node, menu)
+      return true
+    }
+
     case '早安':
     case 'morning': {
       const svc = node.morningService

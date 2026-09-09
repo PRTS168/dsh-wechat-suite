@@ -117,6 +117,11 @@ plugins:
 4. 需要语音回复时填 `ttsVoice`（`speech:<你的克隆音色>:...`）。
 5. 可选：`esp32BaseUrl`、`cwd`、`mediaDir`、`reminderFile`、`morningFile`。
 
+以上绝大多数项可以一键填写：`pnpm setup` 交互向导（或
+`pnpm setup --yes --set allowFrom=<你的微信ID>@im.wechat --set siliconflowKey=sk-...`
+非交互，`siliconflowKey` 会自动填入 OCR/生图/STT/TTS 四把 key）。脚本只改
+profile 的 `cordis.patch.yml` 里 `dsh-chatnode-wechat` 这一块，改前自动备份。
+
 上面提到的 `agentPreset: wechat`（我们测试环境的猫娘风格助手 preset，名
 「云欣」）位于**本仓库之外**：`$DSH_HOME/.agent-presets/wechat/`。把
 `agentPreset` 指向你已安装的任意 preset，或省略该键。
@@ -133,14 +138,11 @@ plugins:
 | `/status` | agent 状态 + 会话摘要 |
 | `/send <路径>` | 发送一张本地图片给当前联系人 |
 | `/model` | 两步切换模型（列表 → 选数字） |
+| `/perm` | 两步切换权限预设（列表 → 选数字） |
 | `/早安 on\|off\|status\|test\|HH:MM`（别名 `/morning`） | 早安天气摘要 |
 | `/开灯` `/开灯1\|2\|3` `/关灯` | ESP32 灯控 |
 | `/yes` `/no`（仅一条待确认时也可 `1`/`2`） | 回答权限请求 |
 | `/help` | 命令列表 |
-
-> `/perm`（权限预设切换）目前**机制就绪但命令未接线**：两步菜单已在
-> `core.ts` 实现，但 `commands.ts` 还没有 `case 'perm'`，现在输入 `/perm`
-> 会回「未知命令」。接线只需补一个 case。
 
 ## 审批
 
