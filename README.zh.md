@@ -10,6 +10,10 @@ profile 接到微信个人账号 —— 与 hermes-agent、OpenClaw 同机制。
 你 (微信)  <=>  iLink  <=>  wechat-gateway  <=>  wechat-conversation-node  <=>  DSH agent 会话
 ```
 
+> **Fork 声明。** 本仓库是
+> [Jesse-njx/dsh-chatnode-wechat](https://github.com/Jesse-njx/dsh-chatnode-wechat)
+> 的分支并在此之上继续开发；原始提交历史与早期贡献者的署名完整保留。
+
 **状态** | 版本 `v0.2.0`（见 [Releases](https://github.com/PRTS168/dsh-chatnode-wechat/releases)）· MIT · **65 项离线单测全绿** + 一轮真机微信冒烟（2026-09）
 
 > **仅供参考。** 已在一套特定环境实测，不代表开箱即用。所有 `<...>` 都是

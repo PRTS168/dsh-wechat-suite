@@ -11,6 +11,11 @@ mechanism hermes-agent and OpenClaw use.
 you (WeChat)  <=>  iLink  <=>  wechat-gateway  <=>  wechat-conversation-node  <=>  DSH agent session
 ```
 
+> **Fork notice.** This repository is a fork and continued development of
+> [Jesse-njx/dsh-chatnode-wechat](https://github.com/Jesse-njx/dsh-chatnode-wechat).
+> The original commit history and the credit for the earliest work remain
+> intact and are attributed to the upstream authors.
+
 **Status** | version `v0.2.0` (see [Releases](https://github.com/PRTS168/dsh-chatnode-wechat/releases)) · MIT · **65 offline unit tests green** + a live WeChat smoke pass (2026-09)
 
 > **Reference only.** Verified on one specific environment; not a blanket
