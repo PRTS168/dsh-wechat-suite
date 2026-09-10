@@ -56,6 +56,10 @@ profile 接到微信个人账号 —— 与 hermes-agent、OpenClaw 同机制。
   回答；超时默认拒绝。
 - **摘要式出站**。不刷屏工具调用：每 `digestIntervalSec` 一条心跳，回复按
   `maxMessageChars` 分块限速，回合结束只在出错/中止/截断时提示。
+- **Web 管理页与人设编辑**。在 `web` profile 下，**设置 → 插件 →
+  「微信桥配置」**可管理下面的全部待填项（白名单、模型路由、媒体 Key、克隆
+  音色、路径、节流参数 —— 密钥脱敏、保存写入 `cordis.patch.yml` 并自动备份），
+  还能直接编辑各 agent preset 的人设正文。
 
 内含**两个可分离的 Cordis 插件**：
 
@@ -209,9 +213,9 @@ Agent 工具（供模型调用）：
 
 ```sh
 pnpm install
-pnpm build          # src/ → lib/（tsc）
+pnpm build          # src/ → lib/（tsc）+ 客户端 bundle（lib/client.js）
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts —— 65 项，无需微信
+pnpm test           # node --test test/*.test.ts —— 72 项，无需微信
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导
 ```
@@ -221,7 +225,7 @@ pnpm setup          # 交互式配置向导
   `test/fixtures/inbound.ndjson`；入站→会话→出站全链路可离线跑在 CI
   （`.github/workflows/ci.yml`）。
 - 测试分布：gateway 18 / node 24 / markdown 9 / morning 6 / picker 4 /
-  reminders 4 = **65**。
+  reminders 4 / patch-config 7 = **72**。
 - 诚实标注的盲区（暂无单测）：OCR 成功/失败分支、语音下载→ASR 全流程、
   媒体上行（fake 服务器无 /upload）、`/send`、`/help`、ESP32 灯控、
   重启 resume。真机冒烟覆盖主路径。

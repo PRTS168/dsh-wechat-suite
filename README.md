@@ -69,6 +69,11 @@ you (WeChat)  <=>  iLink  <=>  wechat-gateway  <=>  wechat-conversation-node  <=
 - **Digest-style outbound.** No tool-call firehose: heartbeat line every
   `digestIntervalSec`, replies chunked to `maxMessageChars` with throttling,
   end-of-turn notices only for error / abort / truncation.
+- **Web management page & persona editing.** In a `web` profile, **Settings →
+  Plugins → "微信桥配置"** manages every placeholder below (whitelist, model
+  route, media keys, clone voice, paths, throttling — secrets masked, saves
+  into `cordis.patch.yml` with a backup) and edits each agent preset's persona
+  text in place.
 
 Two separable Cordis plugins are shipped:
 
@@ -235,9 +240,9 @@ drives; everything else is delegated down the answerer chain.
 
 ```sh
 pnpm install
-pnpm build          # src/ -> lib/ (tsc)
+pnpm build          # src/ -> lib/ (tsc) + client bundle (lib/client.js)
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts — 65 tests, no WeChat account
+pnpm test           # node --test test/*.test.ts — 72 tests, no WeChat account
 pnpm smoke          # manual live-account check
 pnpm setup          # interactive config wizard
 ```
@@ -247,7 +252,7 @@ pnpm setup          # interactive config wizard
   replays `test/fixtures/inbound.ndjson`; the inbound-to-session-to-outbound
   loop runs offline in CI (`.github/workflows/ci.yml`).
 - Test spread: gateway 18 / node 24 / markdown 9 / morning 6 / picker 4 /
-  reminders 4 = **65**.
+  reminders 4 / patch-config 7 = **72**.
 - Honest gaps (not yet unit-tested): OCR success/failure branches, the
   voice-download-to-ASR flow, outbound media upload (the fake server has no
   `/upload`), `/send`, `/help`, ESP32 light control, restart resume. Live
