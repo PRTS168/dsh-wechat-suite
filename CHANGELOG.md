@@ -93,3 +93,5 @@
 [v0.2.1]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.2.1
 [v0.2.0]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.2.0
 [v0.1.0]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.1.0
+
+各版本面向使用者的发行说明在 [`releases/`](./releases)。

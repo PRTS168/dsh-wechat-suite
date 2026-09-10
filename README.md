@@ -272,13 +272,15 @@ pnpm smoke          # 真机手动冒烟
 
 ## 版本历史
 
-见 [Releases](https://github.com/PRTS168/dsh-wechat-suite/releases) 与
-[`CHANGELOG.md`](./CHANGELOG.md)。近期：
+见 [Releases](https://github.com/PRTS168/dsh-wechat-suite/releases)、
+[`CHANGELOG.md`](./CHANGELOG.md)（逐条技术变更）与
+[`releases/`](./releases)（各版本发行说明）。近期：
 
-- **v0.2.2** — 适配 DeepSeek 4.1 多模态：原生图片输入（与 OCR 可切换、`/识图` 命令）、
-  `send_email`、凭据加固；86 项测试
-- **v0.2.1** — Web 管理页与人设编辑
-- **v0.2.0** — `/perm` 接线、`pnpm setup` 向导、双向文件与视频、入站时间戳
+- **[v0.2.2](./releases/v0.2.2-release-notes.md)** — 适配 DeepSeek 4.1 多模态：原生图片
+  输入（与 OCR 可切换、`/识图` 命令）、`send_email`、凭据加固；86 项测试
+- **[v0.2.1](./releases/v0.2.1-release-notes.md)** — Web 管理页与人设编辑
+- **[v0.2.0](./releases/v0.2.0-release-notes.md)** — `/perm` 接线、`pnpm setup` 向导、
+  双向文件与视频、入站时间戳
 
 ## Roadmap
 
