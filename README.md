@@ -173,6 +173,14 @@ second bundle row (`dsh-chatnode-wechat/config-api`) only loads where a
 `webServer` service exists — headless profiles are unaffected. Changes take
 effect after restarting dsh web.
 
+The same page also edits **personas** (`GET /presets`, `GET /persona`,
+`POST /persona`, `POST /preset/copy`): pick an agent preset, edit its
+`config.text` persona in a text area and save — only the persona block of that
+preset's `agent.cordis.yml` is rewritten (backup first, every other tool row
+untouched). "Copy as new preset" duplicates the current preset directory so a
+second persona can be built without hand-writing the tool composition; the
+preset named by `agentPreset` above is the one the WeChat agent actually uses.
+
 ## 5. Commands & tools
 
 Commands (send in WeChat):

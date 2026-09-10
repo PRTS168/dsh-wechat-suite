@@ -150,6 +150,13 @@ Key、克隆音色、路径、节流参数），显示环境状态（凭据 / �
 存在 `webServer` 服务的 profile 中加载，headless 不受影响。保存后重启 dsh web
 生效。
 
+同一页面还能编辑**人设**（`GET /presets`、`GET /persona`、`POST /persona`、
+`POST /preset/copy`）：选择一个 agent preset，在文本框里编辑它的 `config.text`
+人设正文并保存 —— 只会替换该 preset 的 `agent.cordis.yml` 中 persona 那一段
+（自动备份，其余工具行不动）。「复制为新 preset」会整目录复制当前 preset，
+便于在不手写工具组成的前提下做第二个人设；微信 agent 实际用哪个人设由上面的
+「人设 preset 名」（`agentPreset`）决定。
+
 ## 5. 命令与工具
 
 命令（微信里发送）：
