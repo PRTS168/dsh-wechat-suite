@@ -9,7 +9,9 @@ dist/
 
 # 本地敏感/开发备忘文件，勿提交
 scripts/token-check.mjs
-IMG-BRIDGE-PROGRESS.md
+# IMG-BRIDGE-PROGRESS.md 已于 2026-09-10 归档到
+# ..\archive\2026-09-10-development-docs\（内容已过时且误导）；
+# 现役开发说明是仓库内的 DEVELOPMENT.md，随仓库发布。
 
 # 运行时凭据产物：src/index.ts 的 startClient() 会把这两个文件写到仓库根，
 # 内含 WEIXIN token / account_id / sync_buf 明文。历史中从未提交过，这里补上
