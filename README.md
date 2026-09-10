@@ -10,8 +10,7 @@
 ```
 
 这是一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) bundle，
-经由腾讯非官方的 **iLink bot 网关**（`ilinkai.weixin.qq.com`）连接个人微信号——
-与 hermes-agent、OpenClaw 同一条路子。
+经由腾讯**官方 clawbot iLink 协议**（`ilinkai.weixin.qq.com`）连接个人微信号。
 
 **版本** `v0.2.2` · MIT · **86 项离线单测全绿**（无需微信账号）· 一轮真机冒烟通过（2026-09）
 
@@ -131,11 +130,10 @@ llm-deepseek:
 ## 先读这里
 
 - **一个账号一个轮询者。** iLink 每个 bot token 只允许**一个**鉴权轮询者。同一微信
-  账号同时跑 hermes-agent、OpenClaw 或第二个本实例，会导致 HTTP 403 与消息丢失。
-  请用**专用微信号**，一个 token 只跑一个实例。
-- **非官方网关。** 腾讯可能限制该账号，请使用你愿意失去的账号。
-- **非官方协议。** iLink 细节从 hermes-agent 源码逆向而来；录制样本在
-  `test/fixtures/inbound.ndjson`，CI 不需要真账号。
+  账号同时跑第二个本实例（或其他 iLink 客户端），会导致 HTTP 403 与消息丢失。
+  请为桥准备一个**专用微信号**。
+- **协议细节逆向而来。** iLink 报文格式是从既有客户端归纳的，尚未见公开的官方
+  文档；录制样本在 `test/fixtures/inbound.ndjson`，CI 不需要真账号。
 - **仅供参考。** 已在一套特定环境实测通过，不代表开箱即用。所有 `<...>` 都是
   需要你填入的占位符。
 
@@ -264,9 +262,9 @@ pnpm smoke          # 真机手动冒烟
 | 风险 | 缓解 |
 |---|---|
 | iLink 独占锁——同一 token 两个轮询者 → 403 且丢消息 | 专用账号；检测到 403 时给出醒目致命错误并停止轮询 |
-| 账号被限制——非官方网关 | 专用、可弃账号；README 已明说 |
 | DSH v0.1 变动频繁 | 钉住 `@deepseek-ai/*` 版本；CI 按钉住版本跑 |
-| 协议不透明 | 协议移植自 hermes-agent；有真实报文录制样本 |
+| 协议细节未见于公开文档 | 报文格式从既有 iLink 客户端归纳；有真实报文录制样本（`test/fixtures/inbound.ndjson`） |
+| 运行时会在仓库根落盘含凭据的文件 | `client-config.json` / `account.json` 已加入 `.gitignore` |
 
 ---
 

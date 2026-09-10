@@ -3,8 +3,8 @@
 **在微信里与你的 DSH agent 对话、监控、审批。**
 
 一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-bundle，通过腾讯非官方 **iLink bot 网关**（`ilinkai.weixin.qq.com`）把 DSH
-profile 接到微信个人账号 —— 与 hermes-agent、OpenClaw 同机制。
+bundle，通过腾讯**官方 clawbot iLink 协议**（`ilinkai.weixin.qq.com`）把 DSH
+profile 接到微信个人账号。
 
 ```
 你 (微信)  <=>  iLink  <=>  wechat-gateway  <=>  wechat-conversation-node  <=>  DSH agent 会话
@@ -75,12 +75,11 @@ profile 接到微信个人账号 —— 与 hermes-agent、OpenClaw 同机制。
 
 ## 2. 先读这里
 
-- **一个账号一个轮询者。** iLink 每个 bot token 只允许一个鉴权轮询者；与
-  hermes-agent 或 OpenClaw 共用同一微信账号会互相 403 并丢消息。请使用
+- **一个账号一个轮询者。** iLink 每个 bot token 只允许一个鉴权轮询者；同一微信账号
+  跑第二个本实例（或任何其他 iLink 客户端）会互相 403 并丢消息。请为桥使用
   **专用微信账号**，绝不要用同一 token 跑两个实例。
-- **非官方网关。** 腾讯可能限制该账号。请使用可接受的专用账号。
-- **非官方协议。** iLink 细节从 hermes-agent 源码逆向；录制样本在
-  `test/fixtures/inbound.ndjson`，CI 无需真实账号。
+- **协议细节逆向而来。** iLink 报文格式是从既有客户端归纳的，尚未见公开的官方
+  文档；录制样本在 `test/fixtures/inbound.ndjson`，CI 无需真实账号。
 
 ## 3. 快速开始
 
@@ -253,9 +252,9 @@ pnpm setup          # 交互式配置向导
 | 风险 | 对策 |
 | --- | --- |
 | iLink 独占锁 —— 同一 token 两个轮询者 → 403 + 丢消息 | 专用账号；遇 403 大声报错并停止轮询 |
-| 账号风险 —— 非官方网关 | 专用、可弃用的账号；README 明示 |
 | DSH v0.1 变更 | 锁定 `@deepseek-ai/*` 依赖；CI 针对锁定版本 |
-| 协议不透明 | 协议移植自 hermes-agent；已录制样本 |
+| 协议细节未见于公开文档 | 报文格式从既有 iLink 客户端归纳；已录制真实样本 |
+| 运行时在仓库根落盘含凭据的文件 | `client-config.json` / `account.json` 已加入 `.gitignore` |
 
 ## 10. Roadmap
 

@@ -282,8 +282,11 @@ picker 4 / reminders 4 / patch-config 7 / vision 10 / email 4。
 ## 7. 环境约束
 
 - **iLink 独占锁**：一个微信 token 只允许**一个**鉴权轮询者。同号跑第二个实例
-  或 hermes-agent / OpenClaw 会导致 HTTP 403 + 丢消息。检测到 403 时网关会给出
+  （或任何其他 iLink 客户端）会导致 HTTP 403 + 丢消息。检测到 403 时网关会给出
   致命错误并停止轮询。
-- **非官方协议**：细节逆向自 hermes-agent；有真实报文录制样本。腾讯可能限制账号。
+- **协议细节未见于公开文档**：报文格式从既有 iLink 客户端归纳而来，仓库内有真实
+  报文录制样本（`test/fixtures/inbound.ndjson`）。改动网关时以录制样本为准，
+  不要凭记忆猜字段编号——`item_list` 的 type、`getuploadurl` 的 `media_type`、
+  发送端的 item type 是**三套独立编号**，混用会导致 0 字节或静默失败。
 - **DSH 是开发者预览版**：`@deepseek-ai/*` 钉在 `0.1.1-rc.2`。升级这些依赖时
   注意 cordis 语义可能变化（尤其 `inject`）。
