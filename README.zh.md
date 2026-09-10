@@ -16,7 +16,7 @@ profile 接到微信个人账号 —— 与 hermes-agent、OpenClaw 同机制。
 > 本仓库**不是**上游项目或其作者的官方发布，也与上游无隶属关系；原始提交
 > 历史与早期贡献者署名完整保留并归属上游作者，基础协议以上游为准。
 
-**状态** | 版本 `v0.2.1`（见 [Releases](https://github.com/PRTS168/dsh-chatnode-wechat/releases)）· MIT · **72 项离线单测全绿** + 一轮真机微信冒烟（2026-09）
+**状态** | 版本 `v0.2.2`（见 [Releases](https://github.com/PRTS168/dsh-wechat-suite/releases)）· MIT · **86 项离线单测全绿** + 一轮真机微信冒烟（2026-09）
 
 > **仅供参考。** 已在一套特定环境实测，不代表开箱即用。所有 `<...>` 都是
 > 需要你填入的占位符（`allowFrom` 与 `WEIXIN_*` 凭据必填 —— 缺失时桥会
@@ -28,10 +28,13 @@ profile 接到微信个人账号 —— 与 hermes-agent、OpenClaw 同机制。
 
 - **双向文字**。回复发送前先做微信化排版（Markdown 标题 →【】、代码块去
   围栏并缩进、表格去外框线、强调符号去除）。
-- **双向图片**。入站图片自动下载解密并落盘 `mediaDir`；配了 `ocrApiKey`
-  时自动识图（硅基流动 `deepseek-ai/DeepSeek-OCR`），以「文件路径 + OCR
-  文本」交给模型。出站：`/send <路径>` 发本地图；agent 还能**生图**
-  （`generate_image`，Kwai-Kolors/Kolors）。
+- **双向图片，原生识图或 OCR 可切换（适配 DeepSeek 4.1 多模态）**。入站图片
+  自动下载解密并落盘 `mediaDir`。图片怎么送到模型取决于路由模型：声明了图片
+  输入的多模态模型会收到**真正的 image 内容块**（模型自己看图），纯文本模型
+  则回落到 **DeepSeek-OCR** 文本 + 文件路径。`imageInput: auto`（默认）按路由
+  模型声明的模态自动决定，`native` / `ocr` 可强制，聊天内用 `/识图` 运行时切换。
+  出站：`/send <路径>` 发本地图；agent 还能**生图**（`generate_image`，
+  Kwai-Kolors/Kolors）。
 - **双向语音**。入站语音自动转写（`sttApiKey`，XingChenASR；或直接用微信
   自带转写）；agent 可用 `speak` 开口说话（CosyVoice2 克隆音色），mp3 以
   可点播的文件附件送达。
@@ -54,6 +57,8 @@ profile 接到微信个人账号 —— 与 hermes-agent、OpenClaw 同机制。
   （`esp32BaseUrl`）。
 - **审批**。权限请求渲染为编号文本提示，聊天内用 `/yes` `/no`（或 `1`/`2`）
   回答；超时默认拒绝。
+- **邮件**。`send_email` 通过配置好的 SMTP 账号（隐式 TLS）发送纯文本邮件，
+  可在聊天里直接让 agent 发报告 / 提醒 / 摘要。
 - **摘要式出站**。不刷屏工具调用：每 `digestIntervalSec` 一条心跳，回复按
   `maxMessageChars` 分块限速，回合结束只在出错/中止/截断时提示。
 - **Web 管理页与人设编辑**。在 `web` profile 下，**设置 → 插件 →
@@ -82,7 +87,7 @@ profile 接到微信个人账号 —— 与 hermes-agent、OpenClaw 同机制。
 前置：Node >= 20、pnpm、一个专用微信账号、一个 DSH profile。
 
 ```sh
-git clone https://github.com/PRTS168/dsh-chatnode-wechat.git
+git clone https://github.com/PRTS168/dsh-wechat-suite.git
 cd dsh-chatnode-wechat
 pnpm install && pnpm build
 dsh plugin --profile <你的profile> add .
@@ -176,6 +181,7 @@ Key、克隆音色、路径、节流参数），显示环境状态（凭据 / �
 | `/send <路径>` | 发送一张本地图片给当前联系人 |
 | `/model` | 两步切换模型（列表 → 选数字） |
 | `/perm` | 两步切换权限预设（列表 → 选数字） |
+| `/识图 [auto\|native\|ocr]` | 图片识别模式；不带参数则报告当前模式与路由模型 |
 | `/早安 on\|off\|status\|test\|HH:MM`（别名 `/morning`） | 早安天气摘要 |
 | `/开灯` `/开灯1\|2\|3` `/关灯` | ESP32 灯控 |
 | `/yes` `/no`（仅一条待确认时也可 `1`/`2`） | 回答权限请求 |
@@ -215,7 +221,7 @@ Agent 工具（供模型调用）：
 pnpm install
 pnpm build          # src/ → lib/（tsc）+ 客户端 bundle（lib/client.js）
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts —— 72 项，无需微信
+pnpm test           # node --test test/*.test.ts —— 86 项，无需微信
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导
 ```
@@ -225,10 +231,11 @@ pnpm setup          # 交互式配置向导
   `test/fixtures/inbound.ndjson`；入站→会话→出站全链路可离线跑在 CI
   （`.github/workflows/ci.yml`）。
 - 测试分布：gateway 18 / node 24 / markdown 9 / morning 6 / picker 4 /
-  reminders 4 / patch-config 7 = **72**。
+  reminders 4 / patch-config 7 / vision 10 / email 4 = **86**。
 - 诚实标注的盲区（暂无单测）：OCR 成功/失败分支、语音下载→ASR 全流程、
   媒体上行（fake 服务器无 /upload）、`/send`、`/help`、ESP32 灯控、
-  重启 resume。真机冒烟覆盖主路径。
+  重启 resume，以及原生图片块本身（`vision.test.ts` 用 stub 目录覆盖模式判定，
+  `attachments.saveImage` 只在真机上跑）。真机冒烟覆盖主路径。
 - DSH 是开发者预览版，`@deepseek-ai/*` 锁定在 `0.1.1-rc.2`。
 
 ## 8. 已知限制
