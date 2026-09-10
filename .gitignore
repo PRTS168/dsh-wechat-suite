@@ -10,3 +10,9 @@ dist/
 # 本地敏感/开发备忘文件，勿提交
 scripts/token-check.mjs
 IMG-BRIDGE-PROGRESS.md
+
+# 运行时凭据产物：src/index.ts 的 startClient() 会把这两个文件写到仓库根，
+# 内含 WEIXIN token / account_id / sync_buf 明文。历史中从未提交过，这里补上
+# 忽略规则，避免一次 `git add .` 就把微信 token 推上公开仓库。
+client-config.json
+account.json

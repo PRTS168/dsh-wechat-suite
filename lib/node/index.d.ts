@@ -43,6 +43,16 @@ export interface Config {
     morningFile?: string;
     /** ESP32 PWM light base url (defaults to http://192.168.1.11:80). */
     esp32BaseUrl?: string;
+    /** SMTP host for the `send_email` tool; absent disables that tool. */
+    smtpHost?: string;
+    /** SMTP port (implicit TLS; defaults to 465). */
+    smtpPort?: number;
+    /** SMTP login user, also the default From address. */
+    smtpUsername?: string;
+    /** SMTP password or provider-issued auth code. */
+    smtpPassword?: string;
+    /** Display name on the From header (defaults to smtpUsername). */
+    smtpFromName?: string;
     /** SiliconFlow API key for image generation (defaults to ocrApiKey when absent). */
     imageGenApiKey?: string;
     /** Image generation model id (defaults to Kwai-Kolors/Kolors). */
@@ -74,12 +84,19 @@ export declare const Config: z<Schemastery.ObjectS<{
     sendChunkDelayMs: z<number, number>;
     cwd: z<string, string>;
     mediaDir: z<string, string>;
+    imageInput: z<"auto" | "native" | "ocr", "auto" | "native" | "ocr">;
+    imageInputModel: z<string, string>;
     ocrApiKey: z<string, string>;
     ocrModel: z<string, string>;
     ocrBaseUrl: z<string, string>;
     reminderFile: z<string, string>;
     morningFile: z<string, string>;
     esp32BaseUrl: z<string, string>;
+    smtpHost: z<string, string>;
+    smtpPort: z<number, number>;
+    smtpUsername: z<string, string>;
+    smtpPassword: z<string, string>;
+    smtpFromName: z<string, string>;
     imageGenApiKey: z<string, string>;
     imageGenModel: z<string, string>;
     imageGenDir: z<string, string>;
@@ -99,12 +116,19 @@ export declare const Config: z<Schemastery.ObjectS<{
     sendChunkDelayMs: z<number, number>;
     cwd: z<string, string>;
     mediaDir: z<string, string>;
+    imageInput: z<"auto" | "native" | "ocr", "auto" | "native" | "ocr">;
+    imageInputModel: z<string, string>;
     ocrApiKey: z<string, string>;
     ocrModel: z<string, string>;
     ocrBaseUrl: z<string, string>;
     reminderFile: z<string, string>;
     morningFile: z<string, string>;
     esp32BaseUrl: z<string, string>;
+    smtpHost: z<string, string>;
+    smtpPort: z<number, number>;
+    smtpUsername: z<string, string>;
+    smtpPassword: z<string, string>;
+    smtpFromName: z<string, string>;
     imageGenApiKey: z<string, string>;
     imageGenModel: z<string, string>;
     imageGenDir: z<string, string>;
@@ -119,7 +143,14 @@ export declare const Config: z<Schemastery.ObjectS<{
 }>>;
 /** Cordis plugin name used by loader diagnostics. */
 export declare const name = "dsh-chatnode-wechat";
-/** Services required by the conversation node. */
+/**
+ * Services required by the conversation node.
+ *
+ * `llm` and `attachments` are deliberately NOT listed: cordis treats `inject`
+ * as a wait gate (a missing entry leaves the plugin inactive with no error),
+ * and both are optional here — the node reads them through `ctx.get()` and the
+ * native-image path degrades to OCR when either is absent.
+ */
 export declare const inject: string[];
 /** Mount the conversation node on a context that already provides `wechat`. */
 export declare function apply(ctx: Context, config: Config): void;
@@ -135,12 +166,19 @@ export declare const wechatConversationNode: {
         sendChunkDelayMs: z<number, number>;
         cwd: z<string, string>;
         mediaDir: z<string, string>;
+        imageInput: z<"auto" | "native" | "ocr", "auto" | "native" | "ocr">;
+        imageInputModel: z<string, string>;
         ocrApiKey: z<string, string>;
         ocrModel: z<string, string>;
         ocrBaseUrl: z<string, string>;
         reminderFile: z<string, string>;
         morningFile: z<string, string>;
         esp32BaseUrl: z<string, string>;
+        smtpHost: z<string, string>;
+        smtpPort: z<number, number>;
+        smtpUsername: z<string, string>;
+        smtpPassword: z<string, string>;
+        smtpFromName: z<string, string>;
         imageGenApiKey: z<string, string>;
         imageGenModel: z<string, string>;
         imageGenDir: z<string, string>;
@@ -160,12 +198,19 @@ export declare const wechatConversationNode: {
         sendChunkDelayMs: z<number, number>;
         cwd: z<string, string>;
         mediaDir: z<string, string>;
+        imageInput: z<"auto" | "native" | "ocr", "auto" | "native" | "ocr">;
+        imageInputModel: z<string, string>;
         ocrApiKey: z<string, string>;
         ocrModel: z<string, string>;
         ocrBaseUrl: z<string, string>;
         reminderFile: z<string, string>;
         morningFile: z<string, string>;
         esp32BaseUrl: z<string, string>;
+        smtpHost: z<string, string>;
+        smtpPort: z<number, number>;
+        smtpUsername: z<string, string>;
+        smtpPassword: z<string, string>;
+        smtpFromName: z<string, string>;
         imageGenApiKey: z<string, string>;
         imageGenModel: z<string, string>;
         imageGenDir: z<string, string>;

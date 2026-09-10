@@ -23,6 +23,7 @@ import { ReminderStore } from './reminders.ts'
 import { MorningService } from './morning.ts'
 import { generateImage } from './image-gen.ts'
 import { synthesizeSpeech } from './tts.ts'
+import { sendEmail } from './email.ts'
 
 /** Plugin config. `allowFrom` is REQUIRED and validated at apply time. */
 export interface Config {
@@ -52,6 +53,16 @@ export interface Config {
   morningFile?: string
   /** ESP32 PWM light base url (defaults to http://192.168.1.11:80). */
   esp32BaseUrl?: string
+  /** SMTP host for the `send_email` tool; absent disables that tool. */
+  smtpHost?: string
+  /** SMTP port (implicit TLS; defaults to 465). */
+  smtpPort?: number
+  /** SMTP login user, also the default From address. */
+  smtpUsername?: string
+  /** SMTP password or provider-issued auth code. */
+  smtpPassword?: string
+  /** Display name on the From header (defaults to smtpUsername). */
+  smtpFromName?: string
   /** SiliconFlow API key for image generation (defaults to ocrApiKey when absent). */
   imageGenApiKey?: string
   /** Image generation model id (defaults to Kwai-Kolors/Kolors). */
@@ -84,12 +95,26 @@ export const Config = z.object({
   sendChunkDelayMs: z.number().default(1_500),
   cwd: z.string(),
   mediaDir: z.string(),
+  // How an inbound image reaches the model: `auto` sends a real image block
+  // when the routed model declares image input and falls back to OCR when it
+  // does not; `native` forces the image block (falling back to OCR only after
+  // the provider actually refuses one); `ocr` keeps the text-only path.
+  imageInput: z.union([z.const('auto'), z.const('native'), z.const('ocr')]).default('auto'),
+  // Optional explicit `provider/model` for native image input, when the
+  // chat route itself cannot accept images (e.g. a text-only chat model plus
+  // a vision route used only for pictures).
+  imageInputModel: z.string(),
   ocrApiKey: z.string(),
   ocrModel: z.string(),
   ocrBaseUrl: z.string(),
   reminderFile: z.string(),
   morningFile: z.string(),
   esp32BaseUrl: z.string(),
+  smtpHost: z.string(),
+  smtpPort: z.number(),
+  smtpUsername: z.string(),
+  smtpPassword: z.string(),
+  smtpFromName: z.string(),
   imageGenApiKey: z.string(),
   imageGenModel: z.string(),
   imageGenDir: z.string(),
@@ -106,7 +131,14 @@ export const Config = z.object({
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'dsh-chatnode-wechat'
 
-/** Services required by the conversation node. */
+/**
+ * Services required by the conversation node.
+ *
+ * `llm` and `attachments` are deliberately NOT listed: cordis treats `inject`
+ * as a wait gate (a missing entry leaves the plugin inactive with no error),
+ * and both are optional here — the node reads them through `ctx.get()` and the
+ * native-image path degrades to OCR when either is absent.
+ */
 export const inject = ['wechat', 'sessions', 'agents', 'approval', 'tools', 'sessionTitle']
 
 /** Mount the conversation node on a context that already provides `wechat`. */
@@ -454,6 +486,48 @@ export function apply(ctx: Context, config: Config): void {
   )
   ctx.effect(() => {
     return () => unregisterCancelReminder()
+  })
+
+  // send_email — plain-text mail through the configured SMTP account. Ported
+  // from the retired `dsh-wechat-tools` plugin, which held the only
+  // implementation; keeping it here lets that plugin be uninstalled.
+  const unregisterSendEmail = ctx.tools.register(
+    defineTool({
+      name: 'send_email',
+      description:
+        'Send a plain-text email through the SMTP account configured for this bridge. ' +
+        'Use when the user asks to send an email to someone. Returns confirmation or the error.',
+      parameters: {
+        to: { type: 'string', required: true, description: 'Recipient email address, e.g. someone@example.com' },
+        subject: { type: 'string', required: true, description: 'Email subject line' },
+        body: { type: 'string', required: true, description: 'Email body (plain text)' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value: string) => [{ type: 'text', text: value }],
+      },
+      execute: async (args) => {
+        return await sendEmail(
+          {
+            host: config.smtpHost ?? '',
+            port: config.smtpPort,
+            username: config.smtpUsername ?? '',
+            password: config.smtpPassword ?? '',
+            fromName: config.smtpFromName,
+            fromEmail: config.smtpUsername,
+          },
+          {
+            to: typeof args.to === 'string' ? args.to.trim() : '',
+            subject: typeof args.subject === 'string' ? args.subject.trim() : '',
+            body: typeof args.body === 'string' ? args.body : '',
+          },
+        )
+      },
+      timeoutMs: 40_000,
+    }),
+  )
+  ctx.effect(() => {
+    return () => unregisterSendEmail()
   })
 }
 

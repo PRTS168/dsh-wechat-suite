@@ -20,7 +20,7 @@ you (WeChat)  <=>  iLink  <=>  wechat-gateway  <=>  wechat-conversation-node  <=
 > remain intact and are attributed to the upstream authors; upstream remains
 > the source of truth for the base protocol.
 
-**Status** | version `v0.2.1` (see [Releases](https://github.com/PRTS168/dsh-chatnode-wechat/releases)) · MIT · **72 offline unit tests green** + a live WeChat smoke pass (2026-09)
+**Status** | version `v0.2.2` (see [Releases](https://github.com/PRTS168/dsh-chatnode-wechat/releases)) · MIT · **86 offline unit tests green** + a live WeChat smoke pass (2026-09)
 
 > **Reference only.** Verified on one specific environment; not a blanket
 > promise of portability. Everything that looks like `<...>` is a placeholder
@@ -34,11 +34,15 @@ you (WeChat)  <=>  iLink  <=>  wechat-gateway  <=>  wechat-conversation-node  <=
 - **Text both ways.** Replies are re-formatted for WeChat before sending
   (Markdown headings to `【】`, code fences stripped and indented, tables
   de-lined, emphasis removed).
-- **Images both ways.** Inbound images are downloaded, decrypted and stored
-  under `mediaDir`; with `ocrApiKey` set they are auto-recognized
-  (SiliconFlow `deepseek-ai/DeepSeek-OCR`) and handed to the model as a file
-  path plus the OCR text. Outbound: `/send <path>` pushes a local image; the
-  agent can also generate images (`generate_image`, Kwai-Kolors/Kolors).
+- **Images both ways, native or OCR.** Inbound images are downloaded, decrypted
+  and stored under `mediaDir`. How the model receives them depends on the routed
+  model: a multimodal route gets a **real image block** (the model sees the
+  pixels), while a text-only route falls back to **DeepSeek-OCR** text
+  (`deepseek-ai/DeepSeek-OCR`) plus the file path. `imageInput: auto` (default)
+  decides per routed model from its declared modalities; `native` and `ocr`
+  force one path, and `/识图` switches at runtime. Outbound: `/send <path>`
+  pushes a local image; the agent can also generate images
+  (`generate_image`, Kwai-Kolors/Kolors).
 - **Voice both ways.** Inbound voice notes are transcribed (`sttApiKey`,
   XingChenASR, or WeChat's own transcript when present); the agent can reply
   with `speak` (CosyVoice2 clone voice) and the mp3 arrives as a tappable
@@ -66,6 +70,9 @@ you (WeChat)  <=>  iLink  <=>  wechat-gateway  <=>  wechat-conversation-node  <=
 - **Approvals.** Permission requests arrive as numbered text prompts and are
   answered in-chat with `/yes` `/no` (or `1`/`2`); a timeout defaults to
   deny.
+- **Email.** `send_email` sends plain text through a configured SMTP account
+  (implicit TLS), so the agent can mail a report, a reminder or a file summary
+  from the chat.
 - **Digest-style outbound.** No tool-call firehose: heartbeat line every
   `digestIntervalSec`, replies chunked to `maxMessageChars` with throttling,
   end-of-turn notices only for error / abort / truncation.
@@ -135,6 +142,8 @@ plugins:
     approvalTimeoutSec: 600           # approval timeout -> default deny
     maxMessageChars: 2000             # WeChat bubble cap (protocol limit)
     sendChunkDelayMs: 1500            # throttle between outbound bubbles
+    imageInput: auto                  # auto | native | ocr (see below)
+    # imageInputModel: amd/DeepSeek-V4-Flash-Vision-Exp  # vision route for pictures only
     # agentPreset: wechat             # optional persona preset (see below)
     # agentProvider / agentModel: ... # model route for the WeChat agent
     # esp32BaseUrl: http://<esp32-ip>:80   # light control (optional)
@@ -161,6 +170,40 @@ The `agentPreset: wechat` reference (a persona preset used in the test
 environment) lives outside this repo under
 `$DSH_HOME/.agent-presets/wechat/` — point `agentPreset` at any preset you
 have installed, or omit it.
+
+### Native image input vs OCR
+
+An inbound picture reaches the model one of two ways:
+
+| Mode | What the model gets | When |
+| --- | --- | --- |
+| `native` | a real `image` content block (it sees the pixels) | the routed model declares `image` input |
+| `ocr` | `【OCR 识别结果】` text + the file path | the routed model is text-only, or nothing declares image support |
+
+`imageInput` picks the policy:
+
+- **`auto`** (default) — resolve the route the agent actually chats on, ask
+  `llm.listModels()` for its `inputModalities`, and send an image block when
+  `image` is declared. If the chat route is text-only, `auto` looks for another
+  registered route that declares image support (set `imageInputModel` to pin one
+  instead), and otherwise uses OCR.
+- **`native`** — always attempt the image block. A route that does not *declare*
+  image support is still tried once (the endpoint may accept images without
+  advertising them); when it refuses, that route is suppressed for three hours
+  and later pictures take the OCR path instead of burning a turn each time.
+- **`ocr`** — always the text path. Useful for documents and screenshots, where
+  a dedicated OCR model is cheaper and often more accurate than a vision model.
+
+`/识图` reports and switches the mode at runtime (`auto` / `native` / `ocr`);
+the override lasts until `dsh web` restarts, after which `imageInput` applies
+again. Every inbound picture keeps its `[微信图片] <path>` prefix in both modes,
+so the session log stays replayable and the agent can re-read the file.
+
+```
+/识图                 # current mode + routed model
+/识图 native          # force image blocks
+/识图 ocr             # force OCR text
+```
 
 ### Web management page
 
@@ -201,6 +244,7 @@ Commands (send in WeChat):
 | `/send <path>` | send a local image to the current contact |
 | `/model` | two-step model switcher (list, then pick a digit) |
 | `/perm` | two-step permission-preset switcher (list, then pick a digit) |
+| `/识图 [auto\|native\|ocr]` | image-input mode; no argument reports the current mode and routed model |
 | `/早安 on\|off\|status\|test\|HH:MM` (alias `/morning`) | morning weather digest |
 | `/开灯` `/开灯1\|2\|3` `/关灯` | ESP32 light control |
 | `/yes` `/no` (or `1`/`2` while one request is pending) | answer a permission request |
@@ -252,11 +296,13 @@ pnpm setup          # interactive config wizard
   replays `test/fixtures/inbound.ndjson`; the inbound-to-session-to-outbound
   loop runs offline in CI (`.github/workflows/ci.yml`).
 - Test spread: gateway 18 / node 24 / markdown 9 / morning 6 / picker 4 /
-  reminders 4 / patch-config 7 = **72**.
+  reminders 4 / patch-config 7 / vision 10 = **82**.
 - Honest gaps (not yet unit-tested): OCR success/failure branches, the
   voice-download-to-ASR flow, outbound media upload (the fake server has no
-  `/upload`), `/send`, `/help`, ESP32 light control, restart resume. Live
-  smoke covers the happy paths.
+  `/upload`), `/send`, `/help`, ESP32 light control, restart resume, and the
+  native-image block itself (`vision.test.ts` covers the mode/policy decision
+  against a stub catalog; `attachments.saveImage` runs only on a live host).
+  Live smoke covers the happy paths.
 - DSH is a developer preview; `@deepseek-ai/*` is pinned at `0.1.1-rc.2`.
 
 ## 8. Known limits
@@ -280,8 +326,74 @@ pnpm setup          # interactive config wizard
 | DSH v0.1 churn | Pinned `@deepseek-ai/*` deps; CI against pinned versions |
 | Protocol opacity | Protocol ported from hermes-agent; recorded fixtures |
 
-## 10. Roadmap
+## 10. Version history
 
+### v0.2.2 — DeepSeek 4.1 multimodal + native image input
+
+The WeChat agent can now *see* pictures instead of receiving OCR text about
+them, which is what DeepSeek 4.1's multimodal input makes possible.
+
+- **Native image input, switchable against OCR.** An inbound picture reaches
+  the model as a real `image` content block when the routed model declares
+  image input, and as DeepSeek-OCR text plus a file path when it does not.
+  `imageInput: auto` (default) decides per routed model from its declared
+  modalities; `native` and `ocr` force one path, and the new `/识图` command
+  switches at runtime. See §4 "Native image input vs OCR".
+- **Declaring the modality is the switch.** The harness gates image blocks on
+  the model's declared `inputModalities`, upstream of the wire — a text-only
+  declaration means no image is ever sent. `deepseek-flash` accepts images but
+  the adapter's built-in catalog predates that (it records the id as text-only
+  and keeps the retired `deepseek-v4-flash-vision-exp` as its only image entry),
+  so declare it in settings:
+
+  ```yaml
+  llm-deepseek:
+    models:
+      - id: deepseek-flash
+        inputModalities: [text, image]
+  ```
+
+  This `models:` list **replaces** the plugin catalog rather than extending it,
+  so list every id you route to (the WeChat profile pins the legacy alias
+  `deepseek-v4-flash`; without it that route stops resolving).
+- **Observed refusals are remembered.** Declaring is a claim about the
+  endpoint, not a check of it, so a route that refuses an image once is
+  suppressed for three hours and later pictures go straight to OCR instead of
+  burning a turn each time.
+- **`send_email`.** Plain-text mail over implicit-TLS SMTP, with the SMTP
+  client exposed through an injectable transport so its command order is
+  covered by tests rather than assumed.
+- **Secrets hardening.** `client-config.json` and `account.json` — written to
+  the repo root at runtime and holding the WeChat token in clear — are now
+  git-ignored. Neither was ever committed.
+- 86 offline unit tests (was 82; `vision.test.ts` + `email.test.ts`).
+
+### v0.2.1 — Web management page and persona editing
+
+- **Settings → Plugins → "微信桥配置"**: every placeholder (whitelist, model
+  route, SiliconFlow media keys, clone voice, paths, throttling) edited in the
+  browser, secrets masked, saved into `cordis.patch.yml` with a timestamped
+  backup that preserves comments and other rows.
+- **Persona editing**: pick a preset, edit its `config.text` in a text area,
+  save; only the persona block is rewritten. "Copy as new preset" duplicates a
+  whole preset directory.
+- Host API under `/dsh-chatnode-wechat/api` (`/schema`, `/config`, `/save`,
+  `/presets`, `/persona`, `/preset/copy`), each request carrying an
+  `X-DSH-Chatnode-Wechat: 1` header; the second bundle row only mounts where a
+  `webServer` service exists.
+
+### v0.2.0 — `/perm`, and files & videos both ways
+
+- `/perm` two-step permission-preset switcher wired up, plus `pnpm setup`, a
+  one-command config wizard.
+- Inbound files/videos download and decrypt to `mediaDir` with the original
+  name preserved; `wechat_send_file` / `wechat_send_video` send local files and
+  clips back (video arrives as a playable mp4 attachment).
+- Inbound user messages carry `[发送于 YYYY-MM-DD HH:mm]` across text, OCR and
+  STT paths.
+- Persona residue removed from the repo; upstream fork attribution added.
+
+## 11. Roadmap
 - Next: group chats (opt-in, risk-heavy), multi-account, a shared-poller
   proxy to coexist with hermes/openclaw.
 - Later: WeCom / DingTalk / Feishu bundles reusing the `node/` layer.

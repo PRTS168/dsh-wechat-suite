@@ -40,6 +40,21 @@ export interface NodeConfig {
   cwd?: string
   /** Directory inbound images are saved to (defaults under $DSH_HOME). */
   mediaDir?: string
+  /**
+   * How an inbound image reaches the model:
+   * - `auto` (default) — send a real image block when the routed model declares
+   *   `image` input, otherwise fall back to the OCR text path;
+   * - `native` — force the image block; fall back to OCR only after the
+   *   provider itself refuses one;
+   * - `ocr` — always use the OCR text path (cheaper for documents/screenshots).
+   */
+  imageInput?: 'auto' | 'native' | 'ocr'
+  /**
+   * Explicit `provider/model` used for native image input. When set, this route
+   * is probed for image support instead of the chat route — useful when the
+   * chat model is text-only but a vision route is available for pictures.
+   */
+  imageInputModel?: string
   /** SiliconFlow API key for DeepSeek-OCR (sk-…). Empty/absent disables OCR. */
   ocrApiKey?: string
   /** DeepSeek-OCR model id (defaults to deepseek-ai/DeepSeek-OCR). */
@@ -81,6 +96,18 @@ export class WechatConversationNode {
   activeSessionId: SessionId | null = null
   /** The allowlisted peer outbound text goes to (last inbound sender). */
   peerId: string | null = null
+
+  /**
+   * Runtime override for {@link NodeConfig.imageInput}, set by the `/识图`
+   * command. Survives until the bridge process restarts; config remains the
+   * source of truth for the next boot.
+   */
+  runtimeImageInput: 'auto' | 'native' | 'ocr' | null = null
+
+  /** Effective image-delivery policy (runtime override, else config). */
+  imageInputMode(): 'auto' | 'native' | 'ocr' {
+    return this.runtimeImageInput ?? this.config.imageInput ?? 'auto'
+  }
 
   private readonly pending = new Map<number, PendingApproval>()
   private approvalCounter = 0
@@ -335,9 +362,30 @@ export class WechatConversationNode {
     return ref
   }
 
+  /**
+   * The `provider/model` route the active agent currently chats on, resolved
+   * from (in order) an explicit `/model` pick, the session's own request
+   * header, then the configured default. Used by the native-image path to ask
+   * the routed model whether it accepts images.
+   */
+  currentModelRoute(): { provider: string; model: string } | undefined {
+    const agent = this.activeAgent()
+    if (agent) {
+      const picked = this.selectionFor(agent).current
+      if (picked) return { provider: picked.provider, model: picked.model }
+    }
+    if (this.config.agentProvider && this.config.agentModel) {
+      return { provider: this.config.agentProvider, model: this.config.agentModel }
+    }
+    const defaults = this.ctx.get('agentDefaultModel') as
+      | { currentSelection?(): { provider: string; model: string } | undefined }
+      | undefined
+    const fallback = defaults?.currentSelection?.()
+    return fallback ? { provider: fallback.provider, model: fallback.model } : undefined
+  }
+
   /** Create a fresh agent+session via the agent factory and make it active. */
-  async createSession(prompt: string): Promise<void> {
-    const sessionId = newSessionId(this)
+  async createSession(prompt: string): Promise<void> {    const sessionId = newSessionId(this)
     try {
       const meta: Record<string, string> = {}
       if (this.config.cwd) meta.cwd = this.config.cwd

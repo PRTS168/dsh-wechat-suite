@@ -17,7 +17,7 @@
 import { writeFile, mkdir, appendFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { ITEM_TEXT, ITEM_VOICE, ITEM_IMAGE, ITEM_FILE, ITEM_VIDEO, type InboundMessage, type WireItem } from '../gateway/types.ts'
 import { imageExt } from '../gateway/media.ts'
 import { ocrImage } from './ocr.ts'
@@ -25,6 +25,14 @@ import { transcribeSpeech } from './stt.ts'
 import type { WechatConversationNode } from './core.ts'
 import { routeCommand, routePickerReply } from './commands.ts'
 import { sendTextToPeer } from './outbound.ts'
+import {
+  buildImageBlock,
+  parseRoute,
+  resolveImageDelivery,
+  routeKey,
+  type ImageAttachmentSaver,
+  type LlmModelCatalog,
+} from './vision.ts'
 
 /**
  * Local wall-clock stamp ("YYYY-MM-DD HH:mm") attached to inbound user
@@ -155,11 +163,40 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
     return
   }
 
-  // DeepSeek-OCR (SiliconFlow): when an apiKey is configured, recognize the
-  // image right away and hand the text to the agent so it can answer what is
-  // in the picture. OCR failures surface the reason to the user (not silent).
+  // How this picture reaches the model: a real image block for a multimodal
+  // route, or DeepSeek-OCR text for a text-only one. `imageInput` picks the
+  // policy; the routed model's own declared modalities decide the rest.
+  const decision = await resolveImageDelivery({
+    mode: node.imageInputMode(),
+    llm: node.ctx.get('llm') as LlmModelCatalog | undefined,
+    chatRoute: node.currentModelRoute(),
+    configuredRoute: parseRoute(node.config.imageInputModel),
+  })
+
+  // An image-only message carries no text of its own, so give the model a line
+  // to act on — otherwise a vision model sees a picture with no instruction.
+  const userText = extractText(message).trim()
+  const lead = userText || '（用户发来一张图片，没有附带文字）'
+
+  let imageBlock: ContentBlock | undefined
+  if (decision.mode === 'native' && decision.route) {
+    try {
+      imageBlock = await buildImageBlock(
+        node.ctx.get('attachments') as ImageAttachmentSaver | undefined,
+        { data: downloaded.bytes, mediaType: downloaded.mediaType, name },
+      )
+      node.ctx.logger?.info?.('[dsh-chatnode-wechat] native image -> %s (%s)', routeKey(decision.route.provider, decision.route.model), decision.reason)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      node.ctx.logger?.warn?.('[dsh-chatnode-wechat] native image block failed, falling back to OCR: %s', reason)
+      imageBlock = undefined
+    }
+  }
+
+  // OCR text path. Used when the policy says so, when the route cannot take
+  // images, or when building the block above failed.
   let ocrText: string | undefined
-  if (node.config.ocrApiKey) {
+  if (imageBlock === undefined && node.config.ocrApiKey) {
     try {
       ocrText = await ocrImage(
         {
@@ -182,14 +219,23 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
     }
   }
 
+  // Keep the on-disk path in both modes: the session log stays replayable and
+  // the agent can re-read the file later (the model reads images by path when
+  // its route cannot take inline ones).
   const ocrSection = ocrText?.trim()
     ? `\n\n【OCR 识别结果】\n${ocrText.trim()}`
     : ''
+  const layoutNote = imageBlock
+    ? ''
+    : '\n\n【图片交付】当前模型未接收原生图片，以上为其磁盘路径（可用读图工具查看）。'
+  const text = stampLine(`[微信图片] ${absPath}\n${lead}${ocrSection}${layoutNote}`)
+
+  const content: ContentBlock[] = imageBlock
+    ? [{ type: 'text', text }, imageBlock]
+    : [{ type: 'text', text }]
+
   const messageValue = createUserMessage({
-    content: [{
-      type: 'text',
-      text: stampLine(`[微信图片] ${absPath}${ocrSection}`),
-    }],
+    content,
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
