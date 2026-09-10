@@ -24,6 +24,19 @@
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./config-api": {
+      "types": "./lib/node/config-api.d.ts",
+      "default": "./lib/node/config-api.js"
+    },
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
   "files": [
     "lib",
     "cordis.patch.yml",
@@ -36,13 +49,14 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
     "prepare": "pnpm build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test \"test/*.test.ts\"",
     "login": "node scripts/login.mjs",
     "smoke": "node scripts/smoke.mjs",
     "setup": "node scripts/setup.mjs",
+    "build:client": "node scripts/build-client.mjs",
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
@@ -66,6 +80,12 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
     }
   }
 }

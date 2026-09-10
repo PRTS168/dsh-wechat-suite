@@ -136,6 +136,20 @@ plugins:
 之外：`$DSH_HOME/.agent-presets/wechat/`。把 `agentPreset` 指向你已安装的
 任意 preset，或省略该键。
 
+### Web 管理页
+
+在 `web` profile 下，本 bundle 还带一个浏览器管理页：**设置 → 插件 →
+「微信桥配置」**。它列出上面全部待填项（白名单、模型路由、SiliconFlow 媒体
+Key、克隆音色、路径、节流参数），显示环境状态（凭据 / 人设 preset / 白名单），
+密钥脱敏展示，保存时直接改写 profile 的 `cordis.patch.yml` —— 自动生成带
+时间戳的备份，并保留注释与其他插件条目。
+
+主机接口位于 `/dsh-chatnode-wechat/api`（`GET /schema`、`GET /config`、
+`POST /save`），所有请求必须携带 `X-DSH-Chatnode-Wechat: 1` 头（跨站请求无法
+伪造该头，因此被拒绝）；第二个 bundle 行 `dsh-chatnode-wechat/config-api` 只在
+存在 `webServer` 服务的 profile 中加载，headless 不受影响。保存后重启 dsh web
+生效。
+
 ## 5. 命令与工具
 
 命令（微信里发送）：

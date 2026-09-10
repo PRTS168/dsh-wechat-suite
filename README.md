@@ -157,6 +157,22 @@ environment) lives outside this repo under
 `$DSH_HOME/.agent-presets/wechat/` — point `agentPreset` at any preset you
 have installed, or omit it.
 
+### Web management page
+
+In a `web` profile the bundle also ships a browser page: **Settings → Plugins →
+"微信桥配置 / WeChat bridge config"**. It lists every placeholder above
+(whitelist, model route, SiliconFlow media keys, clone voice, paths,
+throttling), shows environment status (credentials, agent preset, allowlist),
+masks secrets, and saves straight into the profile's `cordis.patch.yml` — with
+a timestamped backup, keeping comments and other plugin rows intact.
+
+The host API lives under `/dsh-chatnode-wechat/api` (`GET /schema`,
+`GET /config`, `POST /save`). Every request must carry the
+`X-DSH-Chatnode-Wechat: 1` header (cross-site requests cannot forge it), and the
+second bundle row (`dsh-chatnode-wechat/config-api`) only loads where a
+`webServer` service exists — headless profiles are unaffected. Changes take
+effect after restarting dsh web.
+
 ## 5. Commands & tools
 
 Commands (send in WeChat):

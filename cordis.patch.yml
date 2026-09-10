@@ -10,3 +10,8 @@
       name: '@dsh-cowork/chatnode-wechat'
       config:
         allowFrom: []
+    # Web management page host API (settings → plugins → 微信桥配置).
+    # Requires the `webServer` service, so it only loads in web profiles;
+    # headless profiles skip this row.
+    - id: dsh-chatnode-wechat-config-api
+      name: '@dsh-cowork/chatnode-wechat/config-api'
