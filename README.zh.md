@@ -16,7 +16,7 @@ profile 接到微信个人账号 —— 与 hermes-agent、OpenClaw 同机制。
 > 本仓库**不是**上游项目或其作者的官方发布，也与上游无隶属关系；原始提交
 > 历史与早期贡献者署名完整保留并归属上游作者，基础协议以上游为准。
 
-**状态** | 版本 `v0.2.0`（见 [Releases](https://github.com/PRTS168/dsh-chatnode-wechat/releases)）· MIT · **65 项离线单测全绿** + 一轮真机微信冒烟（2026-09）
+**状态** | 版本 `v0.2.1`（见 [Releases](https://github.com/PRTS168/dsh-chatnode-wechat/releases)）· MIT · **72 项离线单测全绿** + 一轮真机微信冒烟（2026-09）
 
 > **仅供参考。** 已在一套特定环境实测，不代表开箱即用。所有 `<...>` 都是
 > 需要你填入的占位符（`allowFrom` 与 `WEIXIN_*` 凭据必填 —— 缺失时桥会

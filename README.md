@@ -20,7 +20,7 @@ you (WeChat)  <=>  iLink  <=>  wechat-gateway  <=>  wechat-conversation-node  <=
 > remain intact and are attributed to the upstream authors; upstream remains
 > the source of truth for the base protocol.
 
-**Status** | version `v0.2.0` (see [Releases](https://github.com/PRTS168/dsh-chatnode-wechat/releases)) · MIT · **65 offline unit tests green** + a live WeChat smoke pass (2026-09)
+**Status** | version `v0.2.1` (see [Releases](https://github.com/PRTS168/dsh-chatnode-wechat/releases)) · MIT · **72 offline unit tests green** + a live WeChat smoke pass (2026-09)
 
 > **Reference only.** Verified on one specific environment; not a blanket
 > promise of portability. Everything that looks like `<...>` is a placeholder
