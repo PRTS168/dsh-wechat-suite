@@ -16,7 +16,10 @@ import type { WechatConversationNode } from './core.ts'
 
 /** 首条用户消息的前 24 字，作为标题尚未生成时的回退标签。 */
 export function firstPromptLabel(session: Session): string {
-  for (const event of session.events) {
+  // `session.events` 在 DSH 0.1.5 被移除，改为显式快照 API：
+  // snapshotEvents() 返回全量不可变快照（ownEvents() 只给当前会话自有事件，
+  // 不含 fork 继承的前缀）。
+  for (const event of session.snapshotEvents()) {
     if (event.type === 'user/message') {
       const blocks = event.data.content as unknown as Array<{ type: string; text?: string }>
       const text = blocks
@@ -32,7 +35,10 @@ export function firstPromptLabel(session: Session): string {
 
 /** 会话名称：真实标题优先，标题未生成（或服务不可用）时回退首条消息标签。 */
 export function sessionName(node: WechatConversationNode, session: Session): string {
-  const service: SessionTitleService | undefined = node.ctx.sessionTitle
+  // 用 ctx.get() 而不是 ctx.sessionTitle：该服务是可选的（不进 inject），
+  // 而 cordis 的代理属性访问对未注入的服务会抛
+  // "cannot get property ... without inject"，ctx.get() 则返回 undefined。
+  const service = node.ctx.get('sessionTitle') as SessionTitleService | undefined
   const title = service?.get(session)?.title
   if (title) return title
   return firstPromptLabel(session)

@@ -235,7 +235,7 @@ pnpm setup          # 交互式配置向导
   媒体上行（fake 服务器无 /upload）、`/send`、`/help`、ESP32 灯控、
   重启 resume，以及原生图片块本身（`vision.test.ts` 用 stub 目录覆盖模式判定，
   `attachments.saveImage` 只在真机上跑）。真机冒烟覆盖主路径。
-- DSH 是开发者预览版，`@deepseek-ai/*` 锁定在 `0.1.1-rc.2`。
+- DSH 是开发者预览版，`@deepseek-ai/*` 锁定在 `0.1.5-rc.2`。
 
 ## 8. 已知限制
 

@@ -182,7 +182,56 @@ llm-deepseek:
 **仓库根**，内含微信 `token` / `account_id` / `sync_buf` **明文**。
 两者已列入 `.gitignore`（历史中从未被提交）。**不要在仓库根跑实例后执行 `git add .`。**
 
-### ⑥ Windows 换行
+### ⑥ 升级到 DSH 0.1.5-rc.2 时的五个断裂点（务必先读）
+
+从 `0.1.1-rc.2` 升到 `0.1.5-rc.2` 时踩到的真实问题。**注意**：升级前那 86 项测试
+全绿是**假绿**——它们跑的是本仓库钉住的依赖副本，而线上加载的是宿主的 `0.1.5-rc.2`。
+
+1. **`Session.events` 被移除。** 改为显式快照 API：`snapshotEvents(from?, to?)`
+   返回全量不可变快照，`ownEvents()` 只给当前会话自有事件（不含 fork 继承前缀），
+   `eventAt(seq)` 取单条。本仓库三处读取（`outbound.ts` 的 `digestLine`、
+   `labels.ts` 的 `firstPromptLabel`、`commands.ts` 的 `/status`）都改为
+   `snapshotEvents()`。
+2. **`dsh-session-title` 新增了对 `sessionProjections` 的依赖**
+   （`static inject = ["sessions", "sessionProjections"]`）。宿主缺该服务时它
+   **静默不加载**——而它的服务名 `sessionTitle` 又曾在本插件 `inject` 里，于是
+   **等待门连锁**：标题服务缺席 → 桥也整个不激活，表现为一批用例集体超时。
+   现已把 `sessionTitle` 移出 `inject`，改用 `ctx.get()`，标签回退到首条用户消息。
+3. **可选服务不能用属性访问。** cordis 代理对未注入服务的读取会抛
+   `cannot get property "X" without inject`；`ctx.get('X')` 才返回 `undefined`。
+   排查：
+   ```sh
+   rg "ctx\.(llm|attachments|sessionTitle|agentDefaultModel|permissionPresets)\b" src
+   ```
+   本仓库现在对全部可选服务统一用 `ctx.get()`。
+4. **schemastery 双实例导致 `TS2742`。** pnpm 里同时存在 3.18.1（顶层直接依赖）
+   与 3.18.2（传递依赖）时，`tsc` 无法命名从 `z.object()` 推出的类型，报
+   "The inferred type of 'Config' cannot be named without a reference to …"。
+   修法：把顶层 pin 升到 `^3.18.2` 消除双实例（不是去加类型注解）。
+5. **cordis 也要跟着升。** `0.1.5-rc.2` 整批包要求 peer `^4.0.2`，顶层若还是
+   `4.0.1` 会报 unmet peer。cordis 是服务注册表，双实例会破坏服务解析，必须对齐。
+   对齐后 `pnpm peers check` 应输出 "No peer dependency issues found"。
+
+**升级流程**（下次 DSH 再升级照做）：
+
+```sh
+# 1. 查宿主内嵌包的真实版本 —— 不要看 dsh wrapper 的版本号，两者不同：
+#    实测 wrapper 是 0.1.5-rc.1 而内嵌包是 0.1.5-rc.2
+#    <宿主>/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-llm/package.json
+# 2. 把 package.json 里所有 @deepseek-ai/* 的 pin 改到该版本，并升 cordis / schemastery
+pnpm install --no-frozen-lockfile
+pnpm typecheck        # 这一步会暴露 API 断裂（如 Session.events）
+# 3. 修完断裂点后
+pnpm test && pnpm build
+pnpm peers check      # 应无告警
+```
+
+**测试环境的服务面必须跟上宿主。** `test/node.test.ts` 的 `beforeEach` 要挂齐
+宿主组合里被依赖的服务——0.1.5 起多了 `@deepseek-ai/dsh-session-projection`
+（devDependency）。宿主组合的权威来源是
+`<宿主>/node_modules/@deepseek-ai/dsh-base/cordis.patch.yml`。
+
+### ⑦ Windows 换行
 
 仓库内文件是 LF，工作区是 CRLF，`git add` 会打印一堆
 `LF will be replaced by CRLF` 警告——**这是正常的**，不是错误。
@@ -288,5 +337,5 @@ picker 4 / reminders 4 / patch-config 7 / vision 10 / email 4。
   报文录制样本（`test/fixtures/inbound.ndjson`）。改动网关时以录制样本为准，
   不要凭记忆猜字段编号——`item_list` 的 type、`getuploadurl` 的 `media_type`、
   发送端的 item type 是**三套独立编号**，混用会导致 0 字节或静默失败。
-- **DSH 是开发者预览版**：`@deepseek-ai/*` 钉在 `0.1.1-rc.2`。升级这些依赖时
+- **DSH 是开发者预览版**：`@deepseek-ai/*` 钉在 `0.1.5-rc.2`（与宿主内嵌版本对齐）。升级这些依赖时
   注意 cordis 语义可能变化（尤其 `inject`）。

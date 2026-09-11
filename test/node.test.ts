@@ -14,6 +14,7 @@ import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import AgentRegistry, { type Agent, type AgentFactory } from '@deepseek-ai/dsh-agent'
 import ApprovalService from '@deepseek-ai/dsh-user-approval'
+import SessionProjection from '@deepseek-ai/dsh-session-projection'
 import SessionTitleService from '@deepseek-ai/dsh-session-title'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -90,6 +91,10 @@ beforeEach(async () => {
   await ctx.plugin(AgentRegistry)
   ctx.agents.setFactory(factory)
   await ctx.plugin(ApprovalService)
+  // DSH 0.1.5: dsh-session-title 依赖 sessionProjections，缺它则标题服务不加载
+  // （inject 是等待门），因此 host 组合里的 dsh-session-projection 也要挂上，
+  // 否则测不到"真实标题优先于首条消息回退"这条路径。
+  await ctx.plugin(SessionProjection)
   await ctx.plugin(SessionTitleService, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 })
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)

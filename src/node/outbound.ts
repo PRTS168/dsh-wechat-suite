@@ -172,7 +172,8 @@ export function digestLine(session: Session, badge?: string): string {
   let tools = 0
   let lastTool: string | undefined
   let inTurn = false
-  for (const event of session.events) {
+  // `session.events` 在 DSH 0.1.5 被移除，改用全量不可变快照。
+  for (const event of session.snapshotEvents()) {
     if (event.type === 'turn/start') {
       turn = event.data.turn
       inTurn = true

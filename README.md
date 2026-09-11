@@ -241,7 +241,7 @@ pnpm smoke          # 真机手动冒烟
   （fake 服务器无 `/upload`）、`/send`、`/help`、ESP32 灯控、重启 resume，以及
   **原生图片块本身**——`vision.test.ts` 用 stub 目录覆盖模式判定，
   `attachments.saveImage` 只在真机上跑。真机冒烟覆盖主路径。
-- DSH 是开发者预览版，`@deepseek-ai/*` 依赖钉在 `0.1.1-rc.2`。
+- DSH 是开发者预览版，`@deepseek-ai/*` 依赖钉在 `0.1.5-rc.2`。
 
 **改动生效三步**：`pnpm build` → 重启 `dsh web` → 微信里发条新消息触发。
 
