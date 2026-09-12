@@ -34,8 +34,8 @@
 
 > [!NOTE]
 > **仅供参考。** 已在一套特定环境实测（2026-09），不代表开箱即用。所有 `<...>` 都是需要
-> 你填入的占位符。协议细节逆向自既有客户端，且本仓库**不含任何具体人设内容** ——
-> preset 位于仓库之外的 `$DSH_HOME/.agent-presets/<名>/`。
+> 你填入的占位符。协议细节逆向自既有客户端。人设 preset 需自备：把 `agentPreset` 指向你自己
+> 放在 `$DSH_HOME/.agent-presets/<名>/` 的 preset。
 
 ---
 
@@ -58,7 +58,7 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
 
 ## ✨ v0.3.0 改进
 
-自 v0.2.2 以来的改进（脱敏标准不变：仓库内无真实凭据 / 个人微信 ID / 本机路径）。
+自 v0.2.2 以来的改进。
 完整发行说明：[`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md)
 · [Release 页面](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0)。
 
@@ -103,7 +103,6 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
   - 跨宿主差异（都已在代码里处理）：`dsh-persona` 的配置键 `text:`（0.1.2）→ `prefix:`（0.1.5）；`Session.events` 在 0.1.5 移除 → 全库改用 `snapshotEvents()`；可选服务不得写进 `inject`（缺投影时 `1 entry did not activate` 会让**整个 profile 启动失败**）→ 一律 `ctx.get()`
 - 单元测试 **86 → 154 项**（新增 `context-policy` 21、`light` 13、`persona` 7、`dedup` 6、`inbound-media` 6、`boot-safety` 5、`resume` 5、`user-message-envelope` 5 等）
 - 验证：真机微信往返（文字 / 图片 / 文件 / 生图）→ 触发一次自动轮换并确认新会话可用；对运行实例连续 3 次 patch 热重载压迫，进程存活、轮询不断、stderr 无 `fatal` / `unhandled`
-- README 首页**恢复英文**（v0.3.0 期间被误写为中文，等于丢了英文版），中英首页同步补上本版改进与适配说明；`DEVELOPMENT.md` 按实测重算测试分布
 
 </details>
 
@@ -228,7 +227,7 @@ llm-deepseek:
 ```
 
 这个 `models:` 列表是**整体替换**插件内置目录、不是追加 —— 要把你实际路由到的每个 id 都
-列上（本项目 profile 钉的是旧别名 `deepseek-v4-flash`，漏掉它那条路由就不再解析）。
+列上（若你的 profile 路由到旧别名 `deepseek-v4-flash`，也要一并列出，否则那条路由不再解析）。
 
 `/识图` 可查看并运行时切换模式（`auto` / `native` / `ocr`），覆盖状态持续到 `dsh web`
 重启。两种模式下入站图片都保留 `[微信图片] <路径>` 前缀，会话记录可回放、agent 可重读文件。
@@ -443,8 +442,8 @@ pnpm setup          # 交互式配置向导
   Cordis 插件模型（`cordis`、`schemastery`）。
 - **可选媒体能力所用服务** —— SiliconFlow（DeepSeek-OCR、Kwai-Kolors、XingChenASR、
   CosyVoice2）与 Open-Meteo（早安天气）。
-- **感谢** —— 所有报告过问题的人（v0.3.0 的几个关键修复都源自真实故障反馈），以及上游项目
-  维护者打下的基础协议工作。
+- **感谢** —— 上游项目维护者打下的基础协议工作，以及本 bundle 所依赖的 DeepSeek Harness 与
+  Cordis 插件生态。
 
 ## 📄 License
 

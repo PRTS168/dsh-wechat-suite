@@ -338,7 +338,7 @@ git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main
 ```
 
 > **推 tag ≠ 发布 Release。** `git push origin vX.Y.Z` 只产生 tag，Releases 页面
-> 不会出现这一版（v0.3.0 就这样漏过一次）。必须额外调一次 API：
+> 不会出现这一版。必须额外调一次 API：
 >
 > ```sh
 > # 令牌从 GCM 取（本机已存 PRTS168 的凭据），不要写进任何文件
@@ -352,6 +352,11 @@ git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main
 >
 > 发布后核对：`GET /releases/latest` 返回新 tag，且 `draft=false`
 > （列表接口可能命中缓存，用 `/releases/latest` 或加时间戳参数复验）。
+
+**约定**：先补 `CHANGELOG.md`（技术变更），再写一份对应的 `releases/vX.Y.Z-release-notes.md`
+（面向使用者的发行公告，正文原样用作 GitHub Release 内容，包含 `## dsh-chatnode-wechat vX.Y.Z`
+标题行），两者与代码在同一批提交里推上去。文档一律以**使用者**为读者：只写他们需要知道的
+行为、配置与升级动作，不写仓库维护过程。
 
 **注意**：`test/*.test.ts` 用 `pnpm test` 跑偶发超时，加
 `--test-timeout=15000 --test-force-exit` 更稳（reminder 用例含真实计时器）。

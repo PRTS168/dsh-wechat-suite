@@ -21,5 +21,3 @@
 - **`releases/vX.Y.Z-release-notes.md`** —— 面向使用者的发布公告，讲这个版本
   为什么值得升级、怎么升级、有什么坑，直接用作 GitHub Release 正文。
 
-新增版本时的约定：先补 `CHANGELOG.md`，再写一份对应的 release notes，
-两者在同一批提交里推上去。

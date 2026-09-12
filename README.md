@@ -36,8 +36,8 @@
 > [!NOTE]
 > **Reference only.** Verified on one specific environment (2026-09); not a blanket promise of
 > portability. Everything that looks like `<...>` is a placeholder you must fill in. The
-> protocol was reconstructed from existing clients, and this repository ships **no persona
-> content** — presets live outside it under `$DSH_HOME/.agent-presets/<name>/`.
+> protocol was reconstructed from existing clients. Persona presets are not shipped: point
+> `agentPreset` at a preset of your own under `$DSH_HOME/.agent-presets/<name>/`.
 
 ---
 
@@ -61,8 +61,7 @@ you (WeChat)  ⇄  iLink  ⇄  wechat-gateway  ⇄  wechat-conversation-node  �
 
 ## ✨ What's new in v0.3.0
 
-Changes since v0.2.2 (desensitization standard unchanged: no real credentials, personal WeChat
-IDs or machine-specific paths in this repository). Full announcement:
+Changes since v0.2.2. Full announcement:
 [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md) ·
 [release page](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0).
 
@@ -107,7 +106,6 @@ IDs or machine-specific paths in this repository). Full announcement:
   - cross-host differences, all handled in code: `dsh-persona`'s key `text:` (0.1.2) → `prefix:` (0.1.5); `Session.events` removed in 0.1.5 → `snapshotEvents()`; optional services never in `inject` (a missing projection yields `1 entry did not activate` and fails the whole profile) → `ctx.get()`
 - unit tests **86 → 154** (new: `context-policy` 21, `light` 13, `persona` 7, `dedup` 6, `inbound-media` 6, `boot-safety` 5, `resume` 5, `user-message-envelope` 5, …)
 - verified live: WeChat round trips (text / image / file / image generation) → one automatic rotation with the new session usable → 3 rapid patch hot reloads with the process alive, polling continuous and no `fatal` / `unhandled` in stderr
-- the homepage README is English again (it had been overwritten with Chinese during v0.3.0, losing the English edition); both READMEs now carry this version's changes and compatibility notes, and `DEVELOPMENT.md` recomputes the real test spread
 
 </details>
 
@@ -235,8 +233,8 @@ llm-deepseek:
 ```
 
 This `models:` list **replaces** the plugin catalog rather than extending it, so list every id you
-route to — the WeChat profile pins the legacy alias `deepseek-v4-flash`, and without it that route
-stops resolving.
+route to — if your profile routes to the legacy alias `deepseek-v4-flash`, list it as well, or that
+route stops resolving.
 
 `/识图` reports and switches the mode at runtime (`auto` / `native` / `ocr`); the override lasts
 until `dsh web` restarts. Both modes keep the `[微信图片] <path>` prefix, so the session log stays
@@ -460,8 +458,8 @@ Full changelog: [`CHANGELOG.md`](CHANGELOG.md) · all announcements: [`releases/
   Cordis plugin model (`cordis`, `schemastery`) that this bundle extends.
 - **Services used by the optional media helpers** — SiliconFlow (DeepSeek-OCR, Kwai-Kolors,
   XingChenASR, CosyVoice2) and Open-Meteo (morning weather).
-- **Thanks** — to everyone who reported the failures that shaped v0.3.0, and to the maintainers of
-  the upstream project for the base protocol work.
+- **Thanks** — to the upstream maintainers for the base protocol work, and to the DeepSeek Harness
+  and Cordis communities whose plugins this bundle builds on.
 
 ## 📄 License
 
