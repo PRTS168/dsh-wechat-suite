@@ -29,6 +29,28 @@ export interface PersistenceEntry {
         createdAt?: number;
     };
 }
+/**
+ * The host permission-preset service, as actually shaped by the host.
+ *
+ * It is **session-scoped**: `current(session)` and `set(session, name)` take a
+ * session, and menu labels come from `optionOf()`. Getting this wrong is
+ * invisible — the throw escapes `routeCommand`, the inbound handler swallows it
+ * and the user simply gets no answer at all. That is exactly what `/perm` did
+ * while this code passed an event array to `current()`.
+ */
+export interface HostPermissionPresets {
+    names?: readonly string[];
+    current(session: unknown): string;
+    resolve(name: string): {
+        name?: string;
+        description?: string;
+    };
+    optionOf?(name: string): {
+        name?: string;
+        description?: string;
+    };
+    set?(session: unknown, name: string): void;
+}
 /** Pick the newest persisted `wechat-` session, or undefined when there is none. */
 export declare function selectNewestWechat(entries: readonly PersistenceEntry[]): {
     id: string;
@@ -195,14 +217,18 @@ export declare class WechatConversationNode {
         label: string;
         value: string;
     }>>;
-    /** Available permission presets as picker entries. */
+    /** The host permission-preset service, when the profile mounted one. */
+    private permissionPresets;
+    /** The preset effective for a session, or undefined when the host cannot say. */
+    private activePreset;
+    /** Available permission presets as picker entries. Never throws. */
     permissionPickerOptions(): Array<{
         label: string;
         value: string;
     }>;
     /** Switch the live agent's model to `provider/model` (applies next message). */
     applyModelSelection(value: string): Promise<void>;
-    /** Switch the session's permission preset. */
+    /** Switch the session's permission preset. Never throws. */
     applyPermissionPreset(name: string): Promise<void>;
     /**
      * Return (installing on first use) the mutable model selection for an agent,

@@ -23,6 +23,7 @@ import { attachApprovalBridge } from './approvals.ts'
 import { attachSessionOutbound, sendTextToPeer } from './outbound.ts'
 import { handleInbound } from './inbound.ts'
 import { attachAdminControl } from './admin-control.ts'
+import { describeError } from './net.ts'
 import {
   buildHandoff,
   parseContextPolicy,
@@ -47,6 +48,23 @@ export interface PersistenceEntry {
   id?: string
   createdAt?: number
   header?: { id?: string; createdAt?: number }
+}
+
+/**
+ * The host permission-preset service, as actually shaped by the host.
+ *
+ * It is **session-scoped**: `current(session)` and `set(session, name)` take a
+ * session, and menu labels come from `optionOf()`. Getting this wrong is
+ * invisible — the throw escapes `routeCommand`, the inbound handler swallows it
+ * and the user simply gets no answer at all. That is exactly what `/perm` did
+ * while this code passed an event array to `current()`.
+ */
+export interface HostPermissionPresets {
+  names?: readonly string[]
+  current(session: unknown): string
+  resolve(name: string): { name?: string; description?: string }
+  optionOf?(name: string): { name?: string; description?: string }
+  set?(session: unknown, name: string): void
 }
 
 /** Pick the newest persisted `wechat-` session, or undefined when there is none. */
@@ -371,18 +389,43 @@ export class WechatConversationNode {
     return options
   }
 
-  /** Available permission presets as picker entries. */
+  /** The host permission-preset service, when the profile mounted one. */
+  private permissionPresets(): HostPermissionPresets | undefined {
+    return this.ctx.get('permissionPresets') as HostPermissionPresets | undefined
+  }
+
+  /** The preset effective for a session, or undefined when the host cannot say. */
+  private activePreset(presets: HostPermissionPresets, session: Session | undefined): string | undefined {
+    if (!session) return undefined
+    try {
+      return presets.current(session)
+    } catch (error) {
+      this.ctx.logger?.warn?.(
+        '[dsh-chatnode-wechat] permission preset state unavailable: %s',
+        describeError(error),
+      )
+      return undefined
+    }
+  }
+
+  /** Available permission presets as picker entries. Never throws. */
   permissionPickerOptions(): Array<{ label: string; value: string }> {
-    const presets = this.ctx.get('permissionPresets') as
-      | { names: readonly string[]; current(events: readonly unknown[]): string; resolve(name: string): { label?: string; description?: string } }
-      | undefined
-    if (!presets) return []
-    const active = presets.current([])
-    return presets.names.map((name) => {
-      const resolved = presets.resolve(name)
-      const label = `${name}${name === active ? ' ✓' : ''}${resolved.description ? ` — ${resolved.description}` : ''}`
-      return { label, value: name }
-    })
+    const presets = this.permissionPresets()
+    if (!presets?.names) return []
+    const active = this.activePreset(presets, this.activeSession())
+    try {
+      return presets.names.map((name) => {
+        const option = presets.optionOf?.(name) ?? presets.resolve(name)
+        const label = `${option?.name ?? name}${name === active ? ' ✓' : ''}${option?.description ? ` — ${option.description}` : ''}`
+        return { label, value: name }
+      })
+    } catch (error) {
+      this.ctx.logger?.warn?.(
+        '[dsh-chatnode-wechat] permission presets unavailable: %s',
+        describeError(error),
+      )
+      return []
+    }
   }
 
   /** Switch the live agent's model to `provider/model` (applies next message). */
@@ -421,27 +464,26 @@ export class WechatConversationNode {
     }
   }
 
-  /** Switch the session's permission preset. */
+  /** Switch the session's permission preset. Never throws. */
   async applyPermissionPreset(name: string): Promise<void> {
-    await this.ensureWechatTarget()
-    const session = this.activeSession()
-    const presets = this.ctx.get('permissionPresets') as
-      | { resolve(presetName: string): unknown; current(events: readonly unknown[]): string }
-      | undefined
-    if (!presets) {
-      await sendTextToPeer(this, '❌ 权限预设服务不可用。')
-      return
-    }
     try {
-      presets.resolve(name) // throws on unknown names
-      if (session) {
-        const svc = this.ctx.get('permissionPresets') as { set(session: Session, preset: string): void }
-        svc.set(session, name)
+      await this.ensureWechatTarget()
+      const session = this.activeSession()
+      const presets = this.permissionPresets()
+      if (!presets) {
+        await sendTextToPeer(this, '❌ 权限预设服务不可用。')
+        return
       }
-      const current = presets.current([])
-      await sendTextToPeer(this, `✅ 权限预设已切换：${name}${session ? '' : '（无活动会话，已记录）'}${current === name ? '' : `（当前生效: ${current}）`}`)
+      presets.resolve(name) // throws on unknown names
+      if (!session) {
+        await sendTextToPeer(this, '❌ 没有活动会话，无法切换权限预设。发送 /new <prompt> 开始一个会话。')
+        return
+      }
+      presets.set?.(session, name)
+      const current = this.activePreset(presets, session)
+      await sendTextToPeer(this, `✅ 权限预设已切换：${name}${current && current !== name ? `（当前生效: ${current}）` : ''}`)
     } catch (error) {
-      await sendTextToPeer(this, `❌ 权限预设无效: ${error instanceof Error ? error.message : String(error)}`)
+      await sendTextToPeer(this, `❌ 权限预设无效: ${describeError(error)}`)
     }
   }
 

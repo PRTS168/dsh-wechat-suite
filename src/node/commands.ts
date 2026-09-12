@@ -15,6 +15,7 @@ import type { WechatConversationNode } from './core.ts'
 import { sendTextToPeer } from './outbound.ts'
 import { sessionBadge, sessionName } from './labels.ts'
 import { controlLight, type LightMode } from './light.ts'
+import { describeError } from './net.ts'
 
 /**
  * Sessions ordered most-recent-first. Only `wechat-` prefixed sessions
@@ -58,9 +59,17 @@ export async function routeCommand(node: WechatConversationNode, text: string): 
       await sendTextToPeer(node, helpText())
       return true
 
-    case 'sessions':
-      await sendTextToPeer(node, renderSessions(node))
+    case 'sessions': {
+      // After a restart the in-memory store is empty until something resumes a
+      // persisted session; without this the list looks like "everything is gone".
+      await node.ensureWechatTarget().catch(() => false)
+      try {
+        await sendTextToPeer(node, renderSessions(node))
+      } catch (error) {
+        await sendTextToPeer(node, `❌ 会话列表读取失败：${describeError(error)}`)
+      }
       return true
+    }
 
     case 'use': {
       const index = Number(rest[0])
@@ -123,7 +132,11 @@ export async function routeCommand(node: WechatConversationNode, text: string): 
       return true
     }
 
-    case 'status': {      const agent = node.activeAgent()
+    case 'status': {
+      // Same reason as /sessions: resume a persisted session before reporting,
+      // so a restart does not read as "no session".
+      await node.ensureWechatTarget().catch(() => false)
+      const agent = node.activeAgent()
       const session = node.activeSession()
       if (!session) {
         await sendTextToPeer(node, '💤 没有活动会话。发送 /new <prompt> 开始，或 /sessions 查看已有会话。')
@@ -147,14 +160,31 @@ export async function routeCommand(node: WechatConversationNode, text: string): 
         await sendTextToPeer(node, '❌ 没有可回复的联系人')
         return true
       }
+      const wechat = node.ctx.get('wechat') as
+        | { sendImage(to: string, path: string): Promise<{ success: boolean; error?: string }> }
+        | undefined
+      if (!wechat?.sendImage) {
+        await sendTextToPeer(node, '❌ 网关服务不可用，无法发送图片。')
+        return true
+      }
       await sendTextToPeer(node, '🖼 正在发送图片…')
-      const result = await node.ctx.wechat.sendImage(peer, target)
-      await sendTextToPeer(node, result.success ? '✅ 图片已发送' : `❌ 发送失败: ${result.error}`)
+      try {
+        const result = await wechat.sendImage(peer, target)
+        await sendTextToPeer(node, result.success ? '✅ 图片已发送' : `❌ 发送失败: ${result.error}`)
+      } catch (error) {
+        await sendTextToPeer(node, `❌ 发送失败：${describeError(error)}`)
+      }
       return true
     }
 
     case 'model': {
-      const options = await node.modelPickerOptions()
+      let options: Array<{ label: string; value: string }> = []
+      try {
+        options = await node.modelPickerOptions()
+      } catch (error) {
+        await sendTextToPeer(node, `❌ 枚举模型失败：${describeError(error)}`)
+        return true
+      }
       if (options.length === 0) {
         await sendTextToPeer(node, '❌ 无法枚举模型（llm 服务不可用）。')
         return true
@@ -166,7 +196,13 @@ export async function routeCommand(node: WechatConversationNode, text: string): 
     }
 
     case 'perm': {
-      const options = node.permissionPickerOptions()
+      let options: Array<{ label: string; value: string }> = []
+      try {
+        options = node.permissionPickerOptions()
+      } catch (error) {
+        await sendTextToPeer(node, `❌ 读取权限预设失败：${describeError(error)}`)
+        return true
+      }
       if (options.length === 0) {
         await sendTextToPeer(node, '❌ 没有可用的权限预设（permission presets 未配置）。')
         return true

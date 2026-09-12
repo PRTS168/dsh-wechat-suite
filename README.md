@@ -5,7 +5,7 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/offline%20tests-154%20passing-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/offline%20tests-158%20passing-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
@@ -75,10 +75,14 @@ Fixes since v0.3.0. Full announcement:
 - **The retired light vocabulary stopped working** — `/gear` `/off` `/low` `/mid` `/high` (the device's own words, used by the archived `dsh-wechat-tools` plugin) were answered with "unknown command"
   - all five are restored and listed in `/help`, sharing one implementation with `/开灯` and friends
 - **Light control was proxy-bound too** — a request to a LAN device now retries directly as well, and reports the real reason instead of `fetch failed`
+- **`/perm` answered nothing at all** — the host's permission-preset service is session-scoped (`current(session)`, `set(session, name)`, labels from `optionOf()`), and the bridge called it with an event array: the throw escaped the command router, the inbound handler swallowed it, and the user saw pure silence
+  - it now uses the real signatures, and the whole call is guarded so a host API change still produces a reply
+  - the command surface is **never silent** any more: `/perm` `/model` `/sessions` `/status` `/send` report `❌ …failed: <real reason>` instead of nothing; `/send` also reads the gateway through `ctx.get()`
+  - `/sessions` and `/status` now resume a persisted `wechat-` session first, so a restart no longer reads as "no sessions"
 
 ### Other
 
-- unit tests **143 → 154** (new: `commands` 7, `morning` +3, `light` +1; the unreachable-device case now injects both transports and no longer touches the network)
+- unit tests **143 → 158** (new: `commands` 11, `morning` +3, `light` +1; the unreachable-device case now injects both transports and no longer touches the network)
 - new `src/node/net.ts` — `describeError()` and `directRequest()` shared by the weather push and light control
 - docs: proxy troubleshooting tip on both homepages, and the trap recorded under *Environment* in `DEVELOPMENT.md`
 
@@ -373,7 +377,7 @@ commands are queued on disk (`$DSH_HOME/wechat-admin/queue/`) and executed by th
 pnpm install
 pnpm build          # src/ -> lib/ (tsc)
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts — 154 tests, no WeChat account
+pnpm test           # node --test test/*.test.ts — 158 tests, no WeChat account
 pnpm smoke          # manual live-account check
 pnpm setup          # interactive config wizard
 ```
@@ -390,8 +394,8 @@ pnpm setup          # interactive config wizard
   outbound media upload (the fake server has no `/upload`), `/send`, `/help`, restart resume, and
   the native-image block itself (`vision.test.ts` covers the mode/policy decision against a stub
   catalog; `attachments.saveImage` runs only on a live host). Live smoke covers the happy paths.
-- Test spread (154): `node` 24 · `context-policy` 21 · `gateway` 18 · `light` 14 · `vision` 10 ·
-  `morning` 9 · `markdown` 9 · `commands` 7 · `patch-config` 7 · `dedup` 6 · `inbound-media` 6 ·
+- Test spread (158): `node` 24 · `context-policy` 21 · `gateway` 18 · `light` 14 · `vision` 10 ·
+  `commands` 11 · `morning` 9 · `markdown` 9 · `patch-config` 7 · `dedup` 6 · `inbound-media` 6 ·
   `resume` 5 · `user-message-envelope` 5 · `email` 4 · `picker` 4 · `reminders` 4 · `boot-safety` 1
 
 ---
@@ -429,7 +433,7 @@ pnpm setup          # interactive config wizard
 - The weather push reports real failure reasons and retries directly, ignoring a host proxy.
 - Bare `1` / `2` answer permission requests again; `/yes` and `/no` no longer claim to be unknown.
 - The retired light vocabulary (`/gear` `/off` `/low` `/mid` `/high`) works again, proxy-safe.
-- 154 offline unit tests (was 146).
+- 158 offline unit tests (was 146).
 
 See [`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md).
 

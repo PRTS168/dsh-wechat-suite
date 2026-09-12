@@ -5,7 +5,7 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-154%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-158%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
@@ -72,10 +72,14 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
 - **老灯控词表失效** —— 已归档的 `dsh-wechat-tools` 插件用的是设备自己的词（`/gear` `/off` `/low` `/mid` `/high`），此前一律回「未知命令」
   - 五个拼写已恢复并列入 `/help`，与 `/开灯` 系列共用同一份实现
 - **灯控同样被代理绑住** —— 局域网设备请求现在也会在传输层失败后直连重试，并且报出真实原因而不是 `fetch failed`
+- **`/perm` 完全没反应** —— 宿主的权限预设是**会话级**服务（`current(session)`、`set(session, name)`，标签来自 `optionOf()`），而桥按「传事件数组」的旧假设调用：异常逃出命令路由、被入站处理器吞掉，于是用户看到的是完全静默
+  - 现在按宿主真实签名调用，并对整段调用加保护（宿主 API 变化时至少回一句失败原因）
+  - **命令面不再静默**：`/perm` `/model` `/sessions` `/status` `/send` 任一步骤抛错都会回 `❌ …失败：<真实原因>`；`/send` 改为经 `ctx.get('wechat')` 取服务
+  - `/sessions` 与 `/status` 会先尝试恢复持久化的 `wechat-` 会话，重启后不再显示「没有会话」
 
 ### 其它
 
-- 单元测试 **143 → 154 项**（新增 `commands` 7、`morning` +3、`light` +1；「设备不可达」用例改为同时注入直连传输，不再触网）
+- 单元测试 **143 → 158 项**（新增 `commands` 11、`morning` +3、`light` +1；「设备不可达」用例改为同时注入直连传输，不再触网）
 - 新增 `src/node/net.ts`：`describeError()` 与 `directRequest()` 供天气与灯控共用
 - 文档：中英首页加「代理排查」提示；`DEVELOPMENT.md` 环境约束补记该坑
 
@@ -363,7 +367,7 @@ agent 的请求，其余沿 answerer 链继续委托。
 pnpm install
 pnpm build          # src/ → lib/（tsc）
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts —— 154 项，无需微信
+pnpm test           # node --test test/*.test.ts —— 158 项，无需微信
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导
 ```
@@ -378,8 +382,8 @@ pnpm setup          # 交互式配置向导
 - 诚实标注的盲区（暂无单测）：OCR 成功/失败分支、语音下载→ASR 全流程、媒体上行（fake 服务器
   无 `/upload`）、`/send`、`/help`、重启 resume，以及原生图片块本身（`vision.test.ts` 用 stub
   目录覆盖模式判定，`attachments.saveImage` 只在真机上跑）。真机冒烟覆盖主路径。
-- 测试分布（154 项）：`node` 24 · `context-policy` 21 · `gateway` 18 · `light` 14 ·
-  `vision` 10 · `morning` 9 · `markdown` 9 · `commands` 7 · `patch-config` 7 · `dedup` 6 ·
+- 测试分布（158 项）：`node` 24 · `context-policy` 21 · `gateway` 18 · `light` 14 ·
+  `vision` 10 · `commands` 11 · `morning` 9 · `markdown` 9 · `patch-config` 7 · `dedup` 6 ·
   `inbound-media` 6 · `resume` 5 · `user-message-envelope` 5 · `email` 4 ·
   `picker` 4 · `reminders` 4 · `boot-safety` 1
 
@@ -417,7 +421,7 @@ pnpm setup          # 交互式配置向导
 - 天气推送报出真实失败原因，并直连重试（不受宿主代理影响）。
 - 裸 `1` / `2` 恢复回答权限请求；`/yes` `/no` 不再自称「未知命令」。
 - 老灯控词表 `/gear` `/off` `/low` `/mid` `/high` 恢复，且同样不怕代理。
-- 离线单测 154 项（原 146 项）。
+- 离线单测 158 项（原 146 项）。
 
 见 [`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md)。
 

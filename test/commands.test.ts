@@ -24,12 +24,20 @@ interface Stub {
   node: CmdNode
   sent: string[]
   approvals: string[]
+  pickers: Array<{ kind: string; options: unknown[] }>
+  resumes: number
 }
 
 /** Minimal stand-in for the conversation node: only what commands touch. */
-function stub(baseUrl = 'http://127.0.0.1:1', approvalAnswers = false): Stub {
+function stub(
+  baseUrl = 'http://127.0.0.1:1',
+  approvalAnswers = false,
+  overrides: Record<string, unknown> = {},
+): Stub {
   const sent: string[] = []
   const approvals: string[] = []
+  const pickers: Array<{ kind: string; options: unknown[] }> = []
+  const state = { resumes: 0 }
   const node = {
     ctx: {
       logger: { warn: () => {}, info: () => {}, error: () => {} },
@@ -53,8 +61,26 @@ function stub(baseUrl = 'http://127.0.0.1:1', approvalAnswers = false): Stub {
       approvals.push(text)
       return approvalAnswers
     },
+    ensureWechatTarget: async () => {
+      state.resumes += 1
+      return true
+    },
+    modelPickerOptions: async () => [],
+    permissionPickerOptions: () => [],
+    beginPicker: (kind: string, options: unknown[]) => {
+      pickers.push({ kind, options })
+    },
+    ...overrides,
   }
-  return { node: node as unknown as CmdNode, sent, approvals }
+  return {
+    node: node as unknown as CmdNode,
+    sent,
+    approvals,
+    pickers,
+    get resumes() {
+      return state.resumes
+    },
+  }
 }
 
 test('a bare 1 reaches the approval bridge before anything else', async () => {
@@ -139,4 +165,50 @@ test('an unknown command still says so, and /help lists the aliases', async () =
   const help = s.sent.join('\n')
   assert.match(help, /\/gear \/off \/low \/mid \/high/)
   assert.match(help, /\/开灯 \/关灯 \/开灯1~3/)
+})
+test('/perm lists the host presets and never dies silently', async () => {
+  const s = stub('http://127.0.0.1:1', false, {
+    permissionPickerOptions: () => [
+      { label: 'ask (default)', value: 'ask' },
+      { label: 'yolo ✓', value: 'yolo' },
+    ],
+  })
+  assert.equal(await routeCommand(s.node, '/perm'), true)
+  const menu = s.sent.join('\n')
+  assert.match(menu, /权限预设列表/)
+  assert.match(menu, /ask \(default\)/)
+  assert.equal(s.pickers.length, 1)
+  assert.equal(s.pickers[0]?.kind, 'perm')
+})
+
+test('/perm reports a broken preset service instead of staying silent', async () => {
+  // The shape of the original bug: the option builder threw, the exception
+  // escaped routeCommand, the inbound handler swallowed it and the user got
+  // *nothing* back — indistinguishable from "the bot is dead".
+  const s = stub('http://127.0.0.1:1', false, {
+    permissionPickerOptions: () => {
+      throw new Error('permission: permissions session projection is not registered')
+    },
+  })
+  assert.equal(await routeCommand(s.node, '/perm'), true)
+  const reply = s.sent.join('\n')
+  assert.match(reply, /读取权限预设失败/)
+  assert.match(reply, /session projection/)
+})
+
+test('/model reports a broken model catalogue instead of staying silent', async () => {
+  const s = stub('http://127.0.0.1:1', false, {
+    modelPickerOptions: async () => {
+      throw new Error('llm exploded')
+    },
+  })
+  assert.equal(await routeCommand(s.node, '/model'), true)
+  assert.match(s.sent.join('\n'), /枚举模型失败/)
+})
+
+test('/sessions and /status resume a persisted session before answering', async () => {
+  const s = stub()
+  await routeCommand(s.node, '/sessions')
+  await routeCommand(s.node, '/status')
+  assert.equal(s.resumes, 2, 'both commands must try to attach a persisted session first')
 })
