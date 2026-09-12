@@ -38,7 +38,6 @@
 | `reminders.ts` / `morning.ts` | 定时提醒、早安天气 |
 | `approvals.ts` | 审批桥（`/yes` `/no`） |
 | `patch-config.ts` | `cordis.patch.yml` 读写（v0.3.0 起同时被独立管理台复用） |
-| `config-api.ts` | v0.2.x 的 Web 管理页主机 API；**v0.3.0 已从 bundle 行移除**，仅作参考保留 |
 | `labels.ts` | 会话徽标与 turn 结束原因文案 |
 
 ---
@@ -47,9 +46,9 @@
 
 ```sh
 pnpm install
-pnpm build          # tsc -p tsconfig.json && node scripts/build-client.mjs
+pnpm build          # tsc -p tsconfig.json（src/ → lib/）
 pnpm typecheck      # tsc --noEmit
-pnpm test           # node --test "test/*.test.ts" —— 154 项，不需要微信账号
+pnpm test           # node --test "test/*.test.ts" —— 143 项，不需要微信账号
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导（只改 profile 的 dsh-chatnode-wechat 段，先备份）
 pnpm login          # 扫码配对，写 WEIXIN_* 凭据
@@ -227,12 +226,9 @@ llm-deepseek:
 
    两处修法（都已落地）：
    - preset 文件那一行改成 `prefix: |-`，内容不用动；
-   - 本仓库 Web 人设编辑器（`config-api.ts`）原本只认 `config.text`，**保存会把
-     prefix 写回 text、再次弄坏 preset**。现改为读两种键、写一律输出 `prefix:`，
-     因此旧 preset 在网页上保存一次即自动修复（`test/persona.test.ts` 锁住该行为）。
-     **注意**：v0.3.0 起 `config-api` 行已从 bundle 移除（管理台独立成进程），
-     这段修复随模块一起成为参考实现 —— 现在改 preset 请直接编辑
-     `$DSH_HOME/.agent-presets/<名>/`。
+   - 本仓库曾经的网页人设编辑器只认 `config.text`，保存会把 `prefix:` 写回 `text:`、
+     再次弄坏 preset。该编辑器已在 v0.3.0 随 `config-api` 一并移除，现在改 preset
+     请直接编辑 `$DSH_HOME/.agent-presets/<名>/`，并保留 `prefix:` 键名。
 
    排查 preset 是否合法的最快办法——拿宿主 schema 直接校验，不需要启动 dsh：
 
@@ -376,9 +372,9 @@ git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main
 - **原生图片块本身**：`vision.test.ts` 用 stub 目录覆盖**模式判定**，
   但 `attachments.saveImage` 只在真机跑过
 
-单测覆盖的分布（共 154 项）：node 24 / context-policy 21 / gateway 18 / light 13 /
-vision 10 / markdown 9 / patch-config 7 / persona 7 / dedup 6 / inbound-media 6 /
-morning 6 / boot-safety 5 / resume 5 / user-message-envelope 5 / email 4 /
+单测覆盖的分布（共 143 项）：node 24 / context-policy 21 / gateway 18 / light 13 /
+vision 10 / markdown 9 / patch-config 7 / dedup 6 / inbound-media 6 /
+morning 6 / resume 5 / user-message-envelope 5 / email 4 /
 picker 4 / reminders 4。
 
 ## 7. 环境约束
@@ -386,8 +382,8 @@ picker 4 / reminders 4。
 - **iLink 独占锁**：一个微信 token 只允许**一个**鉴权轮询者。同号跑第二个实例
   （或任何其他 iLink 客户端）会导致 HTTP 403 + 丢消息。检测到 403 时网关会给出
   致命错误并停止轮询。
-- **协议细节未见于公开文档**：报文格式从既有 iLink 客户端归纳而来，仓库内有真实
-  报文录制样本（`test/fixtures/inbound.ndjson`）。改动网关时以录制样本为准，
+- **协议细节未见于公开文档**：报文格式从既有 iLink 客户端归纳而来，仓库内有合成
+  报文样本（`test/fixtures/inbound.ndjson`，无真实账号数据）。改动网关时以样本为准，
   不要凭记忆猜字段编号——`item_list` 的 type、`getuploadurl` 的 `media_type`、
   发送端的 item type 是**三套独立编号**，混用会导致 0 字节或静默失败。
 - **DSH 是开发者预览版**：`@deepseek-ai/*` 钉在 `0.1.5-rc.2`（与宿主内嵌版本对齐）。升级这些依赖时

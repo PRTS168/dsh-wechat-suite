@@ -1,24 +1,19 @@
+# 依赖与构建产物
 node_modules/
 dist/
 *.tgz
 *.tsbuildinfo
-.DS_Store
-*.log
-.dsh/
-.dsh-home/
-
-# 本地敏感/开发备忘文件，勿提交
-scripts/token-check.mjs
-# IMG-BRIDGE-PROGRESS.md 已于 2026-09-10 归档到
-# ..\archive\2026-09-10-development-docs\（内容已过时且误导）；
-# 现役开发说明是仓库内的 DEVELOPMENT.md，随仓库发布。
 
 # 运行时凭据产物：src/index.ts 的 startClient() 会把这两个文件写到仓库根，
-# 内含 WEIXIN token / account_id / sync_buf 明文。历史中从未提交过，这里补上
-# 忽略规则，避免一次 `git add .` 就把微信 token 推上公开仓库。
+# 内含 WEIXIN token / account_id / sync_buf 明文 —— 不要提交。
 client-config.json
 account.json
 
-# 管理台运行期状态：本机 token 与日志，绝不提交
+# 管理台运行期状态：本机访问令牌与日志
 admin/.admin-token
 admin/*.log
+
+# 编辑器 / 系统
+.DS_Store
+.dsh/
+.dsh-home/

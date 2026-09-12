@@ -43,17 +43,16 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
+    "build": "tsc -p tsconfig.json",
     "prepare": "pnpm build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test \"test/*.test.ts\"",
     "login": "node scripts/login.mjs",
     "smoke": "node scripts/smoke.mjs",
     "setup": "node scripts/setup.mjs",
-    "build:client": "node scripts/build-client.mjs",
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {

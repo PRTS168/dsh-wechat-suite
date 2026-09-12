@@ -5,7 +5,7 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/offline%20tests-154%20passing-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/offline%20tests-143%20passing-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
@@ -88,7 +88,7 @@ Changes since v0.2.2. Full announcement:
 - **The host is no longer judged fatal** — a config write triggers a hot reload, the plugin scope is torn down, a `void`-ed async startup function throws on property access (even the logging inside `catch` throws), and the unhandled rejection exited the harness into safe mode
   - all three entry points (`src/index.ts` credential startup, `node/core.ts` inbound handler, `node/outbound.ts` `sendTextToPeer`) now always resolve, with `.catch()` added at call sites
   - services are fetched with `ctx.get()` and **re-read after every `await`**
-  - the `config-api` plugin row was removed — management moved to a separate process, structurally deleting the "optional `webServer` stalls profile boot" path
+  - the `config-api` plugin row was removed — management moved to a separate process, structurally deleting the "optional `webServer` stalls profile boot" path; the leftover client code and its build step were deleted too
 - **Long-session self-continuation** — after 60 turns / 3083 events the model wrote a fake user message with a future timestamp into its own output and executed it (it produced an unrequested video)
   - inbound messages are now fenced (`<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 …>>>`), with the timestamp moved from the line prefix to the **closing marker**
 - **Silent failures** — an empty media download logged nothing and said nothing, and the notice itself could not be delivered because `node.peerId` was assigned later
@@ -104,7 +104,7 @@ Changes since v0.2.2. Full announcement:
 - aligned with DSH **0.1.2-rc.1** (harness bundled in the desktop app) and **0.1.5-rc.2** (packages embedded in the `dsh` CLI); both load and run
   - `cordis ^4.0.2` must match the host (two instances break service resolution); `schemastery ^3.18.2` must be a single instance (3.18.1 alongside it raises `TS2742`); Node ≥ 22 (tested on 24)
   - cross-host differences, all handled in code: `dsh-persona`'s key `text:` (0.1.2) → `prefix:` (0.1.5); `Session.events` removed in 0.1.5 → `snapshotEvents()`; optional services never in `inject` (a missing projection yields `1 entry did not activate` and fails the whole profile) → `ctx.get()`
-- unit tests **86 → 154** (new: `context-policy` 21, `light` 13, `persona` 7, `dedup` 6, `inbound-media` 6, `boot-safety` 5, `resume` 5, `user-message-envelope` 5, …)
+- unit tests **86 → 143** (new: `context-policy` 21, `light` 13, `dedup` 6, `inbound-media` 6, `resume` 5, `user-message-envelope` 5, …)
 - verified live: WeChat round trips (text / image / file / image generation) → one automatic rotation with the new session usable → 3 rapid patch hot reloads with the process alive, polling continuous and no `fatal` / `unhandled` in stderr
 
 </details>
@@ -339,9 +339,9 @@ commands are queued on disk (`$DSH_HOME/wechat-admin/queue/`) and executed by th
 
 ```sh
 pnpm install
-pnpm build          # src/ -> lib/ (tsc) + client bundle (lib/client.js)
+pnpm build          # src/ -> lib/ (tsc)
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts — 154 tests, no WeChat account
+pnpm test           # node --test test/*.test.ts — 143 tests, no WeChat account
 pnpm smoke          # manual live-account check
 pnpm setup          # interactive config wizard
 ```
@@ -358,9 +358,9 @@ pnpm setup          # interactive config wizard
   outbound media upload (the fake server has no `/upload`), `/send`, `/help`, restart resume, and
   the native-image block itself (`vision.test.ts` covers the mode/policy decision against a stub
   catalog; `attachments.saveImage` runs only on a live host). Live smoke covers the happy paths.
-- Test spread (154): `node` 24 · `context-policy` 21 · `gateway` 18 · `light` 13 · `vision` 10 ·
-  `markdown` 9 · `patch-config` 7 · `persona` 7 · `dedup` 6 · `inbound-media` 6 · `morning` 6 ·
-  `boot-safety` 5 · `resume` 5 · `user-message-envelope` 5 · `email` 4 · `picker` 4 · `reminders` 4
+- Test spread (143): `node` 24 · `context-policy` 21 · `gateway` 18 · `light` 13 · `vision` 10 ·
+  `markdown` 9 · `patch-config` 7 · `dedup` 6 · `inbound-media` 6 · `morning` 6 · `resume` 5 ·
+  `user-message-envelope` 5 · `email` 4 · `picker` 4 · `reminders` 4 · `boot-safety` 1
 
 ---
 
@@ -384,7 +384,7 @@ pnpm setup          # interactive config wizard
 | Account restriction — unofficial gateway | Dedicated, disposable account; stated plainly in this README |
 | DSH v0.1 churn | Two host versions verified (*What's new → Other*); optional services via `ctx.get()`; boot-safety tests |
 | An unhandled rejection killing the host | All async entry points resolve; `.catch()` at call sites; hot-reload stress pass |
-| Protocol opacity | Protocol reconstructed from existing clients; recorded fixtures |
+| Protocol opacity | Protocol reconstructed from existing clients; synthetic fixtures in the repo |
 | Credential files in the repo root | `client-config.json` / `account.json` / `admin/.admin-token` are git-ignored |
 
 ---
@@ -398,7 +398,7 @@ Context rotation policies, host-stability hardening, failure visibility and the 
 console — see [What's new in v0.3.0](#-whats-new-in-v030) and
 [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md).
 
-- 154 offline unit tests (was 86).
+- 143 offline unit tests (was 86).
 
 </details>
 
@@ -452,8 +452,8 @@ Full changelog: [`CHANGELOG.md`](CHANGELOG.md) · all announcements: [`releases/
   the source of truth for the base protocol. This project is **not** an official release of, and is
   not affiliated with, the upstream project or its authors.
 - **Protocol references** — the iLink wire details were reconstructed from existing WeChat bot
-  clients (hermes-agent and OpenClaw); recorded samples live in `test/fixtures/inbound.ndjson` so
-  CI never needs a live account.
+  clients (hermes-agent and OpenClaw); synthetic fixtures live in `test/fixtures/inbound.ndjson`
+  (no real account data), so CI never needs a live account.
 - **Platform** — [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and the
   Cordis plugin model (`cordis`, `schemastery`) that this bundle extends.
 - **Services used by the optional media helpers** — SiliconFlow (DeepSeek-OCR, Kwai-Kolors,

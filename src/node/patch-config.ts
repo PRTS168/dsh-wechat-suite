@@ -4,7 +4,7 @@
  *
  * Shared by two surfaces so behaviour cannot drift:
  *   - the CLI wizard `scripts/setup.mjs` (built to `lib/node/patch-config.js`)
- *   - the Web management page's host API (`src/node/config-api.ts`)
+ *   - the standalone admin console (`admin/server.ts`)
  *
  * Only the `- id: dsh-chatnode-wechat` entry's `config:` subtree is touched;
  * comments, unknown keys and other entries are preserved verbatim. A backup is

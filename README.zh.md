@@ -5,7 +5,7 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-154%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-143%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
@@ -85,7 +85,7 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
 - **宿主不再被判致命**：配置写入触发热重载 → 插件 scope 被拆 → `void` 出去的异步启动函数用属性访问取服务而抛错（连 `catch` 里的日志访问也抛）→ 未处理的 rejection → 宿主 `fatal load failure` 退出、桌面应用回落到安全模式
   - 三个入口（`src/index.ts` 的凭据启动、`node/core.ts` 的入站处理器、`node/outbound.ts` 的 `sendTextToPeer`）全部保证不 reject，调用点再加 `.catch()`
   - 服务访问一律 `ctx.get()`，并在每个 `await` 之后**重新取**
-  - `config-api` 插件行**移除**，管理能力搬到独立进程，从结构上删除「可选 `webServer` 依赖拖死 profile 启动」这条路径
+  - `config-api` 插件行**移除**，管理能力搬到独立进程，从结构上删除「可选 `webServer` 依赖拖死 profile 启动」这条路径；残留的网页端代码与构建步骤一并删除
 - **长会话自我续写**：单会话累积到 60 轮 / 3083 事件后，模型在自己输出里续写出一条带未来时间戳的假用户消息（`[发送于 …] 视频呢？发个`）并照着执行，造了个没人要的视频
   - 入站信封改为定界块 `<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 …>>>`，时间戳从行首说话人标记移到**结束标记**
 - **静默失败**：入站媒体下载返回空时零日志零提示；而「响亮失败」的提示本身又因 `peerId` 未赋值而发不出去
@@ -101,7 +101,7 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
 - 依赖对齐 DSH **0.1.2-rc.1**（桌面应用内置 harness）与 **0.1.5-rc.2**（`dsh` CLI 内嵌包），两套宿主都实测加载运行
   - `cordis ^4.0.2` 需与宿主对齐（双实例会破坏服务解析）；`schemastery ^3.18.2` 需单实例（与 3.18.1 并存会致 `TS2742`）；Node ≥ 22（实测 24）
   - 跨宿主差异（都已在代码里处理）：`dsh-persona` 的配置键 `text:`（0.1.2）→ `prefix:`（0.1.5）；`Session.events` 在 0.1.5 移除 → 全库改用 `snapshotEvents()`；可选服务不得写进 `inject`（缺投影时 `1 entry did not activate` 会让**整个 profile 启动失败**）→ 一律 `ctx.get()`
-- 单元测试 **86 → 154 项**（新增 `context-policy` 21、`light` 13、`persona` 7、`dedup` 6、`inbound-media` 6、`boot-safety` 5、`resume` 5、`user-message-envelope` 5 等）
+- 单元测试 **86 → 143 项**（新增 `context-policy` 21、`light` 13、`dedup` 6、`inbound-media` 6、`resume` 5、`user-message-envelope` 5 等）
 - 验证：真机微信往返（文字 / 图片 / 文件 / 生图）→ 触发一次自动轮换并确认新会话可用；对运行实例连续 3 次 patch 热重载压迫，进程存活、轮询不断、stderr 无 `fatal` / `unhandled`
 
 </details>
@@ -329,9 +329,9 @@ agent 的请求，其余沿 answerer 链继续委托。
 
 ```sh
 pnpm install
-pnpm build          # src/ → lib/（tsc）+ 客户端 bundle（lib/client.js）
+pnpm build          # src/ → lib/（tsc）
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts —— 154 项，无需微信
+pnpm test           # node --test test/*.test.ts —— 143 项，无需微信
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导
 ```
@@ -346,10 +346,10 @@ pnpm setup          # 交互式配置向导
 - 诚实标注的盲区（暂无单测）：OCR 成功/失败分支、语音下载→ASR 全流程、媒体上行（fake 服务器
   无 `/upload`）、`/send`、`/help`、重启 resume，以及原生图片块本身（`vision.test.ts` 用 stub
   目录覆盖模式判定，`attachments.saveImage` 只在真机上跑）。真机冒烟覆盖主路径。
-- 测试分布（154 项）：`node` 24 · `context-policy` 21 · `gateway` 18 · `light` 13 ·
-  `vision` 10 · `markdown` 9 · `patch-config` 7 · `persona` 7 · `dedup` 6 · `inbound-media` 6 ·
-  `morning` 6 · `boot-safety` 5 · `resume` 5 · `user-message-envelope` 5 · `email` 4 ·
-  `picker` 4 · `reminders` 4
+- 测试分布（143 项）：`node` 24 · `context-policy` 21 · `gateway` 18 · `light` 13 ·
+  `vision` 10 · `markdown` 9 · `patch-config` 7 · `dedup` 6 · `inbound-media` 6 ·
+  `morning` 6 · `resume` 5 · `user-message-envelope` 5 · `email` 4 ·
+  `picker` 4 · `reminders` 4 · `boot-safety` 1
 
 ---
 
@@ -372,7 +372,7 @@ pnpm setup          # 交互式配置向导
 | 非官方网关可能限制账号 | 使用可弃置的专用账号；README 明说 |
 | DSH v0.1 变更 | 已验证两个宿主版本（见「其它」）；可选项用 `ctx.get()`；boot 安全测试 |
 | 未处理的 rejection 杀死宿主 | 全部异步入口保证 resolve；调用点 `.catch()`；热重载压迫测试 |
-| 协议细节未见于公开文档 | 报文格式从既有 iLink 客户端归纳；已录制真实样本 |
+| 协议细节未见于公开文档 | 报文格式从既有 iLink 客户端归纳；仓库内为合成样本 |
 | 运行时在仓库根落盘含凭据的文件 | `client-config.json` / `account.json` / `admin/.admin-token` 均已 git 忽略 |
 
 ---
@@ -386,7 +386,7 @@ pnpm setup          # 交互式配置向导
 [「v0.3.0 改进」](#-v030-改进) 与
 [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md)。
 
-- 离线单测 154 项（原 86 项）。
+- 离线单测 143 项（原 86 项）。
 
 </details>
 
@@ -437,7 +437,7 @@ pnpm setup          # 交互式配置向导
   贡献者署名完整保留并归属上游作者；基础协议以上游为准。本仓库**不是**上游项目或其作者的
   官方发布，也与上游无隶属关系。
 - **协议参考** —— iLink 报文细节归纳自既有的微信机器人客户端（hermes-agent 与 OpenClaw）；
-  真实录制样本在 `test/fixtures/inbound.ndjson`，CI 因此无需真账号。
+  合成样本在 `test/fixtures/inbound.ndjson`（不含真实账号数据），CI 因此无需真账号。
 - **平台** —— [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 及其
   Cordis 插件模型（`cordis`、`schemastery`）。
 - **可选媒体能力所用服务** —— SiliconFlow（DeepSeek-OCR、Kwai-Kolors、XingChenASR、
