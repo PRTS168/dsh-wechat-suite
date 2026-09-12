@@ -7,8 +7,17 @@
  * falls back to DSH's default deny (`'rejected'`), matching the spec:
  * timeout → deny.
  *
- * The bridge only answers for agents the conversation node drives (the
- * active session); every other request delegates via `next()`.
+ * Two rules learned the hard way:
+ *
+ * 1. **Answer for the bridge's own session namespace.** The host asks through a
+ *    routed waterfall event; ownership is decided from the *session id prefix*
+ *    (`wechat-`), which is this bridge's namespace by construction. Gating on
+ *    `activeSessionId` equality instead meant a request arriving while that
+ *    bookkeeping was stale was silently delegated away — the user saw nothing.
+ * 2. **Never stay silent.** Every path out of this listener either asks in
+ *    WeChat or delegates with `next()`; an internal error is reported in the
+ *    chat *and* appended to `$DSH_HOME/wechat-approval.log`, because a silent
+ *    answerer is indistinguishable from a dead bridge.
  *
  * @module @dsh-cowork/chatnode-wechat/node/approvals
  */
@@ -21,6 +30,8 @@ export interface PendingApproval {
     resolve: (outcome: ApprovalOutcome) => void;
     timer: ReturnType<typeof setTimeout>;
 }
+/** `$DSH_HOME/wechat-approval.log` — one line per approval decision. */
+export declare const APPROVAL_TRACE_FILE = "wechat-approval.log";
 /** Attach the `approval/request` answerer. Returns a disposer. */
 export declare function attachApprovalBridge(node: WechatConversationNode): () => void;
 //# sourceMappingURL=approvals.d.ts.map

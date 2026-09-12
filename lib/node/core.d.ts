@@ -187,7 +187,16 @@ export declare class WechatConversationNode {
     activeSession(): Session | undefined;
     /** The agent driving the active WeChat session, if any. */
     activeAgent(): Agent | undefined;
-    /** Whether this node drives the given agent (its session is active). */
+    /**
+     * Whether the bridge drives the given agent.
+     *
+     * Compared as **strings**: a session id may be a branded `SessionId` object on
+     * some hosts (the package exports both an identity function and a constructor),
+     * and `===` against a plain string then answers "not ours" for the bridge's own
+     * agent — which is how a permission request once ended up delegated and
+     * invisible. A null active id means "any `wechat-` session", i.e. the bridge's
+     * own namespace.
+     */
     ownsAgent(agent: Agent): boolean;
     /** Whether a session id belongs to this bridge's own WeChat sessions. */
     isWechatSessionId(id: unknown): boolean;

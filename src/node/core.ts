@@ -291,16 +291,25 @@ export class WechatConversationNode {
     return this.ctx.agents.get(session.id)
   }
 
-  /** Whether this node drives the given agent (its session is active). */
+  /**
+   * Whether the bridge drives the given agent.
+   *
+   * Compared as **strings**: a session id may be a branded `SessionId` object on
+   * some hosts (the package exports both an identity function and a constructor),
+   * and `===` against a plain string then answers "not ours" for the bridge's own
+   * agent — which is how a permission request once ended up delegated and
+   * invisible. A null active id means "any `wechat-` session", i.e. the bridge's
+   * own namespace.
+   */
   ownsAgent(agent: Agent): boolean {
-    return this.activeSessionId !== null
-      && agent.session.id === this.activeSessionId
-      && this.isWechatSessionId(agent.session.id)
+    const id = (agent as { session?: { id?: unknown } } | undefined)?.session?.id
+    if (!this.isWechatSessionId(id)) return false
+    return this.activeSessionId === null || String(this.activeSessionId) === String(id)
   }
 
   /** Whether a session id belongs to this bridge's own WeChat sessions. */
   isWechatSessionId(id: unknown): boolean {
-    return typeof id === 'string' && id.startsWith('wechat-')
+    return id !== null && id !== undefined && String(id).startsWith('wechat-')
   }
 
   /** Whether a sender is allowlisted. */

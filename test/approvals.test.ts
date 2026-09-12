@@ -1,20 +1,28 @@
 /**
  * Approval-bridge tests.
  *
- * The regression these pin: the answerer used to be registered on the plugin's
- * own context, while the host dispatches `approval/request` through a *routed*
- * scope target —
+ * What these pin, in the order the failures were found:
  *
- *   ctx.waterfall(scopeTarget(req.agent, req.agent), 'approval/request', req, …)
- *
- * — whose filter only admits the agent itself, one of its ancestors, or an
- * untagged scope. The plugin context is none of those, so the request never
- * arrived: the WeChat user saw nothing and the tool call stayed in the approval
- * window until it timed out (a real `approval/asked` event with no matching
- * prompt is what exposed it).
+ * 1. The answerer must be registered where the host's routed dispatch can reach
+ *    it — `ctx.waterfall(scopeTarget(agent, agent), 'approval/request', …)` is
+ *    received by listeners on the agent itself, on its ancestors, and on any
+ *    untagged scope (the application root); an unrelated tagged scope is not.
+ * 2. Ownership is decided from the session-id namespace: a request for a
+ *    `wechat-` session is this bridge's to answer, one for a `session-` id is
+ *    somebody else's and must be delegated. Comparing raw `===` against a stale
+ *    active id used to delegate the bridge's own request away, and the user saw
+ *    nothing at all.
+ * 3. Every path either asks in WeChat or delegates: an ask with no reply still
+ *    ends as DSH's default deny, an unknown peer falls back to the allowlist,
+ *    and an internal error is reported in the chat instead of staying silent.
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+// Keep the diagnostics out of the real DSH home while testing.
+process.env.WECHAT_APPROVAL_TRACE = join(tmpdir(), 'wechat-approval-test.log')
 
 import { attachApprovalBridge } from '../src/node/approvals.ts'
 
@@ -28,14 +36,21 @@ interface Harness {
   pluginListeners: Listener[]
 }
 
-function harness(options: { owns?: boolean; timeoutSec?: number } = {}): Harness {
+function harness(
+  options: { timeoutSec?: number; peerId?: string | null; allowFrom?: string[]; breakCounter?: boolean } = {},
+): Harness {
   const sent: string[] = []
   const registrations: Array<{ number: number; resolve: (outcome: string) => void }> = []
   const rootListeners: Listener[] = []
   const pluginListeners: Listener[] = []
+  const peerId = options.peerId === undefined ? 'peer@im.wechat' : options.peerId
   const node = {
-    peerId: 'peer@im.wechat',
-    config: { approvalTimeoutSec: options.timeoutSec ?? 600 },
+    peerId: peerId ?? undefined,
+    activeSessionId: null as string | null,
+    config: {
+      approvalTimeoutSec: options.timeoutSec ?? 600,
+      allowFrom: options.allowFrom ?? ['allow@im.wechat'],
+    },
     ctx: {
       get: (name: string) =>
         name === 'wechat'
@@ -59,8 +74,11 @@ function harness(options: { owns?: boolean; timeoutSec?: number } = {}): Harness
       },
       logger: { warn: () => {}, info: () => {} },
     },
-    ownsAgent: () => options.owns ?? true,
-    nextApprovalNumber: () => registrations.length + 1,
+    isWechatSessionId: (id: unknown) => id !== null && id !== undefined && String(id).startsWith('wechat-'),
+    nextApprovalNumber: () => {
+      if (options.breakCounter) throw new Error('counter exploded')
+      return registrations.length + 1
+    },
     registerApproval: (number: number, entry: { resolve: (outcome: string) => void }) => {
       registrations.push({ number, resolve: entry.resolve })
     },
@@ -71,22 +89,21 @@ function harness(options: { owns?: boolean; timeoutSec?: number } = {}): Harness
 
 /** Minimal session shape the label helpers need. */
 const session = (id: string) => ({ id, snapshotEvents: () => [] })
-/** Let the void-sent status line land before asserting on it. */
-const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 const request = (id: string, reason?: string) => ({ toolName: 'pwsh', reason, agent: { session: session(id) } })
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-test('the answerer registers on the root scope, not the plugin scope', () => {
+test('the answerer registers on the root scope', () => {
   const h = harness()
   attachApprovalBridge(h.node)
-  assert.equal(h.rootListeners.length, 1, 'routed events only reach the untagged root scope')
-  assert.equal(h.pluginListeners.length, 0, 'the plugin scope never sees routed approval requests')
+  assert.equal(h.rootListeners.length, 1, 'the untagged root scope receives every routed event')
+  assert.equal(h.pluginListeners.length, 0, 'the plugin scope is not used for the answerer')
 })
 
-test('another agent request is delegated, never answered', async () => {
-  const h = harness({ owns: false })
+test('a request for another session namespace is delegated, never answered', async () => {
+  const h = harness()
   attachApprovalBridge(h.node)
   let delegated = false
-  const outcome = await h.rootListeners[0]!(request('wechat-other'), async () => {
+  const outcome = await h.rootListeners[0]!(request('session-web-gui'), async () => {
     delegated = true
     return 'unavailable'
   })
@@ -95,11 +112,22 @@ test('another agent request is delegated, never answered', async () => {
   assert.deepEqual(h.sent, [], 'no prompt for a request this bridge does not own')
 })
 
+test('a wechat session is answered even while the active id bookkeeping is stale', async () => {
+  const h = harness()
+  ;(h.node as unknown as { activeSessionId: string | null }).activeSessionId = 'wechat-some-other-boot'
+  attachApprovalBridge(h.node)
+  const pending = h.rootListeners[0]!(request('wechat-x', 'escalate sandbox'), async () => 'unavailable')
+  await tick()
+  assert.match(h.sent.join('\n'), /需要你的确认/)
+  h.registrations[0]!.resolve('allowed-once')
+  assert.equal(await pending, 'allowed-once')
+})
+
 test('our own request prompts in WeChat and honours the reply', async () => {
   const h = harness()
   attachApprovalBridge(h.node)
   const pending = h.rootListeners[0]!(request('wechat-x', 'escalate sandbox'), async () => 'unavailable')
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await tick()
   const prompt = h.sent.join('\n')
   assert.match(prompt, /需要你的确认/)
   assert.match(prompt, /工具: pwsh/)
@@ -115,7 +143,7 @@ test('a rejected reply reports the rejection and returns it', async () => {
   const h = harness()
   attachApprovalBridge(h.node)
   const pending = h.rootListeners[0]!(request('wechat-x'), async () => 'unavailable')
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await tick()
   h.registrations[0]!.resolve('rejected')
   assert.equal(await pending, 'rejected')
   await tick()
@@ -131,9 +159,18 @@ test('no reply falls back to the DSH default deny on timeout', async () => {
   assert.match(h.sent.join('\n'), /已拒绝/)
 })
 
-test('a request without a peer is delegated instead of being swallowed', async () => {
-  const h = harness()
-  ;(h.node as unknown as { peerId: string | undefined }).peerId = undefined
+test('an unknown peer falls back to the bridge allowlist', async () => {
+  const h = harness({ peerId: null })
+  attachApprovalBridge(h.node)
+  const pending = h.rootListeners[0]!(request('wechat-x'), async () => 'unavailable')
+  await tick()
+  assert.match(h.sent.join('\n'), /需要你的确认/)
+  h.registrations[0]!.resolve('rejected')
+  await pending
+})
+
+test('with neither peer nor allowlist the request is delegated', async () => {
+  const h = harness({ peerId: null, allowFrom: [] })
   attachApprovalBridge(h.node)
   let delegated = false
   const outcome = await h.rootListeners[0]!(request('wechat-x'), async () => {
@@ -142,4 +179,17 @@ test('a request without a peer is delegated instead of being swallowed', async (
   })
   assert.equal(delegated, true)
   assert.equal(outcome, 'unavailable')
+})
+
+test('an internal failure is reported in the chat instead of staying silent', async () => {
+  const h = harness({ breakCounter: true })
+  attachApprovalBridge(h.node)
+  let delegated = false
+  const outcome = await h.rootListeners[0]!(request('wechat-x'), async () => {
+    delegated = true
+    return 'unavailable'
+  })
+  assert.equal(delegated, true, 'a failing answerer must still delegate')
+  assert.equal(outcome, 'unavailable')
+  assert.match(h.sent.join('\n'), /审批桥内部错误/)
 })
