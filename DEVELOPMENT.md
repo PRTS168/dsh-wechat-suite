@@ -31,7 +31,9 @@
 | `core.ts` | `WechatConversationNode`：会话选择/恢复、模型选择、权限预设、白名单闸门、`currentModelRoute()` |
 | `inbound.ts` | 入站分派：文字/图片/语音/文件/视频 → DSH 用户消息 |
 | `outbound.ts` | 出站：Markdown 微信化、分块限流、心跳摘要、`session/event` 订阅 |
-| `commands.ts` | 命令表（`routeCommand`）与 help 文案 |
+| `commands.ts` | 命令表（`routeCommand`）与 help 文案；审批回复先于斜杠判断处理 |
+| `light.ts` | ESP32 灯控的**唯一实现**：`/开灯` 系列与 `/gear` 词表共用，`control_esp32_light` 工具亦由此派生 |
+| `net.ts` | 共享网络工具：`describeError()` 展开 `error.cause`、`directRequest()` 绕过代理直连（天气/灯控用） |
 | `vision.ts` | **图片投递策略**：原生 image 块 vs OCR，含能力探测与拒绝缓存 |
 | `email.ts` | `send_email` 的 SMTP 客户端（可注入传输，便于测试） |
 | `ocr.ts` / `stt.ts` / `tts.ts` / `image-gen.ts` | 硅基流动媒体模型调用 |
@@ -48,7 +50,7 @@
 pnpm install
 pnpm build          # tsc -p tsconfig.json（src/ → lib/）
 pnpm typecheck      # tsc --noEmit
-pnpm test           # node --test "test/*.test.ts" —— 146 项，不需要微信账号
+pnpm test           # node --test "test/*.test.ts" —— 154 项，不需要微信账号
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导（只改 profile 的 dsh-chatnode-wechat 段，先备份）
 pnpm login          # 扫码配对，写 WEIXIN_* 凭据
@@ -372,9 +374,9 @@ git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main
 - **原生图片块本身**：`vision.test.ts` 用 stub 目录覆盖**模式判定**，
   但 `attachments.saveImage` 只在真机跑过
 
-单测覆盖的分布（共 146 项）：node 24 / context-policy 21 / gateway 18 / light 13 /
-vision 10 / morning 9 / markdown 9 / patch-config 7 / dedup 6 / inbound-media 6 /
-resume 5 / user-message-envelope 5 / email 4 /
+单测覆盖的分布（共 154 项）：node 24 / context-policy 21 / gateway 18 / light 14 /
+vision 10 / morning 9 / markdown 9 / commands 7 / patch-config 7 / dedup 6 /
+inbound-media 6 / resume 5 / user-message-envelope 5 / email 4 /
 picker 4 / reminders 4。
 
 ## 7. 环境约束

@@ -36,12 +36,21 @@ export function listSessions(node: WechatConversationNode): Session[] {
 /** Try to route one command. Returns true when the text was a command. */
 export async function routeCommand(node: WechatConversationNode, text: string): Promise<boolean> {
   const trimmed = text.trim()
-  if (!trimmed.startsWith('/')) return false
 
-  // Approval replies are handled by the bridge even when no agent is active.
-  if (trimmed === '/yes' || trimmed === '/no' || /^[12]$/.test(trimmed)) {
+  // ---- approval replies -----------------------------------------------------
+  // These run BEFORE the leading-slash guard, because the documented shorthand
+  // is a BARE `1` / `2` (see /help). While this sat after the guard, digits never
+  // reached `resolveApproval()`: they fell through to the picker and then to the
+  // model, so answering a permission request with `1` silently did nothing.
+  if (trimmed === '/yes' || trimmed === '/no' || trimmed === '1' || trimmed === '2') {
     if (node.resolveApproval(trimmed)) return true
+    // A bare digit may belong to an open /model or /perm menu instead.
+    if (trimmed === '1' || trimmed === '2') return false
+    await sendTextToPeer(node, 'ℹ️ 当前没有待确认的请求（/yes、/no 用于回答权限请求）。')
+    return true
   }
+
+  if (!trimmed.startsWith('/')) return false
 
   const [command, ...rest] = trimmed.slice(1).split(/\s+/)
   switch (command) {
@@ -214,7 +223,15 @@ export async function routeCommand(node: WechatConversationNode, text: string): 
     case '开灯1':
     case '开灯2':
     case '开灯3':
-    case '关灯': {
+    case '关灯':
+    // The retired `dsh-wechat-tools` plugin used the device's own vocabulary
+    // (`/gear /off /low /mid /high`). Keep those spellings working so muscle
+    // memory and older notes do not silently stop working.
+    case 'gear':
+    case 'off':
+    case 'low':
+    case 'mid':
+    case 'high': {
       const result = await controlEsp32Light(node, command)
       await sendTextToPeer(node, result)
       return true
@@ -233,6 +250,12 @@ const ESP32_COMMAND_MODE: Record<string, LightMode> = {
   '开灯1': 'low',
   '开灯2': 'mid',
   '开灯3': 'high',
+  // device vocabulary (see the case list in routeCommand)
+  'gear': 'query',
+  'off': 'off',
+  'low': 'low',
+  'mid': 'mid',
+  'high': 'high',
 }
 
 /**
@@ -294,6 +317,7 @@ function helpText(): string {
     '/识图 — 图片识别模式（auto/native/ocr）',
     '/早安 — 每日天气推送开关（on/off/时间/test）',
     '/开灯 /关灯 /开灯1~3 — 控制灯光',
+    '/gear /off /low /mid /high — 灯光（查询 / 关 / 低 / 中 / 高）',
     '/yes /no 或 1/2 — 回应权限请求',
     '/help — 本帮助',
   ].join('\n')

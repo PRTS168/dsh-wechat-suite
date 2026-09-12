@@ -3,6 +3,23 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的组织方式，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [v0.3.1] — 2026-09-12
+
+### Fixed
+
+- 天气推送在系统代理下只报 `fetch failed`：新增 `describeError()` 展开 `error.cause`（含 AggregateError），
+  并改用 `node:https` 直连重试一次；两次都失败时同时给出两条原因
+- 裸 `1` / `2` 回答权限请求失效：审批检查位于斜杠判断之后，`resolveApproval()` 收不到数字，
+  数字被喂给模型、审批只能等超时
+- `/yes` `/no` 在没有待确认请求时报「未知命令」并附帮助
+- 灯控词表 `/gear` `/off` `/low` `/mid` `/high` 恢复（已归档插件的设备词表）
+- 灯控请求同样做直连兜底，失败信息带出真实原因
+
+### Changed
+
+- 新增 `src/node/net.ts`（`describeError` / `directRequest`），天气与灯控共用
+- 单元测试 143 → 154 项；「设备不可达」用例改为注入直连传输，测试不再触网
+
 ## [v0.3.0] — 2026-09-12
 
 **第三代（v3）：从"能收发"走向"能长期运行"。** 本版三件事——**上下文生命周期**、
@@ -74,7 +91,7 @@
 
 ### 验证
 
-146 项单元测试全绿（覆盖网关去重、入站路由/媒体/信封、命令面、审批桥、轮换策略、
+143 项单元测试全绿（覆盖网关去重、入站路由/媒体/信封、命令面、审批桥、轮换策略、
 灯控与去重指纹）；另做了一次真实组合彩排：以桌面宿主的真实 profile 起实例、连腾讯
 iLink、真人微信往返并触发一次自动轮换，并在连续多次 patch 热重载下确认宿主存活。
 
@@ -164,6 +181,8 @@ iLink、真人微信往返并触发一次自动轮换，并在连续多次 patch
 ---
 
 [未发布]: 暂无
+[v0.3.1]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.1
+[v0.3.0]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0
 [v0.2.2]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.2.2
 [v0.2.1]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.2.1
 [v0.2.0]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.2.0

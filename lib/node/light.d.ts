@@ -18,6 +18,7 @@
  *
  * @module @dsh-cowork/chatnode-wechat/node/light
  */
+import { type DirectResponse } from './net.ts';
 /** The five modes both surfaces can ask for. */
 export declare const LIGHT_MODES: readonly ["query", "off", "low", "mid", "high"];
 export type LightMode = (typeof LIGHT_MODES)[number];
@@ -37,6 +38,12 @@ export declare function lightBaseUrl(configured?: string | null): string;
 export interface LightOptions {
     /** Injected fetch (tests); defaults to the global. */
     fetchImpl?: typeof fetch;
+    /**
+     * Injected direct transport (tests). Defaults to `directRequest()` — one
+     * `node:http(s)` request with its own agent, so a system proxy configured for
+     * the host process cannot capture a request to a LAN device.
+     */
+    directImpl?: (url: string, timeoutMs: number) => Promise<DirectResponse>;
     /** Request timeout in ms. Default 5000, same as the command path. */
     timeoutMs?: number;
 }

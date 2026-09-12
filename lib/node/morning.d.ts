@@ -12,6 +12,7 @@
  *
  * @module @dsh-cowork/chatnode-wechat/node/morning
  */
+import { describeError } from './net.ts';
 import type { Context } from '@deepseek-ai/cordis';
 /** Persisted morning-push configuration. */
 export interface MorningConfig {
@@ -46,16 +47,8 @@ interface OpenMeteoPayload {
         weather_code?: number[];
     };
 }
-/**
- * One-line reason for a failed request.
- *
- * `fetch` reports every transport failure as a bare `TypeError: fetch failed`
- * and keeps the real reason (ENOTFOUND / ECONNREFUSED / TLS / timeout) in
- * `error.cause` — so without unwrapping it, a proxy that silently drops the
- * request is indistinguishable from a genuine outage.
- */
-export declare function describeError(error: unknown): string;
-/** Direct HTTPS JSON read that never consults a global fetch dispatcher. */
+export { describeError };
+/** Direct JSON read that never consults a global fetch dispatcher. */
 export declare function directJson(url: string, timeoutMs?: number): Promise<OpenMeteoPayload>;
 /**
  * Fetch today's forecast for the configured location via Open-Meteo.
@@ -103,5 +96,4 @@ export declare class MorningService {
     /** Deliver today's greeting to every target peer (best-effort). */
     private fire;
 }
-export {};
 //# sourceMappingURL=morning.d.ts.map

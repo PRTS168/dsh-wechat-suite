@@ -20,6 +20,7 @@
  */
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { describeError, directRequest, type DirectResponse } from './net.ts'
 
 /** The five modes both surfaces can ask for. */
 export const LIGHT_MODES = ['query', 'off', 'low', 'mid', 'high'] as const
@@ -63,6 +64,12 @@ export function lightBaseUrl(configured?: string | null): string {
 export interface LightOptions {
   /** Injected fetch (tests); defaults to the global. */
   fetchImpl?: typeof fetch
+  /**
+   * Injected direct transport (tests). Defaults to `directRequest()` — one
+   * `node:http(s)` request with its own agent, so a system proxy configured for
+   * the host process cannot capture a request to a LAN device.
+   */
+  directImpl?: (url: string, timeoutMs: number) => Promise<DirectResponse>
   /** Request timeout in ms. Default 5000, same as the command path. */
   timeoutMs?: number
 }
@@ -77,21 +84,35 @@ export async function controlLight(
   options: LightOptions = {},
 ): Promise<string> {
   const base = lightBaseUrl(baseUrl)
-  const route = LIGHT_ROUTES[mode]
+  const url = base + LIGHT_ROUTES[mode]
+  const timeoutMs = options.timeoutMs ?? 5000
   const doFetch = options.fetchImpl ?? fetch
+  const doDirect = options.directImpl ?? ((target: string, timeout: number) => directRequest(target, { timeoutMs: timeout }))
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 5000)
-  try {
-    const res = await doFetch(base + route, { signal: controller.signal })
-    const text = (await res.text()).trim()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const describe = (status: number, raw: string): string => {
+    const text = raw.trim()
     if (mode === 'query') {
       return text ? `当前灯光档位：${text}（0=关闭，1=低，2=中，3=高）` : 'ESP32 无响应'
     }
-    if (!res.ok) return `❌ ESP32 响应异常（HTTP ${res.status}）`
+    if (status < 200 || status >= 300) return `❌ ESP32 响应异常（HTTP ${status}）`
     const label = LIGHT_LABELS[mode]
     return text ? `✅ ${label}：${text}` : `✅ ${label}`
+  }
+  try {
+    const res = await doFetch(url, { signal: controller.signal })
+    return describe(res.status, await res.text())
   } catch (error) {
-    return `❌ 无法连接 ESP32 灯光设备（${error instanceof Error ? error.message : String(error)}）`
+    // The device is on the LAN: never let a host proxy decide whether the light
+    // can be reached. Retry once directly and name both reasons when it is
+    // really down (a bare "fetch failed" tells the user nothing, see net.ts).
+    const first = describeError(error)
+    try {
+      const res = await doDirect(url, timeoutMs)
+      return describe(res.status, res.body)
+    } catch (directError) {
+      return `❌ 无法连接 ESP32 灯光设备（${first}；直连重试失败：${describeError(directError)}）`
+    }
   } finally {
     clearTimeout(timer)
   }

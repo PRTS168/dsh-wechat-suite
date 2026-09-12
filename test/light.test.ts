@@ -64,9 +64,31 @@ test('an unreachable device is reported as text, never thrown', async () => {
   const failing = (async () => {
     throw new Error('connect ECONNREFUSED 192.168.1.11:80')
   }) as unknown as typeof fetch
-  const line = await controlLight(undefined, 'mid', { fetchImpl: failing })
+  const directFailing = async () => {
+    throw new Error('connect ECONNREFUSED 192.168.1.11:80')
+  }
+  const line = await controlLight(undefined, 'mid', { fetchImpl: failing, directImpl: directFailing })
   assert.match(line, /^❌ 无法连接 ESP32 灯光设备（/)
   assert.match(line, /ECONNREFUSED/)
+  assert.match(line, /直连重试失败/)
+})
+
+test('a proxy-blind fetch falls back to the direct transport', async () => {
+  // What a system proxy that drops the request looks like: the bare undici
+  // "fetch failed" with the real reason hidden in `cause`.
+  const failing = (async () => {
+    const error = new Error('fetch failed') as Error & { cause?: unknown }
+    error.cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:7890'), { code: 'ECONNREFUSED' })
+    throw error
+  }) as unknown as typeof fetch
+  const seen: string[] = []
+  const direct = async (url: string) => {
+    seen.push(url)
+    return { status: 200, body: '3' }
+  }
+  const line = await controlLight('http://192.168.1.50:80', 'high', { fetchImpl: failing, directImpl: direct })
+  assert.equal(line, `✅ ${LIGHT_LABELS.high}：3`)
+  assert.deepEqual(seen, ['http://192.168.1.50:80/high'])
 })
 
 test('the request hits the configured device path', async () => {

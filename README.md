@@ -5,14 +5,14 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/offline%20tests-146%20passing-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/offline%20tests-154%20passing-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
 
   <p>
     <a href="#-quickstart">Quickstart</a> ·
-    <a href="#-whats-new-in-v030">What's new</a> ·
+    <a href="#-whats-new-in-v031">What's new</a> ·
     <a href="#-features">Features</a> ·
     <a href="#-configuration">Configuration</a> ·
     <a href="#-commands-and-tools">Commands</a> ·
@@ -59,7 +59,32 @@ you (WeChat)  ⇄  iLink  ⇄  wechat-gateway  ⇄  wechat-conversation-node  �
 
 ---
 
-## ✨ What's new in v0.3.0
+## ✨ What's new in v0.3.1
+
+Fixes since v0.3.0. Full announcement:
+[`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md) ·
+[release page](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.1).
+
+### Fixed
+
+- **`/早安 test` only ever answered `fetch failed`** — `fetch` reports every transport failure as a bare `TypeError: fetch failed` and keeps the real reason (`ENOTFOUND` / `ECONNREFUSED` / TLS / timeout) in `error.cause`, so a local proxy that is up but does not carry `api.open-meteo.com` looks exactly like a dead network
+  - the message now unwraps the cause chain (including the happy-eyeballs `AggregateError`), the request is retried **directly over `node:https`** (`agent: false`, so no proxy dispatcher), and both reasons are reported when it really is down
+- **Bare `1` / `2` stopped answering permission requests** — the approval check sat after the "starts with `/`" guard, so digits never reached `resolveApproval()`: they were fed to the model instead, and the approval timed out
+  - approval replies (`/yes`, `/no`, bare `1` / `2`) are handled first now; with nothing pending, `1` / `2` still fall through to `/model` / `/perm` and to the model
+- **`/yes` and `/no` answered "❓ 未知命令 /yes"** plus the help dump when nothing was pending; they now say so plainly
+- **The retired light vocabulary stopped working** — `/gear` `/off` `/low` `/mid` `/high` (the device's own words, used by the archived `dsh-wechat-tools` plugin) were answered with "unknown command"
+  - all five are restored and listed in `/help`, sharing one implementation with `/开灯` and friends
+- **Light control was proxy-bound too** — a request to a LAN device now retries directly as well, and reports the real reason instead of `fetch failed`
+
+### Other
+
+- unit tests **143 → 154** (new: `commands` 7, `morning` +3, `light` +1; the unreachable-device case now injects both transports and no longer touches the network)
+- new `src/node/net.ts` — `describeError()` and `directRequest()` shared by the weather push and light control
+- docs: proxy troubleshooting tip on both homepages, and the trap recorded under *Environment* in `DEVELOPMENT.md`
+
+---
+
+## 📦 v0.3.0 — previous release
 
 Changes since v0.2.2. Full announcement:
 [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md) ·
@@ -91,8 +116,7 @@ Changes since v0.2.2. Full announcement:
   - the `config-api` plugin row was removed — management moved to a separate process, structurally deleting the "optional `webServer` stalls profile boot" path; the leftover client code and its build step were deleted too
 - **Long-session self-continuation** — after 60 turns / 3083 events the model wrote a fake user message with a future timestamp into its own output and executed it (it produced an unrequested video)
   - inbound messages are now fenced (`<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 …>>>`), with the timestamp moved from the line prefix to the **closing marker**
-- **The daily weather push could die behind a local proxy** — `fetch` reported a bare `fetch failed` and the real reason (`ENOTFOUND` / `ECONNREFUSED`) stayed hidden in `error.cause`, so a proxy that was up but did not carry `api.open-meteo.com` looked like a plain outage
-  - the failure message now unwraps the cause chain and names the cause, and the request is retried **directly over `node:https`** (which never consults a proxy dispatcher) before giving up
+
 - **Silent failures** — an empty media download logged nothing and said nothing, and the notice itself could not be delivered because `node.peerId` was assigned later
   - all four cases (image / file / video / unknown item) now log a warning **and** answer in chat; `peerId` assignment moved ahead of the failure paths
 - **Duplicate delivery** — iLink sometimes omits `message_id` (common for voice) and the gateway dedup was `if (messageId && …)`, i.e. no dedup at all: the same message came back 6–9 s later and was answered twice
@@ -106,7 +130,7 @@ Changes since v0.2.2. Full announcement:
 - aligned with DSH **0.1.2-rc.1** (harness bundled in the desktop app) and **0.1.5-rc.2** (packages embedded in the `dsh` CLI); both load and run
   - `cordis ^4.0.2` must match the host (two instances break service resolution); `schemastery ^3.18.2` must be a single instance (3.18.1 alongside it raises `TS2742`); Node ≥ 22 (tested on 24)
   - cross-host differences, all handled in code: `dsh-persona`'s key `text:` (0.1.2) → `prefix:` (0.1.5); `Session.events` removed in 0.1.5 → `snapshotEvents()`; optional services never in `inject` (a missing projection yields `1 entry did not activate` and fails the whole profile) → `ctx.get()`
-- unit tests **86 → 146** (new: `context-policy` 21, `light` 13, `morning` 9, `dedup` 6, `inbound-media` 6, `resume` 5, `user-message-envelope` 5, …)
+- unit tests **86 → 143** (new: `context-policy` 21, `light` 13, `dedup` 6, `inbound-media` 6, `resume` 5, `user-message-envelope` 5, …)
 - verified live: WeChat round trips (text / image / file / image generation) → one automatic rotation with the new session usable → 3 rapid patch hot reloads with the process alive, polling continuous and no `fatal` / `unhandled` in stderr
 
 </details>
@@ -162,7 +186,7 @@ node admin/server.ts          # or admin/start-admin.bat on Windows
 | **Files & video** | Inbound documents/videos decrypted to `mediaDir` with the original file name; `wechat_send_file` / `wechat_send_video` send them back (playable mp4/mov attachment — iLink has no native video bubble) |
 | **Sessions** | `/sessions /use /new /stop /status`, auto-resume of the newest `wechat-` session, hard isolation from Web-GUI sessions via the `wechat-` prefix |
 | **Context** | `contextPolicy` rotation on turns / context pressure / token budget / idle time, with a free handoff note; switch schemes from the console |
-| **Control** | `/model` and `/perm` two-step menus; `/yes` `/no` approvals; `/开灯` `/关灯` light control (`control_esp32_light`) |
+| **Control** | `/model` and `/perm` two-step menus; `/yes` `/no` (or bare `1` / `2`) approvals; `/开灯` `/关灯` or `/gear` `/off` `/low` `/mid` `/high` light control (`control_esp32_light`) |
 | **Proactive** | `set_reminder` (per-peer, persistent, catch-up after downtime) and the daily `/早安` weather digest (Open-Meteo, zero LLM cost) |
 | **Email** | `send_email` over a configured implicit-TLS SMTP account |
 | **Noise control** | Digest-style outbound: one heartbeat line per `digestIntervalSec`, replies chunked to `maxMessageChars` with throttling, end-of-turn notices only for error / abort / truncation |
@@ -186,7 +210,7 @@ plugins:
     maxMessageChars: 2000             # WeChat bubble cap (protocol limit)
     sendChunkDelayMs: 1500            # throttle between outbound bubbles
     imageInput: auto                  # auto | native | ocr
-    contextPolicy: '{"scheme":"manual"}'   # see What's new -> Added
+    contextPolicy: '{"scheme":"manual"}'   # see v0.3.0 -> Added
     # imageInputModel: amd/DeepSeek-V4-Flash-Vision-Exp  # vision route for pictures only
     # agentPreset: wechat             # optional persona preset (lives outside this repo)
     # agentProvider / agentModel: ... # model route for the WeChat agent
@@ -276,6 +300,7 @@ replayable and the agent can re-read the file.
 | `/识图 [auto\|native\|ocr]` | image-input mode; no argument reports mode + routed model |
 | `/早安 on\|off\|status\|test\|HH:MM` (alias `/morning`) | morning weather digest |
 | `/开灯` `/开灯1\|2\|3` `/关灯` | ESP32 light control (gear 3 / low / mid / high / off) |
+| `/gear` `/off` `/low` `/mid` `/high` | same implementation under the device's own vocabulary (query / off / low / mid / high) |
 | `/yes` `/no` (or `1`/`2` while one request is pending) | answer a permission request |
 | `/help` | command list |
 
@@ -338,7 +363,7 @@ commands are queued on disk (`$DSH_HOME/wechat-admin/queue/`) and executed by th
 
 > [!NOTE]
 > Since v0.3.0 there is **no in-GUI settings page** — the `config-api` plugin row was removed
-> (see *What's new → Fixed*). Configure through `cordis.patch.yml` or this console.
+> (see *v0.3.0 → Fixed*). Configure through `cordis.patch.yml` or this console.
 
 ---
 
@@ -348,7 +373,7 @@ commands are queued on disk (`$DSH_HOME/wechat-admin/queue/`) and executed by th
 pnpm install
 pnpm build          # src/ -> lib/ (tsc)
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts — 146 tests, no WeChat account
+pnpm test           # node --test test/*.test.ts — 154 tests, no WeChat account
 pnpm smoke          # manual live-account check
 pnpm setup          # interactive config wizard
 ```
@@ -365,9 +390,9 @@ pnpm setup          # interactive config wizard
   outbound media upload (the fake server has no `/upload`), `/send`, `/help`, restart resume, and
   the native-image block itself (`vision.test.ts` covers the mode/policy decision against a stub
   catalog; `attachments.saveImage` runs only on a live host). Live smoke covers the happy paths.
-- Test spread (146): `node` 24 · `context-policy` 21 · `gateway` 18 · `light` 13 · `vision` 10 ·
-  `morning` 9 · `markdown` 9 · `patch-config` 7 · `dedup` 6 · `inbound-media` 6 · `resume` 5 ·
-  `user-message-envelope` 5 · `email` 4 · `picker` 4 · `reminders` 4 · `boot-safety` 1
+- Test spread (154): `node` 24 · `context-policy` 21 · `gateway` 18 · `light` 14 · `vision` 10 ·
+  `morning` 9 · `markdown` 9 · `commands` 7 · `patch-config` 7 · `dedup` 6 · `inbound-media` 6 ·
+  `resume` 5 · `user-message-envelope` 5 · `email` 4 · `picker` 4 · `reminders` 4 · `boot-safety` 1
 
 ---
 
@@ -389,7 +414,7 @@ pnpm setup          # interactive config wizard
 | --- | --- |
 | iLink exclusive lock — two pollers on one token → 403 + dropped messages | Dedicated account; loud fatal error + polling stop on 403 |
 | Account restriction — unofficial gateway | Dedicated, disposable account; stated plainly in this README |
-| DSH v0.1 churn | Two host versions verified (*What's new → Other*); optional services via `ctx.get()`; boot-safety tests |
+| DSH v0.1 churn | Two host versions verified (*v0.3.0 → Other*); optional services via `ctx.get()`; boot-safety tests |
 | An unhandled rejection killing the host | All async entry points resolve; `.catch()` at call sites; hot-reload stress pass |
 | Protocol opacity | Protocol reconstructed from existing clients; synthetic fixtures in the repo |
 | Credential files in the repo root | `client-config.json` / `account.json` / `admin/.admin-token` are git-ignored |
@@ -398,14 +423,26 @@ pnpm setup          # interactive config wizard
 
 ## 📚 Version history
 
+<details open>
+<summary><b>v0.3.1</b> — weather and command-surface fixes</summary>
+
+- The weather push reports real failure reasons and retries directly, ignoring a host proxy.
+- Bare `1` / `2` answer permission requests again; `/yes` and `/no` no longer claim to be unknown.
+- The retired light vocabulary (`/gear` `/off` `/low` `/mid` `/high`) works again, proxy-safe.
+- 154 offline unit tests (was 146).
+
+See [`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md).
+
+</details>
+
 <details>
 <summary><b>v0.3.0</b> — stability, context lifecycle, standalone console</summary>
 
 Context rotation policies, host-stability hardening, failure visibility and the standalone admin
-console — see [What's new in v0.3.0](#-whats-new-in-v030) and
+console — see [v0.3.0 — previous release](#-v030--previous-release) and
 [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md).
 
-- 146 offline unit tests (was 86).
+- 143 offline unit tests (was 86).
 
 </details>
 
@@ -426,7 +463,7 @@ console — see [What's new in v0.3.0](#-whats-new-in-v030) and
 
 - **Settings → Plugins → "微信桥配置"** edited every placeholder in the browser, with masked
   secrets and timestamped backups; the same page edited agent preset personas.
-  *(Removed in v0.3.0 — see What's new → Fixed / Notes.)*
+  *(Removed in v0.3.0 — see *v0.3.0 → Fixed / Notes* above.)*
 
 </details>
 

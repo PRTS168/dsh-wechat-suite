@@ -16,7 +16,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { get } from 'node:https'
+import { describeError, directRequest } from './net.ts'
 import type { Context } from '@deepseek-ai/cordis'
 
 /** Persisted morning-push configuration. */
@@ -89,54 +89,17 @@ function toForecast(data: OpenMeteoPayload): DailyForecast {
   }
 }
 
-/**
- * One-line reason for a failed request.
- *
- * `fetch` reports every transport failure as a bare `TypeError: fetch failed`
- * and keeps the real reason (ENOTFOUND / ECONNREFUSED / TLS / timeout) in
- * `error.cause` — so without unwrapping it, a proxy that silently drops the
- * request is indistinguishable from a genuine outage.
- */
-export function describeError(error: unknown): string {
-  if (!(error instanceof Error)) return String(error)
-  const parts: string[] = []
-  if (error.message) parts.push(error.message)
-  const cause = (error as { cause?: unknown }).cause
-  if (cause instanceof Error) {
-    if (cause.message && cause.message !== error.message) parts.push(cause.message)
-    const code = (cause as { code?: unknown }).code
-    if (typeof code === 'string' && code && !parts.join(' ').includes(code)) parts.push(code)
-  } else if (cause && typeof cause === 'object' && Array.isArray((cause as { errors?: unknown[] }).errors)) {
-    // Happy-eyeballs failures arrive as AggregateError(IPv6, IPv4).
-    for (const inner of (cause as { errors: unknown[] }).errors) {
-      if (inner instanceof Error && inner.message) parts.push(inner.message)
-    }
-  }
-  return parts.join(' / ') || 'unknown error'
-}
+export { describeError }
 
-/** Direct HTTPS JSON read that never consults a global fetch dispatcher. */
-export function directJson(url: string, timeoutMs = 15_000): Promise<OpenMeteoPayload> {
-  return new Promise<OpenMeteoPayload>((resolve, reject) => {
-    const request = get(url, { agent: false, headers: { accept: 'application/json' } }, (response) => {
-      const chunks: Buffer[] = []
-      response.on('data', (chunk: Buffer) => chunks.push(chunk))
-      response.on('end', () => {
-        const status = response.statusCode ?? 0
-        if (status < 200 || status >= 300) {
-          reject(new Error(`Open-Meteo HTTP ${status}`))
-          return
-        }
-        try {
-          resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as OpenMeteoPayload)
-        } catch (error) {
-          reject(new Error(`Open-Meteo returned invalid JSON: ${describeError(error)}`))
-        }
-      })
-    })
-    request.setTimeout(timeoutMs, () => request.destroy(new Error(`direct request timed out after ${timeoutMs}ms`)))
-    request.on('error', reject)
-  })
+/** Direct JSON read that never consults a global fetch dispatcher. */
+export async function directJson(url: string, timeoutMs = 15_000): Promise<OpenMeteoPayload> {
+  const { status, body } = await directRequest(url, { timeoutMs, headers: { accept: 'application/json' } })
+  if (status < 200 || status >= 300) throw new Error(`Open-Meteo HTTP ${status}`)
+  try {
+    return JSON.parse(body) as OpenMeteoPayload
+  } catch (error) {
+    throw new Error(`Open-Meteo returned invalid JSON: ${describeError(error)}`)
+  }
 }
 
 /**

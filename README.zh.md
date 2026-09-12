@@ -5,14 +5,14 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-146%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-154%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
 
   <p>
     <a href="#-快速开始">快速开始</a> ·
-    <a href="#-v030-改进">v0.3.0 改进</a> ·
+    <a href="#-v031-改进">v0.3.1 改进</a> ·
     <a href="#-功能">功能</a> ·
     <a href="#-配置">配置</a> ·
     <a href="#-命令与工具">命令</a> ·
@@ -56,7 +56,32 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
 
 ---
 
-## ✨ v0.3.0 改进
+## ✨ v0.3.1 改进
+
+自 v0.3.0 以来的修复。完整发行说明：
+[`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md) ·
+[Release 页面](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.1)。
+
+### 修复
+
+- **`/早安 test` 只回一句 `fetch failed`** —— `fetch` 把任何传输层失败都报成 `TypeError: fetch failed`，真实原因（`ENOTFOUND` / `ECONNREFUSED` / TLS / 超时）藏在 `error.cause` 里；代理活着但不放行 `api.open-meteo.com` 时，与真的断网完全无法区分
+  - 现在会展开 cause 链（含 happy-eyeballs 的 `AggregateError`）写出真实原因，并改用 `node:https` **直连重试一次**（`agent: false`，不经过任何代理 dispatcher）；两次都失败时同时给出两条原因
+- **裸 `1` / `2` 回答权限请求失效** —— 审批检查位于「是否以 `/` 开头」判断之后，数字根本到不了 `resolveApproval()`，会被当成聊天内容喂给模型，审批只能等超时
+  - 审批回复（`/yes` `/no` 与裸 `1` `/2`）现在最先处理；没有待确认请求时 `1` `/2` 仍会交回给 `/model` `/perm` 菜单与模型
+- **`/yes` `/no` 在没有待确认请求时报「❓ 未知命令 /yes」**并附整段帮助；现在明确回一句「当前没有待确认的请求」
+- **老灯控词表失效** —— 已归档的 `dsh-wechat-tools` 插件用的是设备自己的词（`/gear` `/off` `/low` `/mid` `/high`），此前一律回「未知命令」
+  - 五个拼写已恢复并列入 `/help`，与 `/开灯` 系列共用同一份实现
+- **灯控同样被代理绑住** —— 局域网设备请求现在也会在传输层失败后直连重试，并且报出真实原因而不是 `fetch failed`
+
+### 其它
+
+- 单元测试 **143 → 154 项**（新增 `commands` 7、`morning` +3、`light` +1；「设备不可达」用例改为同时注入直连传输，不再触网）
+- 新增 `src/node/net.ts`：`describeError()` 与 `directRequest()` 供天气与灯控共用
+- 文档：中英首页加「代理排查」提示；`DEVELOPMENT.md` 环境约束补记该坑
+
+---
+
+## 📦 v0.3.0 上一版
 
 自 v0.2.2 以来的改进。
 完整发行说明：[`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md)
@@ -88,8 +113,7 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
   - `config-api` 插件行**移除**，管理能力搬到独立进程，从结构上删除「可选 `webServer` 依赖拖死 profile 启动」这条路径；残留的网页端代码与构建步骤一并删除
 - **长会话自我续写**：单会话累积到 60 轮 / 3083 事件后，模型在自己输出里续写出一条带未来时间戳的假用户消息（`[发送于 …] 视频呢？发个`）并照着执行，造了个没人要的视频
   - 入站信封改为定界块 `<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 …>>>`，时间戳从行首说话人标记移到**结束标记**
-- **每日天气推送会被本地代理弄死**：`fetch` 只报一句 `fetch failed`，真实原因（`ENOTFOUND` / `ECONNREFUSED`）藏在 `error.cause` 里 —— 代理活着但不放行 `api.open-meteo.com` 时，看起来跟真的断网一模一样
-  - 失败信息现在会展开 cause 链并指出原因，且会改用 **`node:https` 直连重试一次**（不经过任何代理 dispatcher）之后才放弃
+
 - **静默失败**：入站媒体下载返回空时零日志零提示；而「响亮失败」的提示本身又因 `peerId` 未赋值而发不出去
   - 四种情形（图片 / 文件 / 视频 / 未知 item 类型）现在都写 warn 日志**并**回一句明确提示；`peerId` 赋值提前到失败路径之前
 - **重复投递**：iLink 有时不给 `message_id`（语音常见），而网关去重原本是 `if (messageId && …)`，等于完全不去重——同一条消息 6–9 秒后被再投一次、被回答两遍
@@ -103,7 +127,7 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
 - 依赖对齐 DSH **0.1.2-rc.1**（桌面应用内置 harness）与 **0.1.5-rc.2**（`dsh` CLI 内嵌包），两套宿主都实测加载运行
   - `cordis ^4.0.2` 需与宿主对齐（双实例会破坏服务解析）；`schemastery ^3.18.2` 需单实例（与 3.18.1 并存会致 `TS2742`）；Node ≥ 22（实测 24）
   - 跨宿主差异（都已在代码里处理）：`dsh-persona` 的配置键 `text:`（0.1.2）→ `prefix:`（0.1.5）；`Session.events` 在 0.1.5 移除 → 全库改用 `snapshotEvents()`；可选服务不得写进 `inject`（缺投影时 `1 entry did not activate` 会让**整个 profile 启动失败**）→ 一律 `ctx.get()`
-- 单元测试 **86 → 146 项**（新增 `context-policy` 21、`light` 13、`morning` 9、`dedup` 6、`inbound-media` 6、`resume` 5、`user-message-envelope` 5 等）
+- 单元测试 **86 → 143 项**（新增 `context-policy` 21、`light` 13、`dedup` 6、`inbound-media` 6、`resume` 5、`user-message-envelope` 5 等）
 - 验证：真机微信往返（文字 / 图片 / 文件 / 生图）→ 触发一次自动轮换并确认新会话可用；对运行实例连续 3 次 patch 热重载压迫，进程存活、轮询不断、stderr 无 `fatal` / `unhandled`
 
 </details>
@@ -159,7 +183,7 @@ node admin/server.ts          # Windows 上也可用 admin/start-admin.bat
 | **文件与视频** | 入站文档/视频解密落盘 `mediaDir` 并保留原文件名；`wechat_send_file` / `wechat_send_video` 发回（可播放的 mp4/mov 附件 —— iLink 无原生视频气泡） |
 | **会话** | `/sessions /use /new /stop /status`，重启后自动 resume 最近的 `wechat-` 会话；用 `wechat-` 前缀与网页 GUI 会话硬隔离 |
 | **上下文** | `contextPolicy` 按轮数 / 上下文压力 / token 预算 / 空闲时长轮换，附免费交接摘要；管理台一键切换方案 |
-| **控制** | `/model` 与 `/perm` 两步菜单；`/yes` `/no` 审批；`/开灯` `/关灯` 灯控（`control_esp32_light`） |
+| **控制** | `/model` 与 `/perm` 两步菜单；`/yes` `/no`（或裸 `1` / `2`）审批；`/开灯` `/关灯` 或 `/gear` `/off` `/low` `/mid` `/high` 灯控（`control_esp32_light`） |
 | **主动** | `set_reminder`（按联系人隔离、JSON 持久化、停机后补发）与每日 `/早安` 天气摘要（Open-Meteo，零 LLM 成本） |
 | **邮件** | `send_email` 通过配置好的隐式 TLS SMTP 账号发送纯文本邮件 |
 | **不刷屏** | 摘要式出站：每 `digestIntervalSec` 一条心跳，回复按 `maxMessageChars` 分块限速，回合结束只在出错/中止/截断时提示 |
@@ -183,7 +207,7 @@ plugins:
     maxMessageChars: 2000             # 微信单条气泡上限（协议限制）
     sendChunkDelayMs: 1500            # 出站气泡间隔限速
     imageInput: auto                  # auto | native | ocr
-    contextPolicy: '{"scheme":"manual"}'   # 见 v0.3.0 改进 → 新增
+    contextPolicy: '{"scheme":"manual"}'   # 见「v0.3.0 上一版 → 新增」
     # imageInputModel: amd/DeepSeek-V4-Flash-Vision-Exp  # 图片专用视觉路由
     # agentPreset: wechat             # 可选：人设 preset（在仓库之外）
     # agentProvider / agentModel: ... # 微信 agent 的模型路由
@@ -268,6 +292,7 @@ llm-deepseek:
 | `/识图 [auto\|native\|ocr]` | 图片识别模式；不带参数则报告当前模式与路由模型 |
 | `/早安 on\|off\|status\|test\|HH:MM`（别名 `/morning`） | 早安天气摘要 |
 | `/开灯` `/开灯1\|2\|3` `/关灯` | ESP32 灯控（3 档高 / 1·2 档低中 / 关） |
+| `/gear` `/off` `/low` `/mid` `/high` | 同一实现的设备原生词表（查询 / 关 / 低 / 中 / 高） |
 | `/yes` `/no`（仅一条待确认时也可 `1`/`2`） | 回答权限请求 |
 | `/help` | 命令列表 |
 
@@ -328,7 +353,7 @@ agent 的请求，其余沿 answerer 链继续委托。
 
 > [!NOTE]
 > v0.3.0 起**不再有网页 GUI 内的设置页** —— `config-api` 插件行已移除（见
-> 「v0.3.0 改进 → 修复」）。请改 `cordis.patch.yml` 或用这个管理台。
+> 「v0.3.0 上一版 → 修复」）。请改 `cordis.patch.yml` 或用这个管理台。
 
 ---
 
@@ -338,7 +363,7 @@ agent 的请求，其余沿 answerer 链继续委托。
 pnpm install
 pnpm build          # src/ → lib/（tsc）
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts —— 146 项，无需微信
+pnpm test           # node --test test/*.test.ts —— 154 项，无需微信
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导
 ```
@@ -353,9 +378,9 @@ pnpm setup          # 交互式配置向导
 - 诚实标注的盲区（暂无单测）：OCR 成功/失败分支、语音下载→ASR 全流程、媒体上行（fake 服务器
   无 `/upload`）、`/send`、`/help`、重启 resume，以及原生图片块本身（`vision.test.ts` 用 stub
   目录覆盖模式判定，`attachments.saveImage` 只在真机上跑）。真机冒烟覆盖主路径。
-- 测试分布（146 项）：`node` 24 · `context-policy` 21 · `gateway` 18 · `light` 13 ·
-  `vision` 10 · `morning` 9 · `markdown` 9 · `patch-config` 7 · `dedup` 6 · `inbound-media` 6 ·
-  `resume` 5 · `user-message-envelope` 5 · `email` 4 ·
+- 测试分布（154 项）：`node` 24 · `context-policy` 21 · `gateway` 18 · `light` 14 ·
+  `vision` 10 · `morning` 9 · `markdown` 9 · `commands` 7 · `patch-config` 7 · `dedup` 6 ·
+  `inbound-media` 6 · `resume` 5 · `user-message-envelope` 5 · `email` 4 ·
   `picker` 4 · `reminders` 4 · `boot-safety` 1
 
 ---
@@ -377,7 +402,7 @@ pnpm setup          # 交互式配置向导
 | --- | --- |
 | iLink 独占锁 —— 同一 token 两个轮询者 → 403 + 丢消息 | 专用账号；遇 403 大声报错并停止轮询 |
 | 非官方网关可能限制账号 | 使用可弃置的专用账号；README 明说 |
-| DSH v0.1 变更 | 已验证两个宿主版本（见「其它」）；可选项用 `ctx.get()`；boot 安全测试 |
+| DSH v0.1 变更 | 已验证两个宿主版本（见「v0.3.0 上一版 → 其它」）；可选项用 `ctx.get()`；boot 安全测试 |
 | 未处理的 rejection 杀死宿主 | 全部异步入口保证 resolve；调用点 `.catch()`；热重载压迫测试 |
 | 协议细节未见于公开文档 | 报文格式从既有 iLink 客户端归纳；仓库内为合成样本 |
 | 运行时在仓库根落盘含凭据的文件 | `client-config.json` / `account.json` / `admin/.admin-token` 均已 git 忽略 |
@@ -386,14 +411,26 @@ pnpm setup          # 交互式配置向导
 
 ## 📚 版本历史
 
+<details open>
+<summary><b>v0.3.1</b> —— 天气与命令面修复</summary>
+
+- 天气推送报出真实失败原因，并直连重试（不受宿主代理影响）。
+- 裸 `1` / `2` 恢复回答权限请求；`/yes` `/no` 不再自称「未知命令」。
+- 老灯控词表 `/gear` `/off` `/low` `/mid` `/high` 恢复，且同样不怕代理。
+- 离线单测 154 项（原 146 项）。
+
+见 [`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md)。
+
+</details>
+
 <details>
 <summary><b>v0.3.0</b> —— 稳定性、上下文生命周期、独立管理台</summary>
 
 上下文轮换方案、宿主稳定性加固、故障可见性与独立管理台 —— 详见
-[「v0.3.0 改进」](#-v030-改进) 与
+[「v0.3.0 上一版」](#-v030-上一版) 与
 [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md)。
 
-- 离线单测 146 项（原 86 项）。
+- 离线单测 143 项（原 86 项）。
 
 </details>
 
@@ -412,7 +449,7 @@ pnpm setup          # 交互式配置向导
 <summary><b>v0.2.1</b> —— 网页管理页与人设编辑</summary>
 
 - **设置 → 插件 →「微信桥配置」**：浏览器内管理全部占位项，密钥脱敏、带时间戳备份；同一页面
-  还能编辑各 agent preset 的人设正文。*（v0.3.0 已移除，见「修复」/「注意」。）*
+  还能编辑各 agent preset 的人设正文。*（v0.3.0 已移除，见「v0.3.0 上一版 → 修复 / 注意」。）*
 
 </details>
 
