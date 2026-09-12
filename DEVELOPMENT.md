@@ -35,10 +35,12 @@
 | `light.ts` | ESP32 灯控的**唯一实现**：`/开灯` 系列与 `/gear` 词表共用，`control_esp32_light` 工具亦由此派生 |
 | `net.ts` | 共享网络工具：`describeError()` 展开 `error.cause`、`directRequest()` 绕过代理直连（天气/灯控用） |
 
-**路由事件只送达特定作用域**：`approval/request` 由 `ctx.waterfall(scopeTarget(agent, agent), …)`
-派发，过滤器只接受「注册在 agent 自身 / agent 的祖先 / **未打标签**（如 `ctx.root`）作用域」
-上的监听者 —— 注册在插件自己的 ctx 上会**静默收不到**（会话事件里有 `approval/asked`，微信里
-什么都没有）。桥因此把应答器注册在 `ctx.root`，再用 `ownsAgent()` 过滤。
+**桥要接住 `approval/request`，必须 `{ prepend: true, global: true }` 注册**：该事件由
+`ctx.waterfall(scopeTarget(agent, agent), 'approval/request', …)` 派发 —— ① 路由作用域过滤可能
+让监听器**根本收不到**（`global: true` 表示忽略作用域过滤）；② waterfall 是**先答者胜**，
+桌面客户端的应答器（GUI 的「等待审批」卡片）会先占住请求，微信**连被问到的机会都没有**
+（`prepend: true` 排到它前面）。两者缺一都会表现为"桥活着、会话事件里有 `approval/asked`、
+GUI 卡片悬着、微信一片安静"。
 
 **读宿主可选服务时先确认签名**：`permissionPresets` 是**会话级**的（`current(session)`、
 `set(session, name)`，标签用 `optionOf(name)`），曾经按「传事件数组」调用，异常逃出
@@ -60,7 +62,7 @@
 pnpm install
 pnpm build          # tsc -p tsconfig.json（src/ → lib/）
 pnpm typecheck      # tsc --noEmit
-pnpm test           # node --test "test/*.test.ts" —— 164 项，不需要微信账号
+pnpm test           # node --test "test/*.test.ts" —— 167 项，不需要微信账号
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导（只改 profile 的 dsh-chatnode-wechat 段，先备份）
 pnpm login          # 扫码配对，写 WEIXIN_* 凭据
@@ -384,8 +386,8 @@ git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main
 - **原生图片块本身**：`vision.test.ts` 用 stub 目录覆盖**模式判定**，
   但 `attachments.saveImage` 只在真机跑过
 
-单测覆盖的分布（共 164 项）：node 24 / context-policy 21 / gateway 18 / light 14 /
-vision 10 / commands 11 / morning 9 / markdown 9 / patch-config 7 / approvals 6 /
+单测覆盖的分布（共 167 项）：node 24 / context-policy 21 / gateway 18 / light 14 /
+vision 10 / commands 11 / approvals 9 / morning 9 / markdown 9 / patch-config 7 /
 dedup 6 / inbound-media 6 / resume 5 / user-message-envelope 5 / email 4 /
 picker 4 / reminders 4。
 

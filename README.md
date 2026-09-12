@@ -5,7 +5,7 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/offline%20tests-164%20passing-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/offline%20tests-167%20passing-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
@@ -79,13 +79,16 @@ Fixes since v0.3.0. Full announcement:
   - it now uses the real signatures, and the whole call is guarded so a host API change still produces a reply
   - the command surface is **never silent** any more: `/perm` `/model` `/sessions` `/status` `/send` report `❌ …failed: <real reason>` instead of nothing; `/send` also reads the gateway through `ctx.get()`
   - `/sessions` and `/status` now resume a persisted `wechat-` session first, so a restart no longer reads as "no sessions"
-- **Approval prompts never reached WeChat** — the host dispatches `approval/request` through a routed scope target (`scopeTarget(agent, agent)`), whose filter only admits the agent itself, one of its ancestors, or an **untagged** scope; the bridge had registered on its own plugin context, so the request never arrived and the tool call simply waited out its approval window
-  - the answerer now registers on the **root scope** (the untagged standing composition) and keeps its `ownsAgent()` filter, so only this bridge's agent is answered and everything else delegates with `next()`
-  - the prompt now arrives as `#N needs your confirmation / tool / reason`, answered with `/yes` `/no` (or bare `1` / `2`); a timeout still denies by default
+- **Approval prompts never reached WeChat** — two mechanisms, both required to lose the request:
+  - the host dispatches `approval/request` through a **routed scope target** (`ctx.waterfall(scopeTarget(agent, agent), …)`), so a listener can be filtered out by scope;
+  - waterfall is **first-answer-wins**, and the desktop client's answerer (the "等待审批" card in the app) claims the request first — WeChat never even gets asked.
+  - The session log showed `approval/asked` and the app showed a pending card while the chat stayed silent: a live bridge that could not answer.
+  - Fixed by registering the answerer with cordis's `{ prepend: true, global: true }` — `global` skips the scope filter, `prepend` puts the bridge ahead of the desktop answerer, so WeChat becomes the answering surface for `wechat-` sessions. Requests from other namespaces are still delegated with `next()`.
+  - The whole chain now writes one line per step to `$DSH_HOME/wechat-approval.log` (`tool / session / active / owns / peer / decision`; override with `WECHAT_APPROVAL_TRACE`), and an internal error is reported in chat instead of vanishing.
 
 ### Other
 
-- unit tests **143 → 164** (new: `commands` 11, `approvals` 6, `morning` +3, `light` +1; the unreachable-device case now injects both transports and no longer touches the network)
+- unit tests **143 → 167** (new: `commands` 11, `approvals` 9, `morning` +3, `light` +1; the unreachable-device case now injects both transports and no longer touches the network)
 - new `src/node/net.ts` — `describeError()` and `directRequest()` shared by the weather push and light control
 - docs: proxy troubleshooting tip on both homepages, and the trap recorded under *Environment* in `DEVELOPMENT.md`
 
@@ -380,7 +383,7 @@ commands are queued on disk (`$DSH_HOME/wechat-admin/queue/`) and executed by th
 pnpm install
 pnpm build          # src/ -> lib/ (tsc)
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts — 164 tests, no WeChat account
+pnpm test           # node --test test/*.test.ts — 167 tests, no WeChat account
 pnpm smoke          # manual live-account check
 pnpm setup          # interactive config wizard
 ```
@@ -397,8 +400,8 @@ pnpm setup          # interactive config wizard
   outbound media upload (the fake server has no `/upload`), `/send`, `/help`, restart resume, and
   the native-image block itself (`vision.test.ts` covers the mode/policy decision against a stub
   catalog; `attachments.saveImage` runs only on a live host). Live smoke covers the happy paths.
-- Test spread (164): `node` 24 · `context-policy` 21 · `gateway` 18 · `light` 14 · `vision` 10 ·
-  `commands` 11 · `morning` 9 · `markdown` 9 · `patch-config` 7 · `approvals` 6 · `dedup` 6 ·
+- Test spread (167): `node` 24 · `context-policy` 21 · `gateway` 18 · `light` 14 · `vision` 10 ·
+  `commands` 11 · `approvals` 9 · `morning` 9 · `markdown` 9 · `patch-config` 7 · `dedup` 6 ·
   `inbound-media` 6 · `resume` 5 · `user-message-envelope` 5 · `email` 4 · `picker` 4 ·
   `reminders` 4 · `boot-safety` 1
 
@@ -437,7 +440,7 @@ pnpm setup          # interactive config wizard
 - The weather push reports real failure reasons and retries directly, ignoring a host proxy.
 - Bare `1` / `2` answer permission requests again; `/yes` and `/no` no longer claim to be unknown.
 - The retired light vocabulary (`/gear` `/off` `/low` `/mid` `/high`) works again, proxy-safe.
-- 164 offline unit tests (was 146).
+- 167 offline unit tests (was 146).
 
 See [`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md).
 

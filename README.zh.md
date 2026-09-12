@@ -5,7 +5,7 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-164%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-167%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
@@ -76,13 +76,16 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
   - 现在按宿主真实签名调用，并对整段调用加保护（宿主 API 变化时至少回一句失败原因）
   - **命令面不再静默**：`/perm` `/model` `/sessions` `/status` `/send` 任一步骤抛错都会回 `❌ …失败：<真实原因>`；`/send` 改为经 `ctx.get('wechat')` 取服务
   - `/sessions` 与 `/status` 会先尝试恢复持久化的 `wechat-` 会话，重启后不再显示「没有会话」
-- **审批提示发不到微信，工具调用一直等到超时** —— 宿主用**路由作用域**派发 `approval/request`（`ctx.waterfall(scopeTarget(agent, agent), …)`），过滤器只接受「注册在 agent 自身 / agent 的祖先 / **未打标签**作用域」上的监听者；桥注册在自己的插件 ctx 上（三者都不是），请求永远到不了：会话事件有 `approval/asked`，微信里却什么都没有
-  - 应答器改注册到**根作用域**（未打标签的常驻组合），保留 `ownsAgent()` 过滤：只回答本桥驱动的 agent，其余 `next()` 委托
-  - 现在会弹 `#N 需要你的确认 / 工具 / 原因`，用 `/yes` `/no`（或裸 `1` `/2`）作答；超时仍按 DSH 默认拒绝
+- **审批提示发不到微信，工具调用一直等到超时** —— 两层原因，缺一不可：
+  - **路由作用域**：宿主以 `ctx.waterfall(scopeTarget(agent, agent), 'approval/request', …)` 派发，监听器可能被作用域过滤直接丢掉；
+  - **waterfall 先答者胜**：桌面客户端的应答器（GUI 里那张「等待审批」卡片）先占住请求，微信侧**连被问到的机会都没有**。
+  - 会话事件里有 `approval/asked`、GUI 里卡片悬着、微信一片安静 —— 这正是"桥活着但答不上话"的样子。
+  - 修法：应答器按 cordis 的 `{ prepend: true, global: true }` 注册 —— `global` 跳过作用域过滤，`prepend` 排在桌面客户端应答器之前，微信成为审批的回答面（`wechat-` 会话不再在 GUI 弹卡片）。非本桥命名空间的请求仍 `next()` 委托。
+  - 整条审批链现在**逐步骤写 `$DSH_HOME/wechat-approval.log`**（`tool / session / active / owns / peer / 决策`，可用 `WECHAT_APPROVAL_TRACE` 改路径），内部错误也会直接在微信回一句，不再有"发了没反应"。
 
 ### 其它
 
-- 单元测试 **143 → 164 项**（新增 `commands` 11、`approvals` 6、`morning` +3、`light` +1；「设备不可达」用例改为同时注入直连传输，不再触网）
+- 单元测试 **143 → 167 项**（新增 `commands` 11、`approvals` 9、`morning` +3、`light` +1；「设备不可达」用例改为同时注入直连传输，不再触网）
 - 新增 `src/node/net.ts`：`describeError()` 与 `directRequest()` 供天气与灯控共用
 - 文档：中英首页加「代理排查」提示；`DEVELOPMENT.md` 环境约束补记该坑
 
@@ -370,7 +373,7 @@ agent 的请求，其余沿 answerer 链继续委托。
 pnpm install
 pnpm build          # src/ → lib/（tsc）
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts —— 164 项，无需微信
+pnpm test           # node --test test/*.test.ts —— 167 项，无需微信
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导
 ```
@@ -385,8 +388,8 @@ pnpm setup          # 交互式配置向导
 - 诚实标注的盲区（暂无单测）：OCR 成功/失败分支、语音下载→ASR 全流程、媒体上行（fake 服务器
   无 `/upload`）、`/send`、`/help`、重启 resume，以及原生图片块本身（`vision.test.ts` 用 stub
   目录覆盖模式判定，`attachments.saveImage` 只在真机上跑）。真机冒烟覆盖主路径。
-- 测试分布（164 项）：`node` 24 · `context-policy` 21 · `gateway` 18 · `light` 14 ·
-  `vision` 10 · `commands` 11 · `morning` 9 · `markdown` 9 · `patch-config` 7 · `approvals` 6 ·
+- 测试分布（167 项）：`node` 24 · `context-policy` 21 · `gateway` 18 · `light` 14 ·
+  `vision` 10 · `commands` 11 · `approvals` 9 · `morning` 9 · `markdown` 9 · `patch-config` 7 ·
   `dedup` 6 · `inbound-media` 6 · `resume` 5 · `user-message-envelope` 5 · `email` 4 ·
   `picker` 4 · `reminders` 4 · `boot-safety` 1
 
@@ -424,7 +427,7 @@ pnpm setup          # 交互式配置向导
 - 天气推送报出真实失败原因，并直连重试（不受宿主代理影响）。
 - 裸 `1` / `2` 恢复回答权限请求；`/yes` `/no` 不再自称「未知命令」。
 - 老灯控词表 `/gear` `/off` `/low` `/mid` `/high` 恢复，且同样不怕代理。
-- 离线单测 164 项（原 146 项）。
+- 离线单测 167 项（原 146 项）。
 
 见 [`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md)。
 

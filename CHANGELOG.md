@@ -18,14 +18,17 @@
   原实现传事件数组导致抛错逃出命令路由；现按真实签名调用并全程保护
 - 命令面改为「绝不静默」：`/perm` `/model` `/sessions` `/status` `/send` 出错都会回真实原因；
   `/sessions` `/status` 会先恢复持久化的 `wechat-` 会话
-- 审批提示发不到微信：`approval/request` 是**路由事件**（`scopeTarget(agent, agent)`），
-  只送达 agent 自身 / 其祖先 / 未打标签的作用域；应答器原注册在插件 ctx 上，改为根作用域
-  （保留 `ownsAgent()` 过滤），现在会在微信弹出确认提示
+- 审批提示发不到微信（两层原因）：`approval/request` 是**路由事件**（`scopeTarget(agent, agent)`）
+  可能被作用域过滤；且 waterfall **先答者胜**，桌面客户端应答器（GUI 的「等待审批」卡片）
+  会先占住请求。应答器改为 `{ prepend: true, global: true }` 注册：跳过作用域过滤并排在
+  客户端应答器之前，微信成为审批回答面；非本桥命名空间仍 `next()` 委托
+- 审批链逐步骤写 `$DSH_HOME/wechat-approval.log`（可用 `WECHAT_APPROVAL_TRACE` 改路径），
+  内部错误直接在微信回报，不再静默
 
 ### Changed
 
 - 新增 `src/node/net.ts`（`describeError` / `directRequest`），天气与灯控共用
-- 单元测试 143 → 164 项；「设备不可达」用例改为注入直连传输，测试不再触网
+- 单元测试 143 → 167 项；「设备不可达」用例改为注入直连传输，测试不再触网
 
 ## [v0.3.0] — 2026-09-12
 
