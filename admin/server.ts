@@ -282,7 +282,11 @@ async function environment(): Promise<Record<string, unknown>> {
     preset: patch.values.agentPreset || 'wechat',
     presetExists: existsSync(join(presetDir, 'agent.cordis.yml')),
     weixinCredentials: /WEIXIN_BOT_TOKEN/.test(credentials),
-    siliconflowCredential: /GJLD_API_KEY/.test(credentials),
+    // Name-agnostic on purpose: the credential file belongs to the operator and
+    // its key names differ per setup. A SiliconFlow key is recognised by either a
+    // siliconflow-ish name or the `sk-` value shape, so the console tells the
+    // truth without hard-coding one operator's alias into a public package.
+    siliconflowCredential: /siliconflow/i.test(credentials) || /\bsk-[A-Za-z0-9_-]{16,}/.test(credentials),
     allowFrom: patch.allowFrom,
   }
 }

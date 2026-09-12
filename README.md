@@ -161,8 +161,28 @@ Changes since v0.2.2. Full announcement:
 
 **Prerequisites** — Node ≥ 22, pnpm, a dedicated WeChat account, a DSH profile.
 
+### One-command install
+
+`dsh plugin … add` runs one `pnpm add` inside your profile, so any pnpm target
+works — a git repository, a release tarball, an npm package name, or a local path:
+
 ```sh
-# 1. install
+# straight from the repository (no registry needed)
+dsh plugin --profile <your-profile> add github:PRTS168/dsh-wechat-suite
+
+# from a release tarball
+dsh plugin --profile <your-profile> add \
+  https://github.com/PRTS168/dsh-wechat-suite/releases/download/v0.3.1/dsh-cowork-chatnode-wechat-0.3.1.tgz
+
+# from an npm registry, once published
+dsh plugin --profile <your-profile> add <package-name>
+```
+
+Then jump to *Pair the WeChat account* below. Building from a checkout works the
+same way:
+
+```sh
+# 1. install from a checkout
 git clone https://github.com/PRTS168/dsh-wechat-suite.git
 cd dsh-wechat-suite
 pnpm install && pnpm build

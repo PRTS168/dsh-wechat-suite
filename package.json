@@ -22,6 +22,9 @@
     "url": "https://github.com/PRTS168/dsh-wechat-suite/issues"
   },
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
   "exports": {
@@ -47,7 +50,6 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepare": "pnpm build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test \"test/*.test.ts\"",
     "login": "node scripts/login.mjs",

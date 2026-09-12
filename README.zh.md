@@ -158,8 +158,27 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
 
 **前置**：Node ≥ 22、pnpm、一个专用微信账号、一个 DSH profile。
 
+### 一键安装
+
+`dsh plugin … add` 就是在 profile 里跑一次 `pnpm add`，所以 pnpm 支持的源都能用 ——
+git 仓库、Release tarball、npm 包名、本地路径：
+
 ```sh
-# 1. 安装
+# 直接从仓库装（不需要 npm 发布）
+dsh plugin --profile <你的profile> add github:PRTS168/dsh-wechat-suite
+
+# 从 Release tarball 装
+dsh plugin --profile <你的profile> add \
+  https://github.com/PRTS168/dsh-wechat-suite/releases/download/v0.3.1/dsh-cowork-chatnode-wechat-0.3.1.tgz
+
+# 发布到 npm 之后按包名装
+dsh plugin --profile <你的profile> add <包名>
+```
+
+装完直接跳到下面「配对微信」。从 checkout 构建的路径同样可用：
+
+```sh
+# 1. 从 checkout 安装
 git clone https://github.com/PRTS168/dsh-wechat-suite.git
 cd dsh-wechat-suite
 pnpm install && pnpm build

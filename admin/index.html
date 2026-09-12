@@ -165,7 +165,7 @@ function renderEnv() {
       <label>profile patch</label><div>${esc(e.patchFile)} <span class="tag">${e.patchExists ? '存在' : '不存在'}</span></div>
       <label>人设 preset</label><div>${esc(e.preset)} <span class="tag">${e.presetExists ? '已挂载可用' : '缺失——会创建会话失败'}</span></div>
       <label>白名单</label><div>${e.allowFrom.map(esc).join(', ') || '<span class="warn">空——桥不会挂载</span>'}</div>
-      <label>凭据库</label><div>WEIXIN_* ${yn(e.weixinCredentials)} · GJLD_API_KEY(硅基流动) ${yn(e.siliconflowCredential)}</div>
+      <label>凭据库</label><div>WEIXIN_* ${yn(e.weixinCredentials)} · 硅基流动 Key ${yn(e.siliconflowCredential)}</div>
     </div>`;
 }
 
