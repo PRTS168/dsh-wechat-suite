@@ -102,3 +102,55 @@ test('MorningService pushNow composes from stubbed forecast', async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+test('fetchForecast retries directly when the ambient fetch fails', async () => {
+  const failing = (async () => {
+    const error = new Error('fetch failed') as Error & { cause?: unknown }
+    error.cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:7890'), { code: 'ECONNREFUSED' })
+    throw error
+  }) as unknown as typeof fetch
+  let directCalls = 0
+  const direct = async () => {
+    directCalls += 1
+    return {
+      current: { temperature_2m: 21, weather_code: 2, wind_speed_10m: 7 },
+      daily: { temperature_2m_max: [25], temperature_2m_min: [12], weather_code: [3] },
+    }
+  }
+  const forecast = await fetchForecast({ lat: 46.63, lon: 126.98 }, failing, direct)
+  assert.equal(directCalls, 1)
+  assert.equal(forecast.tempNow, 21)
+  assert.equal(forecast.tempMax, 25)
+  assert.equal(forecast.label, '多云')
+})
+
+test('fetchForecast reports both attempts with a proxy hint', async () => {
+  const failing = (async () => {
+    const error = new Error('fetch failed') as Error & { cause?: unknown }
+    error.cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:7890'), { code: 'ECONNREFUSED' })
+    throw error
+  }) as unknown as typeof fetch
+  const direct = async () => {
+    throw new Error('getaddrinfo ENOTFOUND api.open-meteo.com')
+  }
+  await assert.rejects(
+    () => fetchForecast({ lat: 0, lon: 0 }, failing, direct),
+    (error: Error) => {
+      assert.match(error.message, /fetch failed/)
+      assert.match(error.message, /ECONNREFUSED/)
+      assert.match(error.message, /直连重试失败/)
+      assert.match(error.message, /代理/)
+      return true
+    },
+  )
+})
+
+test('fetchForecast does not retry a server-side HTTP error', async () => {
+  const failing = (async () => new Response('nope', { status: 500 })) as unknown as typeof fetch
+  let directCalls = 0
+  const direct = async () => {
+    directCalls += 1
+    return {}
+  }
+  await assert.rejects(() => fetchForecast({ lat: 0, lon: 0 }, failing, direct), /HTTP 500/)
+  assert.equal(directCalls, 0, 'a 5xx is an answer from the server, not a transport failure')
+})

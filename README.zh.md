@@ -5,7 +5,7 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-143%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-146%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
@@ -88,6 +88,8 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
   - `config-api` 插件行**移除**，管理能力搬到独立进程，从结构上删除「可选 `webServer` 依赖拖死 profile 启动」这条路径；残留的网页端代码与构建步骤一并删除
 - **长会话自我续写**：单会话累积到 60 轮 / 3083 事件后，模型在自己输出里续写出一条带未来时间戳的假用户消息（`[发送于 …] 视频呢？发个`）并照着执行，造了个没人要的视频
   - 入站信封改为定界块 `<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 …>>>`，时间戳从行首说话人标记移到**结束标记**
+- **每日天气推送会被本地代理弄死**：`fetch` 只报一句 `fetch failed`，真实原因（`ENOTFOUND` / `ECONNREFUSED`）藏在 `error.cause` 里 —— 代理活着但不放行 `api.open-meteo.com` 时，看起来跟真的断网一模一样
+  - 失败信息现在会展开 cause 链并指出原因，且会改用 **`node:https` 直连重试一次**（不经过任何代理 dispatcher）之后才放弃
 - **静默失败**：入站媒体下载返回空时零日志零提示；而「响亮失败」的提示本身又因 `peerId` 未赋值而发不出去
   - 四种情形（图片 / 文件 / 视频 / 未知 item 类型）现在都写 warn 日志**并**回一句明确提示；`peerId` 赋值提前到失败路径之前
 - **重复投递**：iLink 有时不给 `message_id`（语音常见），而网关去重原本是 `if (messageId && …)`，等于完全不去重——同一条消息 6–9 秒后被再投一次、被回答两遍
@@ -101,7 +103,7 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
 - 依赖对齐 DSH **0.1.2-rc.1**（桌面应用内置 harness）与 **0.1.5-rc.2**（`dsh` CLI 内嵌包），两套宿主都实测加载运行
   - `cordis ^4.0.2` 需与宿主对齐（双实例会破坏服务解析）；`schemastery ^3.18.2` 需单实例（与 3.18.1 并存会致 `TS2742`）；Node ≥ 22（实测 24）
   - 跨宿主差异（都已在代码里处理）：`dsh-persona` 的配置键 `text:`（0.1.2）→ `prefix:`（0.1.5）；`Session.events` 在 0.1.5 移除 → 全库改用 `snapshotEvents()`；可选服务不得写进 `inject`（缺投影时 `1 entry did not activate` 会让**整个 profile 启动失败**）→ 一律 `ctx.get()`
-- 单元测试 **86 → 143 项**（新增 `context-policy` 21、`light` 13、`dedup` 6、`inbound-media` 6、`resume` 5、`user-message-envelope` 5 等）
+- 单元测试 **86 → 146 项**（新增 `context-policy` 21、`light` 13、`morning` 9、`dedup` 6、`inbound-media` 6、`resume` 5、`user-message-envelope` 5 等）
 - 验证：真机微信往返（文字 / 图片 / 文件 / 生图）→ 触发一次自动轮换并确认新会话可用；对运行实例连续 3 次 patch 热重载压迫，进程存活、轮询不断、stderr 无 `fatal` / `unhandled`
 
 </details>
@@ -163,6 +165,11 @@ node admin/server.ts          # Windows 上也可用 admin/start-admin.bat
 | **不刷屏** | 摘要式出站：每 `digestIntervalSec` 一条心跳，回复按 `maxMessageChars` 分块限速，回合结束只在出错/中止/截断时提示 |
 
 ---
+
+> [!TIP]
+> **`/早安 test` 回一句 `fetch failed`？** 基本都是本地/系统代理把 `api.open-meteo.com`
+> 拦掉了。桥会自动改用直连重试一次；两次都失败时，报错会写出真实原因
+> （`ENOTFOUND` / `ECONNREFUSED` / TLS）。
 
 ## ⚙️ 配置
 
@@ -331,7 +338,7 @@ agent 的请求，其余沿 answerer 链继续委托。
 pnpm install
 pnpm build          # src/ → lib/（tsc）
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts —— 143 项，无需微信
+pnpm test           # node --test test/*.test.ts —— 146 项，无需微信
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导
 ```
@@ -346,9 +353,9 @@ pnpm setup          # 交互式配置向导
 - 诚实标注的盲区（暂无单测）：OCR 成功/失败分支、语音下载→ASR 全流程、媒体上行（fake 服务器
   无 `/upload`）、`/send`、`/help`、重启 resume，以及原生图片块本身（`vision.test.ts` 用 stub
   目录覆盖模式判定，`attachments.saveImage` 只在真机上跑）。真机冒烟覆盖主路径。
-- 测试分布（143 项）：`node` 24 · `context-policy` 21 · `gateway` 18 · `light` 13 ·
-  `vision` 10 · `markdown` 9 · `patch-config` 7 · `dedup` 6 · `inbound-media` 6 ·
-  `morning` 6 · `resume` 5 · `user-message-envelope` 5 · `email` 4 ·
+- 测试分布（146 项）：`node` 24 · `context-policy` 21 · `gateway` 18 · `light` 13 ·
+  `vision` 10 · `morning` 9 · `markdown` 9 · `patch-config` 7 · `dedup` 6 · `inbound-media` 6 ·
+  `resume` 5 · `user-message-envelope` 5 · `email` 4 ·
   `picker` 4 · `reminders` 4 · `boot-safety` 1
 
 ---
@@ -386,7 +393,7 @@ pnpm setup          # 交互式配置向导
 [「v0.3.0 改进」](#-v030-改进) 与
 [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md)。
 
-- 离线单测 143 项（原 86 项）。
+- 离线单测 146 项（原 86 项）。
 
 </details>
 

@@ -48,7 +48,7 @@
 pnpm install
 pnpm build          # tsc -p tsconfig.json（src/ → lib/）
 pnpm typecheck      # tsc --noEmit
-pnpm test           # node --test "test/*.test.ts" —— 143 项，不需要微信账号
+pnpm test           # node --test "test/*.test.ts" —— 146 项，不需要微信账号
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导（只改 profile 的 dsh-chatnode-wechat 段，先备份）
 pnpm login          # 扫码配对，写 WEIXIN_* 凭据
@@ -372,9 +372,9 @@ git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main
 - **原生图片块本身**：`vision.test.ts` 用 stub 目录覆盖**模式判定**，
   但 `attachments.saveImage` 只在真机跑过
 
-单测覆盖的分布（共 143 项）：node 24 / context-policy 21 / gateway 18 / light 13 /
-vision 10 / markdown 9 / patch-config 7 / dedup 6 / inbound-media 6 /
-morning 6 / resume 5 / user-message-envelope 5 / email 4 /
+单测覆盖的分布（共 146 项）：node 24 / context-policy 21 / gateway 18 / light 13 /
+vision 10 / morning 9 / markdown 9 / patch-config 7 / dedup 6 / inbound-media 6 /
+resume 5 / user-message-envelope 5 / email 4 /
 picker 4 / reminders 4。
 
 ## 7. 环境约束
@@ -388,3 +388,8 @@ picker 4 / reminders 4。
   发送端的 item type 是**三套独立编号**，混用会导致 0 字节或静默失败。
 - **DSH 是开发者预览版**：`@deepseek-ai/*` 钉在 `0.1.5-rc.2`（与宿主内嵌版本对齐）。升级这些依赖时
   注意 cordis 语义可能变化（尤其 `inject`）。
+- **系统代理会拦掉插件自己的出网请求**：宿主进程里的 `fetch` 若走了代理 dispatcher，而该代理
+  不放行 `api.open-meteo.com`，只会得到一句 `TypeError: fetch failed`（真实原因在 `error.cause`）。
+  `morning.ts` 因此对天气请求做了两条兜底：`describeError()` 展开 cause 链，`directJson()`
+  用 `node:https` 直连重试一次。新增任何外部 HTTP 调用时请照此处理，否则线上只会看到
+  "fetch failed" 这种无法定位的报错。

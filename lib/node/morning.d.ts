@@ -33,8 +33,40 @@ export interface DailyForecast {
     tempMin: number;
     windKmh: number;
 }
-/** Fetch today's forecast for the configured location via Open-Meteo. */
-export declare function fetchForecast(cfg: Pick<MorningConfig, 'lat' | 'lon'>, fetchImpl?: typeof fetch): Promise<DailyForecast>;
+/** Fields of the Open-Meteo payload the greeting actually consumes. */
+interface OpenMeteoPayload {
+    current?: {
+        temperature_2m?: number;
+        weather_code?: number;
+        wind_speed_10m?: number;
+    };
+    daily?: {
+        temperature_2m_max?: number[];
+        temperature_2m_min?: number[];
+        weather_code?: number[];
+    };
+}
+/**
+ * One-line reason for a failed request.
+ *
+ * `fetch` reports every transport failure as a bare `TypeError: fetch failed`
+ * and keeps the real reason (ENOTFOUND / ECONNREFUSED / TLS / timeout) in
+ * `error.cause` — so without unwrapping it, a proxy that silently drops the
+ * request is indistinguishable from a genuine outage.
+ */
+export declare function describeError(error: unknown): string;
+/** Direct HTTPS JSON read that never consults a global fetch dispatcher. */
+export declare function directJson(url: string, timeoutMs?: number): Promise<OpenMeteoPayload>;
+/**
+ * Fetch today's forecast for the configured location via Open-Meteo.
+ *
+ * Tries the ambient `fetch` first (honouring whatever dispatcher the host
+ * installed) and retries **directly** over `node:https` when that fails at the
+ * transport level. The retry is what keeps the feature alive behind a local
+ * proxy that is up but does not carry `api.open-meteo.com`, which otherwise
+ * shows up as `❌ 获取天气失败：fetch failed` with nothing else to go on.
+ */
+export declare function fetchForecast(cfg: Pick<MorningConfig, 'lat' | 'lon'>, fetchImpl?: typeof fetch, directImpl?: (url: string) => Promise<OpenMeteoPayload>): Promise<DailyForecast>;
 /** Compose the greeting message text (no LLM). */
 export declare function composeGreeting(cfg: Pick<MorningConfig, 'place'>, forecast: DailyForecast): string;
 /** Validate a wall-clock time string "HH:MM". */
@@ -71,4 +103,5 @@ export declare class MorningService {
     /** Deliver today's greeting to every target peer (best-effort). */
     private fire;
 }
+export {};
 //# sourceMappingURL=morning.d.ts.map

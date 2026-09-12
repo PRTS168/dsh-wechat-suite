@@ -16,6 +16,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { get } from 'node:https'
 import type { Context } from '@deepseek-ai/cordis'
 
 /** Persisted morning-push configuration. */
@@ -66,10 +67,91 @@ export interface DailyForecast {
   windKmh: number
 }
 
-/** Fetch today's forecast for the configured location via Open-Meteo. */
+/** Fields of the Open-Meteo payload the greeting actually consumes. */
+interface OpenMeteoPayload {
+  current?: { temperature_2m?: number; weather_code?: number; wind_speed_10m?: number }
+  daily?: {
+    temperature_2m_max?: number[]
+    temperature_2m_min?: number[]
+    weather_code?: number[]
+  }
+}
+
+/** Map the raw payload onto the values the greeting shows. */
+function toForecast(data: OpenMeteoPayload): DailyForecast {
+  const code = data.current?.weather_code ?? data.daily?.weather_code?.[0] ?? 0
+  return {
+    label: wmoLabel(code),
+    tempNow: data.current?.temperature_2m ?? NaN,
+    tempMax: data.daily?.temperature_2m_max?.[0] ?? NaN,
+    tempMin: data.daily?.temperature_2m_min?.[0] ?? NaN,
+    windKmh: data.current?.wind_speed_10m ?? NaN,
+  }
+}
+
+/**
+ * One-line reason for a failed request.
+ *
+ * `fetch` reports every transport failure as a bare `TypeError: fetch failed`
+ * and keeps the real reason (ENOTFOUND / ECONNREFUSED / TLS / timeout) in
+ * `error.cause` — so without unwrapping it, a proxy that silently drops the
+ * request is indistinguishable from a genuine outage.
+ */
+export function describeError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error)
+  const parts: string[] = []
+  if (error.message) parts.push(error.message)
+  const cause = (error as { cause?: unknown }).cause
+  if (cause instanceof Error) {
+    if (cause.message && cause.message !== error.message) parts.push(cause.message)
+    const code = (cause as { code?: unknown }).code
+    if (typeof code === 'string' && code && !parts.join(' ').includes(code)) parts.push(code)
+  } else if (cause && typeof cause === 'object' && Array.isArray((cause as { errors?: unknown[] }).errors)) {
+    // Happy-eyeballs failures arrive as AggregateError(IPv6, IPv4).
+    for (const inner of (cause as { errors: unknown[] }).errors) {
+      if (inner instanceof Error && inner.message) parts.push(inner.message)
+    }
+  }
+  return parts.join(' / ') || 'unknown error'
+}
+
+/** Direct HTTPS JSON read that never consults a global fetch dispatcher. */
+export function directJson(url: string, timeoutMs = 15_000): Promise<OpenMeteoPayload> {
+  return new Promise<OpenMeteoPayload>((resolve, reject) => {
+    const request = get(url, { agent: false, headers: { accept: 'application/json' } }, (response) => {
+      const chunks: Buffer[] = []
+      response.on('data', (chunk: Buffer) => chunks.push(chunk))
+      response.on('end', () => {
+        const status = response.statusCode ?? 0
+        if (status < 200 || status >= 300) {
+          reject(new Error(`Open-Meteo HTTP ${status}`))
+          return
+        }
+        try {
+          resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as OpenMeteoPayload)
+        } catch (error) {
+          reject(new Error(`Open-Meteo returned invalid JSON: ${describeError(error)}`))
+        }
+      })
+    })
+    request.setTimeout(timeoutMs, () => request.destroy(new Error(`direct request timed out after ${timeoutMs}ms`)))
+    request.on('error', reject)
+  })
+}
+
+/**
+ * Fetch today's forecast for the configured location via Open-Meteo.
+ *
+ * Tries the ambient `fetch` first (honouring whatever dispatcher the host
+ * installed) and retries **directly** over `node:https` when that fails at the
+ * transport level. The retry is what keeps the feature alive behind a local
+ * proxy that is up but does not carry `api.open-meteo.com`, which otherwise
+ * shows up as `❌ 获取天气失败：fetch failed` with nothing else to go on.
+ */
 export async function fetchForecast(
   cfg: Pick<MorningConfig, 'lat' | 'lon'>,
   fetchImpl: typeof fetch = fetch,
+  directImpl: (url: string) => Promise<OpenMeteoPayload> = directJson,
 ): Promise<DailyForecast> {
   const url = `${OPEN_METEO_URL}?latitude=${cfg.lat}&longitude=${cfg.lon}` +
     '&current=temperature_2m,weather_code,wind_speed_10m' +
@@ -80,21 +162,18 @@ export async function fetchForecast(
   try {
     const response = await fetchImpl(url, { signal: controller.signal })
     if (!response.ok) throw new Error(`Open-Meteo HTTP ${response.status}`)
-    const data = await response.json() as {
-      current?: { temperature_2m?: number; weather_code?: number; wind_speed_10m?: number }
-      daily?: {
-        temperature_2m_max?: number[]
-        temperature_2m_min?: number[]
-        weather_code?: number[]
-      }
-    }
-    const code = data.current?.weather_code ?? data.daily?.weather_code?.[0] ?? 0
-    return {
-      label: wmoLabel(code),
-      tempNow: data.current?.temperature_2m ?? NaN,
-      tempMax: data.daily?.temperature_2m_max?.[0] ?? NaN,
-      tempMin: data.daily?.temperature_2m_min?.[0] ?? NaN,
-      windKmh: data.current?.wind_speed_10m ?? NaN,
+    return toForecast(await response.json() as OpenMeteoPayload)
+  } catch (error) {
+    const first = describeError(error)
+    // A server-side status is an answer, not a transport problem: do not retry.
+    if (/Open-Meteo HTTP \d{3}/.test(first)) throw new Error(first)
+    try {
+      return toForecast(await directImpl(url))
+    } catch (directError) {
+      throw new Error(
+        `${first}；直连重试失败：${describeError(directError)}` +
+        '（若开启了系统代理，请确认代理放行 api.open-meteo.com，或临时关闭代理）',
+      )
     }
   } finally {
     clearTimeout(timer)

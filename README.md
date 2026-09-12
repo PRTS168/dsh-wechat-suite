@@ -5,7 +5,7 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/offline%20tests-143%20passing-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/offline%20tests-146%20passing-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
@@ -91,6 +91,8 @@ Changes since v0.2.2. Full announcement:
   - the `config-api` plugin row was removed — management moved to a separate process, structurally deleting the "optional `webServer` stalls profile boot" path; the leftover client code and its build step were deleted too
 - **Long-session self-continuation** — after 60 turns / 3083 events the model wrote a fake user message with a future timestamp into its own output and executed it (it produced an unrequested video)
   - inbound messages are now fenced (`<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 …>>>`), with the timestamp moved from the line prefix to the **closing marker**
+- **The daily weather push could die behind a local proxy** — `fetch` reported a bare `fetch failed` and the real reason (`ENOTFOUND` / `ECONNREFUSED`) stayed hidden in `error.cause`, so a proxy that was up but did not carry `api.open-meteo.com` looked like a plain outage
+  - the failure message now unwraps the cause chain and names the cause, and the request is retried **directly over `node:https`** (which never consults a proxy dispatcher) before giving up
 - **Silent failures** — an empty media download logged nothing and said nothing, and the notice itself could not be delivered because `node.peerId` was assigned later
   - all four cases (image / file / video / unknown item) now log a warning **and** answer in chat; `peerId` assignment moved ahead of the failure paths
 - **Duplicate delivery** — iLink sometimes omits `message_id` (common for voice) and the gateway dedup was `if (messageId && …)`, i.e. no dedup at all: the same message came back 6–9 s later and was answered twice
@@ -104,7 +106,7 @@ Changes since v0.2.2. Full announcement:
 - aligned with DSH **0.1.2-rc.1** (harness bundled in the desktop app) and **0.1.5-rc.2** (packages embedded in the `dsh` CLI); both load and run
   - `cordis ^4.0.2` must match the host (two instances break service resolution); `schemastery ^3.18.2` must be a single instance (3.18.1 alongside it raises `TS2742`); Node ≥ 22 (tested on 24)
   - cross-host differences, all handled in code: `dsh-persona`'s key `text:` (0.1.2) → `prefix:` (0.1.5); `Session.events` removed in 0.1.5 → `snapshotEvents()`; optional services never in `inject` (a missing projection yields `1 entry did not activate` and fails the whole profile) → `ctx.get()`
-- unit tests **86 → 143** (new: `context-policy` 21, `light` 13, `dedup` 6, `inbound-media` 6, `resume` 5, `user-message-envelope` 5, …)
+- unit tests **86 → 146** (new: `context-policy` 21, `light` 13, `morning` 9, `dedup` 6, `inbound-media` 6, `resume` 5, `user-message-envelope` 5, …)
 - verified live: WeChat round trips (text / image / file / image generation) → one automatic rotation with the new session usable → 3 rapid patch hot reloads with the process alive, polling continuous and no `fatal` / `unhandled` in stderr
 
 </details>
@@ -166,6 +168,11 @@ node admin/server.ts          # or admin/start-admin.bat on Windows
 | **Noise control** | Digest-style outbound: one heartbeat line per `digestIntervalSec`, replies chunked to `maxMessageChars` with throttling, end-of-turn notices only for error / abort / truncation |
 
 ---
+
+> [!TIP]
+> **`/早安 test` answering `fetch failed`?** That is almost always a local or system proxy
+> swallowing `api.open-meteo.com`. The request is retried directly (bypassing the proxy), and
+> when both attempts fail the error names the real cause (`ENOTFOUND`, `ECONNREFUSED`, TLS).
 
 ## ⚙️ Configuration
 
@@ -341,7 +348,7 @@ commands are queued on disk (`$DSH_HOME/wechat-admin/queue/`) and executed by th
 pnpm install
 pnpm build          # src/ -> lib/ (tsc)
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts — 143 tests, no WeChat account
+pnpm test           # node --test test/*.test.ts — 146 tests, no WeChat account
 pnpm smoke          # manual live-account check
 pnpm setup          # interactive config wizard
 ```
@@ -358,8 +365,8 @@ pnpm setup          # interactive config wizard
   outbound media upload (the fake server has no `/upload`), `/send`, `/help`, restart resume, and
   the native-image block itself (`vision.test.ts` covers the mode/policy decision against a stub
   catalog; `attachments.saveImage` runs only on a live host). Live smoke covers the happy paths.
-- Test spread (143): `node` 24 · `context-policy` 21 · `gateway` 18 · `light` 13 · `vision` 10 ·
-  `markdown` 9 · `patch-config` 7 · `dedup` 6 · `inbound-media` 6 · `morning` 6 · `resume` 5 ·
+- Test spread (146): `node` 24 · `context-policy` 21 · `gateway` 18 · `light` 13 · `vision` 10 ·
+  `morning` 9 · `markdown` 9 · `patch-config` 7 · `dedup` 6 · `inbound-media` 6 · `resume` 5 ·
   `user-message-envelope` 5 · `email` 4 · `picker` 4 · `reminders` 4 · `boot-safety` 1
 
 ---
@@ -398,7 +405,7 @@ Context rotation policies, host-stability hardening, failure visibility and the 
 console — see [What's new in v0.3.0](#-whats-new-in-v030) and
 [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md).
 
-- 143 offline unit tests (was 86).
+- 146 offline unit tests (was 86).
 
 </details>
 
