@@ -3,8 +3,9 @@
 **在微信里与你的 DSH agent 对话、监控、审批。**
 
 一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-bundle，通过腾讯**官方 clawbot iLink 协议**（`ilinkai.weixin.qq.com`）把 DSH
-profile 接到微信个人账号。
+bundle，通过腾讯 **clawbot iLink** 网关（`ilinkai.weixin.qq.com`，即腾讯自家
+微信机器人客户端所用的协议）把 DSH profile 接到微信个人账号 —— 这条用法不受
+官方支持。
 
 ```
 你 (微信)  <=>  iLink  <=>  wechat-gateway  <=>  wechat-conversation-node  <=>  DSH agent 会话
@@ -16,7 +17,9 @@ profile 接到微信个人账号。
 > 本仓库**不是**上游项目或其作者的官方发布，也与上游无隶属关系；原始提交
 > 历史与早期贡献者署名完整保留并归属上游作者，基础协议以上游为准。
 
-**状态** | 版本 `v0.3.0`（见 [Releases](https://github.com/PRTS168/dsh-wechat-suite/releases)）· MIT · **154 项离线单测全绿** + 真机微信冒烟 + 热重载压迫测试（2026-09）
+**状态** | 版本 [`v0.3.0`](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0) · MIT · **154 项离线单测全绿**（无需微信账号）+ 真机微信冒烟 + 热重载压迫测试（2026-09）
+
+**English README: [README.md](README.md).**
 
 > **仅供参考。** 已在一套特定环境实测，不代表开箱即用。所有 `<...>` 都是
 > 需要你填入的占位符（`allowFrom` 与 `WEIXIN_*` 凭据必填 —— 缺失时桥会
@@ -24,10 +27,141 @@ profile 接到微信个人账号。
 
 ---
 
+## 0. v0.3.0 改了什么
+
+v0.2.x 回答的是「能不能在微信里跟 DSH agent 说话」；v0.3.0 回答的是
+**「它能不能一直无人值守地跑下去」** —— 上下文怎么轮换、失败怎么被看见、
+以及一个插件在什么情况下会把整个宿主拖死。
+完整发布说明：[Releases → v0.3.0](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0)。
+
+### 0.1 适配版本
+
+| 宿主 | `@deepseek-ai/*` | 状态 |
+| --- | --- | --- |
+| DSH Desktop（桌面应用内置 harness） | **0.1.2-rc.1** | ✅ 实测：真人微信往返、生图、灯控、自动轮换全部通过 |
+| `dsh` CLI（OpenClaw 便携版内嵌包） | **0.1.5-rc.2** | ✅ 实测：启动与插件装载通过 |
+| cordis | `^4.0.2` | 必须与宿主对齐 —— 双实例会破坏服务解析 |
+| schemastery | `^3.18.2` | 必须单实例 —— 3.18.1 与 3.18.2 并存会致 `TS2742` |
+| Node.js | ≥ 22（实测 24） | 管理台与测试直接用 Node 类型擦除跑 `.ts` |
+
+跨宿主差异（都已在代码里处理，列出来是因为踩过）：
+
+- **`dsh-persona` 的配置键改过名**：0.1.2 要求 `text:`，0.1.5 改名为 `prefix:`。
+  preset 用 YAML 锚点同时挂两个键；两边 schema 都接受 `text + prefix`，
+  因此同一份 preset 在两个宿主上都能挂载。
+- **`Session.events` 在 0.1.5 被移除** → 全库改用 `snapshotEvents()` 快照 API。
+- **可选服务不得写进 `inject`**：`sessionTitle` 依赖 `sessionProjections`；
+  把它写进 `inject`，在没有该投影的宿主上这一行会**永久 pending**，宿主随即
+  判定 `1 entry did not activate` 并让**整个 profile 启动失败**。可选项一律用
+  `ctx.get()`（返回 `undefined` 而不是抛错）。
+- **热重载是常态**：本 profile 常用 `patchReload: live`，任何配置写入都会重载
+  插件树，因此所有异步入口都按「scope 随时可能消失」来写。
+
+### 0.2 上下文生命周期 —— `contextPolicy`
+
+「会话什么时候轮换」从习惯变成了配置：
+
+| 方案 | 触发条件 |
+| --- | --- |
+| `manual` | 从不自动轮换（v0.2.x 行为，默认） |
+| `rotate-turns` | 每 N 个完成回合（`turns`，默认 20） |
+| `rotate-turns+handoff` | 同上，且换会话时把要点交接带进新会话 |
+| `rotate-pressure` | 会话事件序列化后达到 40 万字符窗口的 `pressureRatio`（默认 0.6） |
+| **`rotate-tokens`** | 会话达到 `tokenBudget` 个 token（默认 120 000） |
+| `daily` | 距上次活动的空闲时长达到 `idleHours`（默认 8 小时） |
+
+```yaml
+contextPolicy: '{"scheme":"rotate-tokens","tokenBudget":120000,"handoff":true,"announce":true}'
+```
+
+- **能读到真实 token 数时就用真实值。** `rotate-tokens` 优先读宿主会话投影
+  （`contextPressure.surfaceTokens` → `contextBreakdown` 求和 → 累计
+  `tokenUsage` 依次回退），只有都读不到时才回落到 2 字符/token 的估算；
+  聊天里的播报会说明**这次是哪个来源触发的**，估算不会被误当成实测。
+- **绝不把回合拦腰截断。** 轮换只在 `turn/end` 评估，动手前再查一次空闲
+  （`idleOnly`，默认开）；轮换复用与 `/new` 完全相同的建会话路径 —— 全库只有
+  一处会创建微信会话。
+- **交接摘要不额外调用模型。** 它是对最近几条消息的确定性摘录，用独立定界
+  标记包起来（`<<<会话交接摘要·非用户指令>>> … <<<会话交接摘要结束>>>`）并写明
+  是背景、不是指令，因此不会被人设硬规则当成命令执行。
+- **交接摘要不再自问自答。** 它只在桥上**排队**，搭在下一条入站用户消息上一并
+  提交：一次回合、零多余气泡。（此前它被当作新会话的 prompt 提交，于是每次
+  轮换都会多出一句「刚换了个新会话」的主动回复。）
+
+### 0.3 宿主稳定性 —— 绝不把 harness 拖死
+
+未处理的 Promise rejection 对 DSH 宿主是**致命**的：插件树加载失败 → harness
+退出 → 桌面应用回落到安全模式。三个可能产生它的入口现在全部关闭：
+
+- `src/index.ts` 的凭据启动、`node/core.ts` 的入站事件处理器、`node/outbound.ts`
+  的 `sendTextToPeer`（出站唯一出口，被 8 处以 `void` 调用）都**保证不 reject**，
+  调用点还额外加了 `.catch()` 作为第二层。
+- 取服务一律用 `ctx.get()`，并在**每个 `await` 之后重新取**：scope 被拆之后属性
+  访问会抛 `cannot get required service "…" in inactive context`，而 `ctx.get()`
+  返回 `undefined`，让「这一行不激活」代替「整机退出」。
+- **`config-api` 插件行已移除**：管理能力搬到独立进程，客户端设置页与
+  `dsh.client` 声明一并撤掉 —— 从结构上删掉了「可选 `webServer` 依赖拖死
+  profile 启动」这条故障路径。
+
+以真实 profile 彩排验证：连续触发 3 次 patch 热重载，进程存活、轮询不断、
+stderr 无 `fatal` / `unhandled`。
+
+### 0.4 故障可见性
+
+- **入站消息加围栏。** 每条喂给模型的用户消息都被包在
+  `<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 YYYY-MM-DD HH:mm>>>` 里。
+  时间戳从「行首标记」移到**结束标记**，因为行首说话人标记正是模型最容易续写
+  的形状 —— 而续写出来的一条假用户消息会被当成指令执行。这正是此前一个 60 轮
+  会话自己写出「视频呢？发个」并真的造了个视频的原因。
+- **入站媒体不再静默失败。** 下载返回空、或 item 根本没有可下载媒体时，现在
+  都会写 warn 日志**并**在聊天里回一句明确提示（图片 / 文件 / 视频 / 未知 item
+  类型分别处理）。
+- **提示能真的送出去。** 这些路径过去跑在 `node.peerId` 赋值之前，而
+  `sendTextToPeer` 在没有 peer 时直接返回 —— 提示生成了却发不出去。赋值已提前。
+- **重复投递被拦住。** iLink 有时不给 `message_id`（语音常见），而网关去重
+  原本是 `if (messageId && …)`，等于**完全不去重**：同一条消息 6–9 秒后被再投
+  一次、被回答两遍（轮换甚至会把两份投进不同会话）。现在无 id 时退化为
+  **载荷指纹**（发送者 + 每项 kind/文本/媒体指针），窗口 **30 秒** —— 够抓住
+  重投，又不至于吃掉有意重复的一句「你好」；带 id 的窗口仍是 300 秒。
+
+### 0.5 功能
+
+- **独立管理台（`admin/`）**：自己的进程、自己的端口（默认
+  `http://127.0.0.1:8790/`）。因为它**不是 DSH 插件行**，所以不可能影响
+  profile 启动，停掉它也不会停掉桥。三个页签：**配置**（复用桥自己的
+  `CONFIG_FIELDS`，secret 掩码 + 显式显示，写入前备份 + 校验 —— 清空白名单会被
+  拒绝并回滚）、**对话**（`wechat-*` 会话列表 + 转录查看）、**上下文方案**
+  （一键切换 + 参数微调）。新建/删除会话的命令写进
+  `$DSH_HOME/wechat-admin/queue/`，由桥在 ≤2 秒内轮询执行并回写结果。仅回环
+  访问，令牌在首次启动时写入 `admin/.admin-token`，每次 API 调用都要求它，改动
+  类调用还要求 `x-wechat-admin: 1` 守卫头（跨站页面无法伪造），且 `Host` 必须是
+  回环地址。
+- **删除会话是可恢复的**：会话目录与投影缓存一起移入
+  `$DSH_HOME/sessions-trash/<时间戳>-<id>/`（投影也要移走，否则 GUI 列表会把
+  它「复活」），并通知宿主解绑。
+- **`control_esp32_light` 工具已恢复**（`query|off|low|mid|high`），与聊天命令
+  `/开灯`、`/开灯1|2|3`、`/关灯` 共用同一份实现。
+- **本仓库不含任何人设内容**：preset 位于仓库之外的
+  `$DSH_HOME/.agent-presets/<名>/`；v0.3.0 发布前对源码树重新做过人设字符串与
+  密钥的清查。
+
+### 0.6 从 v0.2.x 升级
+
+1. **`config-api` 插件行已移除** —— 网页 GUI 里不再有设置页（人设编辑一并
+   撤掉）。请改 `profiles/<profile>/cordis.patch.yml`，或用独立管理台。
+2. **模型看到的消息格式变了**（定界块）。若你有依赖旧 `[发送于 …]` 前缀的自定义
+   人设规则，请同步更新；配套硬规则在你的 preset 里，本仓库不含人设内容。
+3. **删除会话可恢复**，但清理 `$DSH_HOME/sessions-trash/` 前请先确认。
+4. 依赖版本请与宿主对齐（见 0.1），cordis / schemastery 尤其重要。
+
+---
+
 ## 1. 功能一览
 
-- **双向文字**。回复发送前先做微信化排版（Markdown 标题 →【】、代码块去
-  围栏并缩进、表格去外框线、强调符号去除）。
+- **双向文字**。回复发送前先做微信化排版（Markdown 标题 →【】、代码块去围栏
+  并缩进、表格去外框线、强调符号去除）。
+- **入站信封**。每条用户消息都带时间戳、包在 0.4 描述的定界块里，模型因此永远
+  能分清「真实用户回合」和「它自己写过的东西」。
 - **双向图片，原生识图或 OCR 可切换（适配 DeepSeek 4.1 多模态）**。入站图片
   自动下载解密并落盘 `mediaDir`。图片怎么送到模型取决于路由模型：声明了图片
   输入的多模态模型会收到**真正的 image 内容块**（模型自己看图），纯文本模型
@@ -42,24 +176,11 @@ profile 接到微信个人账号。
   `[微信文件]` / `[微信视频]` 路径标记交给 agent（保留原始文件名）；agent
   可用 `wechat_send_file` / `wechat_send_video` 发送本地文件或视频（视频以
   可播放的 mp4/mov 附件送达 —— iLink 无原生视频气泡）。
-- **入站信封（定界块）**。每条喂给模型的入站用户消息都被一对标记括起来：
-  `<<<微信用户消息>>>` … `<<<微信用户消息结束｜发送于 YYYY-MM-DD HH:mm>>>`
-  （服务器本地时间）。时间戳放在**结束标记**里而不是行首前缀：行首的 `[发送于 …]`
-  是"说话人标记"，模型会在自己的输出里把它续写成一条**不存在的用户发言**再照着
-  执行。配合 preset 人设里的硬规则，只有被这对标记括起来的才是用户消息。
 - **会话管理**。`/sessions /use /new /stop /status`，重启后自动 resume
   最近的 `wechat-` 会话；用 `wechat-` 前缀与网页 GUI 会话硬隔离（同进程
   共享 SessionStore，曾致串台，现已逐层封死）。
-- **上下文管理方案**。`contextPolicy` 决定会话何时自动轮换：`manual`（默认，
-  旧行为）/ `rotate-turns`（每 N 轮）/ `rotate-turns+handoff`（换会话前生成要点
-  交接注入新会话）/ `rotate-pressure`（按上下文代理大小）/ **`rotate-tokens`
-  （自设 token 预算，优先读会话投影的真实 token 数）** / `daily`（按空闲小时）。
-  轮换只在 `turn/end` 且**空闲**时发生，绝不打断进行中的回合；交接摘要用独立的
-  定界标记并写明"不是用户的新指令"。
-- **独立管理台（`admin/`）**。自己的进程与端口（默认 `http://127.0.0.1:8790/`）：
-  管全部配置、看会话转录、**新建/删除微信会话**、一键切换上下文方案。它不是 DSH
-  插件行，因此不可能拖累 profile 启动。删除会话是**可恢复**的（移入
-  `$DSH_HOME/sessions-trash/`）。
+- **上下文生命周期**。`contextPolicy`（见 0.2）按轮数、上下文压力、token 预算
+  或空闲时长自动轮换长会话，可附带免费交接摘要；管理台一键切换方案。
 - **运行时切换**。`/model` 与 `/perm` 两步菜单，聊天内直接切换模型路由与
   权限预设。
 - **定时提醒**。自然语言 → `set_reminder`（按联系人隔离、JSON 持久化、
@@ -67,40 +188,39 @@ profile 接到微信个人账号。
 - **早安天气**。`/早安 on|off|status|test|HH:MM`（别名 `/morning`），每天
   定时拉 Open-Meteo，本地拼装推送，零 LLM 成本。
 - **灯控**。`/开灯 /开灯1|2|3 /关灯` 通过纯 HTTP 控制 ESP32 PWM 灯
-  （`esp32BaseUrl`）。
+  （`esp32BaseUrl`）；模型也能用 `control_esp32_light` 做同样的事。
 - **审批**。权限请求渲染为编号文本提示，聊天内用 `/yes` `/no`（或 `1`/`2`）
   回答；超时默认拒绝。
 - **邮件**。`send_email` 通过配置好的 SMTP 账号（隐式 TLS）发送纯文本邮件，
   可在聊天里直接让 agent 发报告 / 提醒 / 摘要。
 - **摘要式出站**。不刷屏工具调用：每 `digestIntervalSec` 一条心跳，回复按
   `maxMessageChars` 分块限速，回合结束只在出错/中止/截断时提示。
-- **Web 管理页与人设编辑**。在 `web` profile 下，**设置 → 插件 →
-  「微信桥配置」**可管理下面的全部待填项（白名单、模型路由、媒体 Key、克隆
-  音色、路径、节流参数 —— 密钥脱敏、保存写入 `cordis.patch.yml` 并自动备份），
-  还能直接编辑各 agent preset 的人设正文。
+- **独立管理台**。在插件树之外（见 0.5）：配置、转录、新建/删除会话、
+  上下文方案切换。
 
 内含**两个可分离的 Cordis 插件**：
 
 | 插件 | 职责 |
 | --- | --- |
-| `wechat-gateway`（`WechatGateway`） | iLink 服务（`ctx.wechat`）：扫码登录、鉴权长轮询、断线重连/退避、发送重试 + 限流熔断、正在输入指示、加密 CDN 媒体下载/上传。 |
-| `wechat-conversation-node` | 微信 ⇄ DSH 桥：白名单闸门、会话定位、命令、多模态媒体助手（OCR/STT/TTS/生图/文件/视频）、提醒与早安天气、摘要式出站、审批。 |
+| `wechat-gateway`（`WechatGateway`） | iLink 服务（`ctx.wechat`）：扫码登录、鉴权长轮询、断线重连/退避、发送重试 + 限流熔断、正在输入指示、加密 CDN 媒体下载/上传、入站去重。 |
+| `wechat-conversation-node` | 微信 ⇄ DSH 桥：白名单闸门、会话定位、命令、上下文轮换、多模态媒体助手（OCR/STT/TTS/生图/文件/视频）、提醒与早安天气、摘要式出站、审批、灯控。 |
 
 ## 2. 先读这里
 
-- **一个账号一个轮询者。** iLink 每个 bot token 只允许一个鉴权轮询者；同一微信账号
-  跑第二个本实例（或任何其他 iLink 客户端）会互相 403 并丢消息。请为桥使用
+- **一个账号一个轮询者。** iLink 每个 bot token 只允许一个鉴权轮询者；同一微信
+  账号跑第二个本实例（或任何其他 iLink 客户端）会互相 403 并丢消息。请为桥使用
   **专用微信账号**，绝不要用同一 token 跑两个实例。
+- **非官方网关。** 腾讯可能限制账号，请使用你愿意失去的账号。
 - **协议细节逆向而来。** iLink 报文格式是从既有客户端归纳的，尚未见公开的官方
   文档；录制样本在 `test/fixtures/inbound.ndjson`，CI 无需真实账号。
 
 ## 3. 快速开始
 
-前置：Node >= 20、pnpm、一个专用微信账号、一个 DSH profile。
+前置：Node >= 22、pnpm、一个专用微信账号、一个 DSH profile。
 
 ```sh
 git clone https://github.com/PRTS168/dsh-wechat-suite.git
-cd dsh-chatnode-wechat
+cd dsh-wechat-suite
 pnpm install && pnpm build
 dsh plugin --profile <你的profile> add .
 ```
@@ -120,7 +240,12 @@ pnpm setup --yes --set allowFrom=<你的微信ID>@im.wechat \
     --set siliconflowKey=sk-...        # 非交互；siliconflowKey 一次填充 OCR/生图/STT/TTS
 ```
 
-重启 dsh web，然后给机器人发一条微信消息。
+重启 dsh web，然后给机器人发一条微信消息。想同时开管理台：
+
+```sh
+node admin/server.ts          # Windows 上也可用 admin/start-admin.bat
+# -> http://127.0.0.1:8790/   （令牌写入 admin/.admin-token）
+```
 
 ## 4. 配置
 
@@ -133,7 +258,10 @@ plugins:
     approvalTimeoutSec: 600           # 审批超时 → 默认拒绝
     maxMessageChars: 2000             # 微信单条气泡上限（协议限制）
     sendChunkDelayMs: 1500            # 出站气泡间隔限速
-    # agentPreset: wechat             # 可选：人设 preset（见下）
+    imageInput: auto                  # auto | native | ocr（见下）
+    contextPolicy: '{"scheme":"manual"}'   # 见 0.2
+    # imageInputModel: amd/DeepSeek-V4-Flash-Vision-Exp  # 图片专用视觉路由
+    # agentPreset: wechat             # 可选：人设 preset（在仓库之外）
     # agentProvider / agentModel: ... # 微信 agent 的模型路由
     # esp32BaseUrl: http://<esp32-ip>:80   # 灯控（可选）
 
@@ -157,26 +285,56 @@ plugins:
 之外：`$DSH_HOME/.agent-presets/wechat/`。把 `agentPreset` 指向你已安装的
 任意 preset，或省略该键。
 
-### Web 管理页
+### 原生识图 vs OCR
 
-在 `web` profile 下，本 bundle 还带一个浏览器管理页：**设置 → 插件 →
-「微信桥配置」**。它列出上面全部待填项（白名单、模型路由、SiliconFlow 媒体
-Key、克隆音色、路径、节流参数），显示环境状态（凭据 / 人设 preset / 白名单），
-密钥脱敏展示，保存时直接改写 profile 的 `cordis.patch.yml` —— 自动生成带
-时间戳的备份，并保留注释与其他插件条目。
+一张入站图片有两条送达路径：
 
-主机接口位于 `/dsh-chatnode-wechat/api`（`GET /schema`、`GET /config`、
-`POST /save`），所有请求必须携带 `X-DSH-Chatnode-Wechat: 1` 头（跨站请求无法
-伪造该头，因此被拒绝）；第二个 bundle 行 `dsh-chatnode-wechat/config-api` 只在
-存在 `webServer` 服务的 profile 中加载，headless 不受影响。保存后重启 dsh web
-生效。
+| 模式 | 模型拿到什么 | 何时使用 |
+| --- | --- | --- |
+| `native` | 真正的 `image` 内容块（模型自己看图） | 路由模型声明了 `image` 输入 |
+| `ocr` | `【OCR 识别结果】` 文本 + 文件路径 | 路由模型是纯文本，或没有任何路由声明支持图片 |
 
-同一页面还能编辑**人设**（`GET /presets`、`GET /persona`、`POST /persona`、
-`POST /preset/copy`）：选择一个 agent preset，在文本框里编辑它的 `config.text`
-人设正文并保存 —— 只会替换该 preset 的 `agent.cordis.yml` 中 persona 那一段
-（自动备份，其余工具行不动）。「复制为新 preset」会整目录复制当前 preset，
-便于在不手写工具组成的前提下做第二个人设；微信 agent 实际用哪个人设由上面的
-「人设 preset 名」（`agentPreset`）决定。
+`imageInput` 决定策略：
+
+- **`auto`**（默认）—— 先解析 agent 实际聊天用的路由，向 `llm.listModels()`
+  询问它的 `inputModalities`，声明了 `image` 就发图片块。若聊天路由是纯文本，
+  `auto` 会在其他已注册路由里找声明支持图片的（也可以用 `imageInputModel`
+  钉死一个），否则走 OCR。
+- **`native`** —— 总是尝试发图片块。未**声明**支持图片的路由仍会被试一次
+  （端点可能实际接受图片却没广告出来）；一旦被拒，该路由会被抑制 3 小时，
+  后续图片直接走 OCR，不再每张图烧掉一个回合。
+- **`ocr`** —— 总是走文本路径。文档、截图这类场景，专用 OCR 模型更便宜，
+  往往也比视觉模型更准。
+
+`/识图` 可查看并运行时切换模式（`auto` / `native` / `ocr`）；覆盖状态持续到
+`dsh web` 重启，之后重新按 `imageInput` 生效。两种模式下入站图片都保留
+`[微信图片] <路径>` 前缀，会话记录可回放、agent 可重新读取文件。
+
+```
+/识图                 # 当前模式 + 路由模型
+/识图 native          # 强制图片块
+/识图 ocr             # 强制 OCR 文本
+```
+
+### 独立管理台
+
+`node admin/server.ts [--port 8790]`（Windows 上可用 `admin/start-admin.bat`）
+启动一个**仅回环**的 HTTP 管理台，与 DSH 完全分离：
+
+| 页签 | 作用 |
+| --- | --- |
+| 配置 | 桥的全部 `CONFIG_FIELDS` 配置项，密钥掩码 + 显式显示，写入前校验 + 带时间戳备份 |
+| 对话 | `wechat-*` 会话列表（轮数/token）、转录查看、新建会话、遗忘会话（可恢复） |
+| 上下文 | 一键切换 `contextPolicy` 方案 + 参数微调 |
+
+安全姿态：只绑定 `127.0.0.1`，令牌在首次启动时写入 `admin/.admin-token`
+（可用 `WECHAT_ADMIN_TOKEN` 覆盖），每次 API 调用都要带它，改动类调用还要带
+`x-wechat-admin: 1` 守卫头，且 `Host` 必须是回环地址（DNS rebinding 页面因此
+够不到它）。会话命令落在磁盘队列
+（`$DSH_HOME/wechat-admin/queue/`），由桥在 ≤2 秒内执行；管理台还能看到桥最近的
+执行回报。令牌文件已被 git 忽略 —— 不要提交它。
+
+v0.3.0 起**不再有网页 GUI 内的设置页**（见 0.3）。
 
 ## 5. 命令与工具
 
@@ -195,7 +353,7 @@ Key、克隆音色、路径、节流参数），显示环境状态（凭据 / �
 | `/perm` | 两步切换权限预设（列表 → 选数字） |
 | `/识图 [auto\|native\|ocr]` | 图片识别模式；不带参数则报告当前模式与路由模型 |
 | `/早安 on\|off\|status\|test\|HH:MM`（别名 `/morning`） | 早安天气摘要 |
-| `/开灯` `/开灯1\|2\|3` `/关灯` | ESP32 灯控 |
+| `/开灯` `/开灯1\|2\|3` `/关灯` | ESP32 灯控（3 档高 / 1·2 档低中 / 关） |
 | `/yes` `/no`（仅一条待确认时也可 `1`/`2`） | 回答权限请求 |
 | `/help` | 命令列表 |
 
@@ -208,6 +366,8 @@ Agent 工具（供模型调用）：
 | `wechat_send_video(path)` | 发送本地视频（可播放的 mp4/mov 附件） |
 | `generate_image(prompt)` | 文生图（Kolors）并发送 |
 | `speak(text)` | 克隆音色 TTS，以 mp3 附件发送 |
+| `send_email(to, subject, body)` | 通过已配置 SMTP 账号发纯文本邮件 |
+| `control_esp32_light(mode)` | 局域网灯的 `query` / `off` / `low` / `mid` / `high` |
 | `set_reminder(text, inMinutes\|atTime)` | 定时提醒（按联系人） |
 | `list_reminders()` | 查看待办提醒 |
 | `cancel_reminder(id)` | 取消提醒 |
@@ -233,7 +393,7 @@ Agent 工具（供模型调用）：
 pnpm install
 pnpm build          # src/ → lib/（tsc）+ 客户端 bundle（lib/client.js）
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts —— 86 项，无需微信
+pnpm test           # node --test test/*.test.ts —— 154 项，无需微信
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导
 ```
@@ -242,13 +402,15 @@ pnpm setup          # 交互式配置向导
   sendtyping、getconfig、扫码登录、加密 CDN 下载），回放
   `test/fixtures/inbound.ndjson`；入站→会话→出站全链路可离线跑在 CI
   （`.github/workflows/ci.yml`）。
-- 测试分布：gateway 18 / node 24 / markdown 9 / morning 6 / picker 4 /
-  reminders 4 / patch-config 7 / vision 10 / email 4 = **86**。
+- 覆盖范围包括：网关去重（message id **与**载荷指纹）、入站路由/媒体失败路径/
+  消息信封、命令面、审批桥、上下文轮换策略（含 token 预算的多级回退链）、
+  灯控、两个宿主版本下的 preset 兼容，以及 `boot-safety.test.ts` —— 它把
+  「绝不产生未处理 rejection」这条曾导致宿主崩溃的性质钉死在测试里。
 - 诚实标注的盲区（暂无单测）：OCR 成功/失败分支、语音下载→ASR 全流程、
-  媒体上行（fake 服务器无 /upload）、`/send`、`/help`、ESP32 灯控、
-  重启 resume，以及原生图片块本身（`vision.test.ts` 用 stub 目录覆盖模式判定，
-  `attachments.saveImage` 只在真机上跑）。真机冒烟覆盖主路径。
-- DSH 是开发者预览版，`@deepseek-ai/*` 锁定在 `0.1.5-rc.2`。
+  媒体上行（fake 服务器无 /upload）、`/send`、`/help`、重启 resume，以及原生
+  图片块本身（`vision.test.ts` 用 stub 目录覆盖模式判定，`attachments.saveImage`
+  只在真机上跑）。真机冒烟覆盖主路径。
+- DSH 是开发者预览版；本树已知可加载的两个宿主版本见 0.1。
 
 ## 8. 已知限制
 
@@ -259,17 +421,58 @@ pnpm setup          # 交互式配置向导
 - 生成的图片/语音累积在 `mediaDir/generated`，暂无自动清理。
 - 微信 `silk` 编码语音的 STT 待真机验证（m4a 已实测）。
 - 当前只面向 1:1 文字聊天；群消息按设计忽略（MVP）。
+- `rotate-pressure` 的上下文尺寸是「事件序列化字符数」这一代理值，不是模型
+  token 数；要精确计数请用 `rotate-tokens`（依赖宿主暴露会话投影）。
 
 ## 9. 风险
 
 | 风险 | 对策 |
 | --- | --- |
 | iLink 独占锁 —— 同一 token 两个轮询者 → 403 + 丢消息 | 专用账号；遇 403 大声报错并停止轮询 |
-| DSH v0.1 变更 | 锁定 `@deepseek-ai/*` 依赖；CI 针对锁定版本 |
+| 非官方网关可能限制账号 | 使用可弃置的专用账号；README 明说 |
+| DSH v0.1 变更 | 已验证两个宿主版本（0.1）；可选项用 `ctx.get()`；boot 安全测试 |
+| 未处理的 rejection 杀死宿主 | 全部异步入口保证 resolve；调用点 `.catch()`；热重载压迫测试 |
 | 协议细节未见于公开文档 | 报文格式从既有 iLink 客户端归纳；已录制真实样本 |
-| 运行时在仓库根落盘含凭据的文件 | `client-config.json` / `account.json` 已加入 `.gitignore` |
+| 运行时在仓库根落盘含凭据的文件 | `client-config.json` / `account.json` / `admin/.admin-token` 均已 git 忽略 |
 
-## 10. Roadmap
+## 10. 版本历史
+
+### v0.3.0 —— 稳定性、上下文生命周期、独立管理台
+
+- `contextPolicy` 方案（`manual` / `rotate-turns` / `rotate-turns+handoff` /
+  `rotate-pressure` / `rotate-tokens` / `daily`），支持投影级真实 token 计数、
+  仅空闲轮换、以及排队的免费交接摘要（0.2）。
+- 宿主稳定性：启动、入站处理、出站发送都不产生未处理 rejection；`ctx.get()`
+  且每个 `await` 后重读；`config-api` 插件行移除（0.3）。
+- 故障可见性：入站定界信封、能真正送达的媒体失败提示、无 id 消息的载荷指纹
+  去重（0.4）。
+- 功能：独立管理台（删除会话可恢复）、`control_esp32_light` 恢复为工具（0.5）。
+- 离线单测 154 项（原 86 项）。
+
+### v0.2.2 —— 适配 DeepSeek 4.1 多模态与原生图片输入
+
+- 路由模型声明图片输入时，入站图片以真正的 `image` 块送达；否则回落
+  DeepSeek-OCR 文本。`imageInput` 与 `/识图` 选择策略；被拒过的路由抑制 3 小时。
+- 「声明才是开关」：harness 在请求上游按模型声明的 `inputModalities` 闸门拦图片，
+  而适配器内置目录早于 DeepSeek 4.1 —— 见第 4 节的 `models:` 片段（它是**整体
+  替换**插件目录，不是追加）。
+- `send_email`（隐式 TLS SMTP）；`client-config.json` / `account.json` 加入
+  `.gitignore`。
+
+### v0.2.1 —— 网页管理页与人设编辑
+
+- **设置 → 插件 →「微信桥配置」**：浏览器内管理全部占位项，密钥脱敏、带时间戳
+  备份；同一页面还能编辑各 agent preset 的人设正文。*（v0.3.0 已移除，见
+  0.3 / 0.6。）*
+
+### v0.2.0 —— `/perm`、双向文件与视频
+
+- `/perm` 两步权限预设切换器，以及 `pnpm setup` 配置向导。
+- 入站文件/视频解密落盘 `mediaDir` 并保留原文件名；`wechat_send_file` /
+  `wechat_send_video` 发回本地文件与视频。
+- 仓库内人设残留清除；补上上游 fork 归属声明。
+
+## 11. Roadmap
 
 - 下一步：群聊（显式开启，高风险）、多账号、与 hermes/openclaw 共存的
   共享轮询代理。

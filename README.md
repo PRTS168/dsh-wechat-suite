@@ -1,236 +1,442 @@
 # dsh-chatnode-wechat
 
-**把微信变成你 DSH agent 的遥控器。**
+**Chat with, monitor, and approve your DSH agents from WeChat.**
 
-在微信里跟你的 DeepSeek Harness agent 对话、看图、收推送、批权限——不用开电脑，
-不用打开网页 GUI。
+A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) bundle
+that connects a DSH profile to a WeChat personal account over Tencent's
+**clawbot iLink** gateway (`ilinkai.weixin.qq.com`) — the protocol behind
+Tencent's own WeChat bot clients, driven here against a personal account with
+no official support.
 
 ```
-你（微信） ⇄ iLink ⇄ wechat-gateway ⇄ wechat-conversation-node ⇄ DSH agent 会话
+you (WeChat)  <=>  iLink  <=>  wechat-gateway  <=>  wechat-conversation-node  <=>  DSH agent session
 ```
 
-这是一个 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) bundle，
-经由腾讯**官方 clawbot iLink 协议**（`ilinkai.weixin.qq.com`）连接个人微信号。
+> **Fork notice (unofficial).** This repository is a personal, unofficial
+> fork and continued development of
+> [Jesse-njx/dsh-chatnode-wechat](https://github.com/Jesse-njx/dsh-chatnode-wechat),
+> forked from the upstream snapshot at commit `2bd4c15` (2026-08). It is NOT
+> an official release of, or affiliated with, the upstream project or its
+> authors. The original commit history and the credit for the earliest work
+> remain intact and are attributed to the upstream authors; upstream remains
+> the source of truth for the base protocol.
 
-**版本** `v0.3.0` · MIT · **154 项离线单测全绿**（无需微信账号）· 真机冒烟 + 热重载压迫测试通过（2026-09）
+**Status** | version [`v0.3.0`](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0) · MIT · **154 offline unit tests green** (no WeChat account required) + live WeChat smoke pass + hot-reload stress pass (2026-09)
+
+**中文说明见 [README.zh.md](README.zh.md).** Release notes are written in
+Chinese; the tables below are the English summary.
+
+> **Reference only.** Verified on one specific environment; not a blanket
+> promise of portability. Everything that looks like `<...>` is a placeholder
+> you must fill in (`allowFrom` and the `WEIXIN_*` credentials are required —
+> without them the bridge safely stays idle and never feeds the model).
 
 ---
 
-## 30 秒上手
+## 0. What's new in v0.3.0
+
+v0.2.x answered *"can I talk to my DSH agent from WeChat?"*. v0.3.0 answers
+*"can it keep running unattended?"* — how the context rotates, how failures
+become visible, and in which situations a plugin can take the whole host down.
+Full notes: [Releases → v0.3.0](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0).
+
+### 0.1 Compatibility / adapted versions
+
+| Host | `@deepseek-ai/*` | Status |
+| --- | --- | --- |
+| DSH Desktop (harness bundled in the app) | **0.1.2-rc.1** | ✅ live WeChat round trips, image generation, light control, automatic rotation |
+| `dsh` CLI (packages embedded in the OpenClaw portable build) | **0.1.5-rc.2** | ✅ boot and plugin mount verified |
+| cordis | `^4.0.2` | must match the host — two instances break service resolution |
+| schemastery | `^3.18.2` | must be a single instance — 3.18.1 next to 3.18.2 raises `TS2742` |
+| Node.js | ≥ 22 (tested on 24) | the admin console and the tests run `.ts` directly via type stripping |
+
+Cross-host differences, all handled in code (listed because we hit them):
+
+- **The `dsh-persona` config key moved.** 0.1.2 requires `text:`, 0.1.5 renamed
+  it to `prefix:`. A preset can publish both keys with a YAML anchor; both
+  schemas accept `text + prefix`, so one preset mounts on either host.
+- **`Session.events` was removed in 0.1.5** → the code reads session history
+  through the `snapshotEvents()` snapshot API instead.
+- **Optional services must never sit in `inject`.** `sessionTitle` depends on
+  `sessionProjections`; declaring that in `inject` leaves the row permanently
+  pending on a host without the projection, and the host then reports
+  `1 entry did not activate` and **fails the whole profile**. Optional
+  dependencies use `ctx.get()` (returns `undefined` instead of throwing).
+- **Hot reload is normal here.** Profiles commonly run `patchReload: live`, so
+  every config write reloads the plugin tree; every async entry point is
+  written as if its scope may vanish mid-flight.
+
+### 0.2 Context lifecycle — `contextPolicy`
+
+"*When does a session rotate?*" is now configuration instead of a habit:
+
+| Scheme | Rotates when |
+| --- | --- |
+| `manual` | never (v0.2.x behaviour, default) |
+| `rotate-turns` | every N completed turns (`turns`, default 20) |
+| `rotate-turns+handoff` | as above, plus a handoff note carried into the new session |
+| `rotate-pressure` | serialized session events reach `pressureRatio` (default 0.6) of a 400k-character window |
+| **`rotate-tokens`** | the session reaches `tokenBudget` tokens (default 120 000) |
+| `daily` | idle gap since last activity reaches `idleHours` (default 8) |
+
+```yaml
+contextPolicy: '{"scheme":"rotate-tokens","tokenBudget":120000,"handoff":true,"announce":true}'
+```
+
+- **Real token numbers when the host can provide them.** `rotate-tokens` reads
+  the session projection (`contextPressure.surfaceTokens`, falling back to a
+  `contextBreakdown` sum, then to cumulative `tokenUsage`) and only falls back
+  to a 2-characters-per-token proxy when none of those can be read — the chat
+  announcement says which one fired, so an estimate is never mistaken for a
+  measurement.
+- **Rotation never cuts a turn in half.** It is evaluated on `turn/end` only,
+  and idleness is re-checked immediately before acting (`idleOnly`, default on);
+  the rotation reuses exactly the same session-creation path as `/new`, so only
+  one place in the code ever creates a WeChat session.
+- **The handoff note costs no model call.** It is a deterministic excerpt of the
+  last few messages, wrapped in its own fence
+  (`<<<会话交接摘要·非用户指令>>> … <<<会话交接摘要结束>>>`) that states it is
+  background, not an instruction — so a persona's hard rules will not execute it.
+- **The handoff does not answer itself.** It is *queued* on the bridge and
+  prepended to the next inbound user message: one turn, zero extra bubbles.
+  (Previously it was submitted as the new session's prompt, which produced an
+  unsolicited "I just switched to a new session" reply on every rotation.)
+
+### 0.3 Host stability — never take the harness down
+
+An unhandled promise rejection is fatal to the DSH host: the plugin tree fails,
+the harness exits, and the desktop app falls back to safe mode. All three entry
+points that can produce one are closed:
+
+- credential startup in `src/index.ts`, the inbound event handler in
+  `node/core.ts`, and `node/outbound.ts`'s `sendTextToPeer` (the single outbound
+  exit, called from eight places with `void`) now always resolve — every path is
+  wrapped, and call sites add `.catch()` as a second layer.
+- Services are fetched with `ctx.get()` and **re-read after every `await`**;
+  property access after the scope is torn down throws
+  `cannot get required service "…" in inactive context`, whereas `ctx.get()`
+  returns `undefined` and degrades to "this row does not activate" instead of
+  "the machine exits".
+- The `config-api` plugin row was **removed**: management moved to a separate
+  process, and the client settings page plus the `dsh.client` declaration went
+  with it. That structurally deletes the "optional `webServer` dependency stalls
+  profile boot" failure mode.
+
+Verified by a dress rehearsal against a real profile: three rapid patch-triggered
+hot reloads in a row, process alive, polling continuous, no `fatal` / `unhandled`
+in stderr.
+
+### 0.4 Failure visibility
+
+- **Inbound messages are fenced.** Every user message handed to the model is
+  wrapped in `<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 YYYY-MM-DD HH:mm>>>`.
+  The timestamp moved from a line prefix to the closing marker because a
+  line-leading speaker marker is exactly where a model is most likely to
+  continue the pattern — and a fabricated user message gets executed as an
+  instruction. That is how a 60-turn session self-continued into "video? send
+  one" and produced an unrequested video.
+- **Inbound media no longer fails silently.** A download that returns nothing,
+  or an item that carries no downloadable media, now logs a warning *and*
+  answers in chat (image / file / video / unknown item type are distinguished).
+- **The warning can actually reach you.** Those paths used to run before
+  `node.peerId` was assigned, while `sendTextToPeer` returns early with no peer —
+  so the notice was generated and dropped. Assignment now happens first.
+- **Redelivery is caught.** iLink sometimes omits `message_id` (common for
+  voice), and the gateway's dedup was `if (messageId && …)` — i.e. no dedup at
+  all. The same message returned 6–9 s later and was answered twice (rotation
+  could even route the two copies into different sessions). Messages without an
+  id now fall back to a **payload fingerprint** (sender + each item's
+  kind/text/media pointer) with a **30 s** window — long enough to catch a
+  redelivery, short enough not to swallow a deliberate repeated "hi". The
+  message-id window stays at 300 s.
+
+### 0.5 Features
+
+- **Standalone admin console (`admin/`)** — its own process, its own port
+  (default `http://127.0.0.1:8790/`). Because it is not a DSH plugin row, it
+  cannot affect profile boot, and stopping it cannot stop the bridge. Three
+  tabs: **config** (every field from the bridge's own `CONFIG_FIELDS`, secrets
+  masked with an explicit reveal, backup + validation before writing — clearing
+  the allowlist is rejected and rolled back), **conversations** (`wechat-*`
+  sessions with a transcript viewer), **context schemes** (one-click switching
+  plus knob tweaking). New/forget session commands are written to
+  `$DSH_HOME/wechat-admin/queue/`, executed by the bridge within ≤ 2 s, with the
+  result written back. Loopback-only, token minted on first start into
+  `admin/.admin-token`, every API call requires it, mutations additionally
+  require the `x-wechat-admin: 1` guard header (unforgeable cross-site), and the
+  `Host` header must be a loopback authority.
+- **Forgetting a session is recoverable** — the session directory and its
+  projection cache move to `$DSH_HOME/sessions-trash/<stamp>-<id>/` (the
+  projection has to move too, or the GUI list resurrects it) and the host is
+  told to unbind it.
+- **`control_esp32_light` is back as an agent tool** (`query|off|low|mid|high`),
+  sharing one implementation with the chat commands `/开灯`, `/开灯1|2|3`,
+  `/关灯`.
+- **No persona content in this repository.** Presets live outside it under
+  `$DSH_HOME/.agent-presets/<name>/`; the v0.3.0 source tree was re-checked for
+  persona strings and secrets before release.
+
+### 0.6 Upgrading from v0.2.x
+
+1. **The `config-api` plugin row is gone** — there is no in-GUI settings page
+   any more (persona editing went with it). Edit
+   `profiles/<profile>/cordis.patch.yml` or use the standalone console.
+2. **The message format the model sees changed** (fenced block). If you have a
+   custom persona rule that keys off the old `[发送于 …]` prefix, update it; the
+   matching hard rules live in your preset, which this repo does not ship.
+3. **Deleting a session is recoverable**, but check the trash before clearing
+   `$DSH_HOME/sessions-trash/`.
+4. Keep dependency versions aligned with the host (see §0.1) — cordis and
+   schemastery especially.
+
+---
+
+## 1. What it does
+
+- **Text both ways.** Replies are re-formatted for WeChat before sending
+  (Markdown headings to `【】`, code fences stripped and indented, tables
+  de-lined, emphasis removed).
+- **Inbound envelope.** Every user message reaches the model inside the fenced
+  block described in §0.4, timestamp included, so the model can always tell a
+  real user turn from anything it wrote itself.
+- **Images both ways, native or OCR.** Inbound images are downloaded, decrypted
+  and stored under `mediaDir`. How the model receives them depends on the routed
+  model: a multimodal route gets a **real image block** (the model sees the
+  pixels), while a text-only route falls back to **DeepSeek-OCR** text
+  (`deepseek-ai/DeepSeek-OCR`) plus the file path. `imageInput: auto` (default)
+  decides per routed model from its declared modalities; `native` and `ocr`
+  force one path, and `/识图` switches at runtime. Outbound: `/send <path>`
+  pushes a local image; the agent can also generate images
+  (`generate_image`, Kwai-Kolors/Kolors).
+- **Voice both ways.** Inbound voice notes are transcribed (`sttApiKey`,
+  XingChenASR, or WeChat's own transcript when present); the agent can reply
+  with `speak` (CosyVoice2 clone voice) and the mp3 arrives as a tappable
+  file attachment.
+- **Files & videos both ways.** Inbound documents/videos are decrypted to
+  `mediaDir` and referenced to the agent as `[微信文件]` / `[微信视频]` path
+  markers (original file name preserved). The agent can send local files or
+  clips back with `wechat_send_file` / `wechat_send_video` (video is
+  delivered as a playable mp4/mov file attachment — the iLink gateway has no
+  native video bubble).
+- **Session management.** `/sessions /use /new /stop /status`, auto-resume of
+  the most recent `wechat-` session after a restart, and hard isolation from
+  Web-GUI sessions (shared SessionStore) via the `wechat-` prefix.
+- **Context lifecycle.** `contextPolicy` (see §0.2) rotates long sessions on
+  turns, context pressure, a token budget or idle time, with an optional
+  free handoff note; the standalone console switches schemes in one click.
+- **Runtime switching.** `/model` and `/perm` two-step menus switch the agent's
+  model route and its permission preset from the chat.
+- **Reminders.** Natural language to `set_reminder` (per-peer, persistent
+  JSON, catch-up delivery after downtime).
+- **Morning weather.** `/早安 on|off|status|test|HH:MM` (alias `/morning`):
+  daily Open-Meteo pull, locally composed push, zero LLM cost.
+- **Light control.** `/开灯 /开灯1|2|3 /关灯` drives an ESP32 PWM light over
+  plain HTTP (`esp32BaseUrl`); the model can do the same through
+  `control_esp32_light`.
+- **Approvals.** Permission requests arrive as numbered text prompts and are
+  answered in-chat with `/yes` `/no` (or `1`/`2`); a timeout defaults to
+  deny.
+- **Email.** `send_email` sends plain text through a configured SMTP account
+  (implicit TLS), so the agent can mail a report, a reminder or a file summary
+  from the chat.
+- **Digest-style outbound.** No tool-call firehose: heartbeat line every
+  `digestIntervalSec`, replies chunked to `maxMessageChars` with throttling,
+  end-of-turn notices only for error / abort / truncation.
+- **Standalone admin console.** Outside the plugin tree (see §0.5): config,
+  transcripts, session creation/removal, context scheme switching.
+
+Two separable Cordis plugins are shipped:
+
+| Plugin | Role |
+| --- | --- |
+| `wechat-gateway` (`WechatGateway`) | iLink service (`ctx.wechat`): QR login, authenticated long-poll, reconnect/backoff, send retry + rate-limit circuit, typing indicator, encrypted CDN media download/upload, inbound dedup. |
+| `wechat-conversation-node` | WeChat to DSH bridge: allowlist gate, session targeting, commands, context rotation, multimodal media helpers (OCR/STT/TTS/image-gen/file/video), reminders & morning weather, digest outbound, approvals, light control. |
+
+## 2. Read this first
+
+- **One poller per account.** iLink allows exactly ONE authenticated poller
+  per bot token. Running a second instance of this bridge (or any other iLink
+  client) against the same WeChat account causes HTTP 403 and dropped messages.
+  Use a **dedicated WeChat account**, never two instances per token.
+- **Unofficial gateway.** Tencent may restrict the account. Use an account you
+  are willing to lose.
+- **Protocol details are reconstructed.** The iLink wire format was generalised
+  from existing clients; recorded transcripts live in
+  `test/fixtures/inbound.ndjson` so CI never needs a live account.
+
+## 3. Quickstart
+
+Prerequisites: Node >= 22, pnpm, a dedicated WeChat account, and a DSH
+profile.
 
 ```sh
 git clone https://github.com/PRTS168/dsh-wechat-suite.git
 cd dsh-wechat-suite
 pnpm install && pnpm build
-dsh plugin --profile <你的profile> add .
-
-pnpm login      # 扫码配对微信号，写入 WEIXIN_* 凭据
-pnpm setup      # 交互式向导，填完白名单等占位项（自动备份 cordis.patch.yml）
+dsh plugin --profile <your-profile> add .
 ```
 
-然后**重启 `dsh web`**，在微信里给 bot 发一条消息。
-
-> **要填的两样东西**（缺了桥会安全地保持空闲，绝不把消息喂给模型）：
-> ① `allowFrom` 白名单；② `WEIXIN_BOT_TOKEN` / `WEIXIN_ACCOUNT_ID` / `WEIXIN_BASE_URL`。
-> 首屏只想跑通文字的话，OCR / 生图 / 语音 / 邮件都可以先不配。
-
----
-
-## 它解决什么问题
-
-| 场景 | 在微信里怎么做 |
-|---|---|
-| 出门在外想让 agent 干活 | 直接发消息，就是聊天；回复会做微信化排版（标题转`【】`、代码块缩进、表格去线） |
-| 发张图让 agent 看 | 直接发图。**多模态模型自己看图**；纯文本模型自动回落 OCR |
-| 想说不想打 | 发语音，自动转写后交给 agent；也能让它用克隆音色回你语音 |
-| 长任务不想一直盯着 | 回合中每 `digestIntervalSec` 一条心跳摘要，出结果才推正文 |
-| 权限请求在电脑上弹窗 | 微信里收到编号提示，回 `/yes` / `/no`；超时默认拒绝 |
-| 想让它主动提醒你 | 自然语言设提醒（按联系人隔离、重启补发）、每日早安天气 |
-| 想看/收文件 | 文档、视频双向收发；`/send <路径>` 推本地图 |
-
----
-
-## 功能一览
-
-### 消息
-
-| 能力 | 说明 |
-|---|---|
-| 双向文字 | 出站自动微信化排版；入站包在 `<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 YYYY-MM-DD HH:mm>>>` 定界块里（时间戳在结束标记，避免模型把 `[发送于 …]` 行首标记续写成假用户发言） |
-| **双向图片（v0.2.2）** | **原生 `image` 块或 OCR 文本，按路由模型声明的模态自动切换**；`/识图` 可运行时强制 |
-| 双向语音 | 入站自动转写（XingChenASR，或直接用微信自带转写）；出站 `speak` 用克隆音色，mp3 附件送达 |
-| 双向文件与视频 | 入站解密落盘并保留原文件名；`wechat_send_file` / `wechat_send_video` 发回 |
-| 摘要式出站 | 不刷屏工具调用：心跳摘要 + 按 `maxMessageChars` 分块限速 |
-
-### 控制
-
-| 命令 | 作用 |
-|---|---|
-| `/sessions` `/use N` `/new` `/stop` `/status` | 会话管理：列表、切换、新建、停止、状态 |
-| `/model` | 两步菜单切换模型路由 |
-| `/perm` | 两步菜单切换权限预设 |
-| `/识图 [auto\|native\|ocr]` | 图片识别模式；不带参数则报告当前模式与路由模型 |
-| `/早安 on\|off\|status\|test\|HH:MM` | 每日天气推送开关 |
-| `/开灯` `/开灯1\|2\|3` `/关灯` | 通过 HTTP 控制 ESP32 PWM 灯 |
-| `/yes` `/no`（`1`/`2`） | 回应权限请求 |
-
-### 上下文生命周期（v0.3.0）
-
-`contextPolicy` 决定会话何时**自动轮换**，切换方式见 `admin/` 管理台：
-
-| 方案 | 触发条件 |
-|---|---|
-| `manual` | 不自动轮换（旧行为） |
-| `rotate-turns` | 每 N 轮（默认 20） |
-| `rotate-turns+handoff` | 同上，且换会话时生成要点交接，搭在下一条用户消息上 |
-| `rotate-pressure` | 上下文达到窗口占比阈值（默认 60%） |
-| **`rotate-tokens`** | **上下文达到自设 token 预算**（优先读会话投影的真实 token 数） |
-| `daily` | 距上次活跃超过 N 小时（按自然日分桶） |
-
-轮换只在 `turn/end` 且空闲时发生（绝不打断进行中的回合），并且复用与 `/new` 相同的
-建会话路径。交接摘要不额外调用模型、用独立定界标记、明确标注"不是用户的新指令"。
-
-### 管理台（v0.3.0）
-
-`admin/` 是**独立进程**（自己的端口，默认 `http://127.0.0.1:8790/`）：管全部配置、
-看会话转录、**新建 / 删除微信会话**、一键切换上下文方案。它**不是 DSH 插件行**，
-所以不可能像插件内管理 API 那样拖累 profile 启动；删除会话是**可恢复**的
-（移入 `$DSH_HOME/sessions-trash/`）。
-
-### 工具（给模型用）
-
-`generate_image` 文生图 · `speak` 语音回复 · `send_email` 纯文本邮件 ·
-`wechat_send_image` / `wechat_send_file` / `wechat_send_video` 推送本地媒体 ·
-`set_reminder` / `list_reminders` / `cancel_reminder` 定时提醒
-
-### 运维
-
-- **Web 管理页**：**设置 → 插件 →「微信桥配置」** —— 白名单、模型路由、媒体 Key、
-  克隆音色、路径、限流全在浏览器里改；密钥脱敏，保存进 `cordis.patch.yml` 并自动备份。
-- **人设编辑**：同一个页面里选 preset、改人设正文并保存；「复制为新 preset」可整目录复制。
-- **会话隔离**：桥只认 `wechat-` 前缀会话，与网页 GUI 共用 SessionStore 也不会串台；
-  重启后自动 resume 最近会话。
-
----
-
-## 适配 DeepSeek 4.1 多模态（v0.2.2 重点）
-
-图片有两种送达方式，**由路由模型自己声明的模态决定**：
-
-| 模式 | 模型拿到什么 | 何时使用 |
-|---|---|---|
-| `native` | 真正的 `image` 内容块，模型自己看图 | 路由模型声明了图片输入 |
-| `ocr` | `【OCR 识别结果】` 文本 + 文件路径 | 路由模型是纯文本 |
-
-- `imageInput: auto`（默认）读 `llm.listModels()` 的 `inputModalities` 自动决定；
-  `native` / `ocr` 可强制。若聊天路由是纯文本，`auto` 还会在其他路由里找视觉模型。
-- `imageInputModel` 可以把「只用于图片」的路由钉到另一个模型——文字走便宜的、
-  图片走视觉模型。
-
-### ⚠️ 声明才是开关
-
-harness 在**请求上游**就按模型声明的 `inputModalities` 闸门拦图片——声明成纯文本，
-图片根本不会被发送。而 DeepSeek 适配器内置的模型目录**早于 4.1 多模态**：它把
-`deepseek-v4-flash` 记为纯文本，唯一声明了 `image` 的
-`deepseek-v4-flash-vision-exp` 又已下线。所以要显式声明：
-
-```yaml
-llm-deepseek:
-  models:
-    - id: deepseek-flash
-      inputModalities: [text, image]
-```
-
-这个 `models:` 列表是**整体替换**插件内置目录、不是追加——要把你实际路由到的
-每个 id 都列上（本项目 profile 钉的是旧别名 `deepseek-v4-flash`，漏掉它那条路由
-就不再解析）。
-
-**观测到的拒绝会被记住**：某个路由真的拒过一次图片后会被抑制 3 小时，后续图片
-直接走 OCR，不再每张图都烧掉一个回合——因为「声明」只是对端点的声称，不是检验。
-
----
-
-## 先读这里
-
-- **一个账号一个轮询者。** iLink 每个 bot token 只允许**一个**鉴权轮询者。同一微信
-  账号同时跑第二个本实例（或其他 iLink 客户端），会导致 HTTP 403 与消息丢失。
-  请为桥准备一个**专用微信号**。
-- **协议细节逆向而来。** iLink 报文格式是从既有客户端归纳的，尚未见公开的官方
-  文档；录制样本在 `test/fixtures/inbound.ndjson`，CI 不需要真账号。
-- **仅供参考。** 已在一套特定环境实测通过，不代表开箱即用。所有 `<...>` 都是
-  需要你填入的占位符。
-
-### 不适合你的情况
-
-- 你需要**群聊**——本桥按设计只做一对一私聊。
-- 你需要**原生语音气泡 / 视频气泡**——iLink 不支持，语音与视频都以文件附件送达。
-- 你想**多账号 / 多实例共用一个 token**——会被 403 锁。
-
----
-
-## 架构
-
-两个可分离的 Cordis 插件：
-
-| 插件 | 职责 |
-|---|---|
-| `wechat-gateway`（`WechatGateway`） | iLink 服务（`ctx.wechat`）：扫码登录、鉴权长轮询、重连退避、发送重试与限流熔断、typing 指示、加密 CDN 媒体上下行 |
-| `wechat-conversation-node` | 微信 ⇄ DSH 桥：白名单闸门、会话寻址、命令、多模态媒体（原生图/OCR/STT/TTS/生图/文件/视频）、提醒与早安、摘要出站、审批、邮件 |
-
----
-
-## 安装与配置
-
-前置：Node >= 20、pnpm、一个专用微信号、一个 DSH profile。
+Pair the WeChat account once (prints a QR URL to scan):
 
 ```sh
-pnpm login     # 扫码配对，写入 WEIXIN_BOT_TOKEN / WEIXIN_ACCOUNT_ID / WEIXIN_BASE_URL
-pnpm setup     # 交互式；只改写 profile 的 dsh-chatnode-wechat 段，先备份
+pnpm login            # writes WEIXIN_BOT_TOKEN / WEIXIN_ACCOUNT_ID / WEIXIN_BASE_URL
 ```
 
-非交互式也可以用：
+Fill in the remaining placeholders with the interactive wizard (patches only
+the `dsh-chatnode-wechat` entry of your profile's `cordis.patch.yml` and
+backs up the file first):
 
 ```sh
-pnpm setup --yes --set allowFrom=<你的微信id>@im.wechat --set siliconflowKey=sk-...
+pnpm setup            # interactive
+pnpm setup --yes --set allowFrom=<your-wechat-id>@im.wechat \
+    --set siliconflowKey=sk-...        # non-interactive; siliconflowKey fills OCR/gen/STT/TTS
 ```
 
-`allowFrom` **必填且没有宽松默认值**：缺失时启动即失败；不在白名单的发送者只记日志、
-绝不喂给模型。
+Restart dsh web, then send a WeChat message to the bot. To get the admin
+console too:
 
-主要配置项（完整见 profile 的 `cordis.patch.yml`）：
+```sh
+node admin/server.ts          # or admin/start-admin.bat on Windows
+# -> http://127.0.0.1:8790/   (token minted into admin/.admin-token)
+```
+
+## 4. Configuration
 
 ```yaml
-dsh-chatnode-wechat:
-  allowFrom: ["<你的微信id>@im.wechat"]   # 硬白名单，必填
-  agentPreset: wechat                     # 人设 preset（仓库外自建，可选）
-  agentProvider / agentModel              # 模型路由
-  imageInput: auto                        # auto | native | ocr
-  # imageInputModel: <provider>/<model>   # 图片专用路由（可选）
-  digestIntervalSec: 300                  # 回合中心跳间隔（0=关）
-  approvalTimeoutSec: 600                 # 审批超时 → 默认拒绝
-  maxMessageChars: 2000                   # 微信单条上限，超出分块
-  sendChunkDelayMs: 1500                  # 出站分块间隔
-  # 媒体能力（都可选，不配则该能力降级）
-  ocrApiKey / ocrModel: deepseek-ai/DeepSeek-OCR / ocrBaseUrl
-  imageGenApiKey / imageGenModel: Kwai-Kolors/Kolors / imageGenDir
-  sttApiKey / sttModel: XingChenAGI/XingChenASR-V3.2-Ultra
-  ttsApiKey / ttsModel: FunAudioLLM/CosyVoice2-0.5B / ttsVoice: speech:<音色uri>
-  # send_email
-  smtpHost / smtpPort: 465 / smtpUsername / smtpPassword / smtpFromName
-  # 路径（都有默认值，见下）
-  mediaDir / reminderFile / morningFile / esp32BaseUrl / cwd
+# profile patch (cordis.patch.yml)
+plugins:
+  dsh-chatnode-wechat:
+    allowFrom: ["<your-wechat-id>@im.wechat"] # hard allowlist, REQUIRED
+    digestIntervalSec: 300            # heartbeat summary while a turn runs
+    approvalTimeoutSec: 600           # approval timeout -> default deny
+    maxMessageChars: 2000             # WeChat bubble cap (protocol limit)
+    sendChunkDelayMs: 1500            # throttle between outbound bubbles
+    imageInput: auto                  # auto | native | ocr (see below)
+    contextPolicy: '{"scheme":"manual"}'   # see §0.2
+    # imageInputModel: amd/DeepSeek-V4-Flash-Vision-Exp  # vision route for pictures only
+    # agentPreset: wechat             # optional persona preset (lives outside this repo)
+    # agentProvider / agentModel: ... # model route for the WeChat agent
+    # esp32BaseUrl: http://<esp32-ip>:80   # light control (optional)
+
+    # ---- media helpers (all optional; each capability degrades gracefully) ----
+    # ocrApiKey / ocrModel: deepseek-ai/DeepSeek-OCR / ocrBaseUrl
+    # imageGenApiKey / imageGenModel: Kwai-Kolors/Kolors / imageGenDir
+    # sttApiKey / sttModel: XingChenAGI/XingChenASR-V3.2-Ultra
+    # ttsApiKey / ttsModel: FunAudioLLM/CosyVoice2-0.5B / ttsVoice: speech:<voice-uri>
+    # mediaDir: <dir>     # inbound media (default $DSH_HOME/attachments/wechat)
+    # reminderFile / morningFile: <paths, default under $DSH_HOME>
 ```
 
-> **网关调优键的坑**：bundle 的 Config schema 声明了 `longPollTimeoutMs`、
-> `retryDelayMs`、`rateLimitCircuit*` 等网关参数，但只有
-> `baseUrl/cdnBaseUrl/token/accountId` 四个键会被转发给网关——在 profile 里配其它键
-> **不会生效**。要调网关请直接给 `WechatGateway` 挂配置。
+`allowFrom` is mandatory and has no permissive default. Missing it fails
+startup; messages from non-allowlisted senders are logged and ignored —
+never fed to the model.
 
----
+> Note: the gateway Config schema also declares tuning keys
+> (longPollTimeoutMs, retryDelayMs, rate-limit circuit, …) but only
+> `baseUrl/cdnBaseUrl/token/accountId` are forwarded from the bundle config —
+> tune the gateway through `WechatGateway`'s own config if you need them.
 
-## 审批
+The `agentPreset: wechat` reference (a persona preset used in the test
+environment) lives outside this repo under
+`$DSH_HOME/.agent-presets/wechat/` — point `agentPreset` at any preset you
+have installed, or omit it.
 
-微信没有按钮，所以权限请求渲染成编号文本提示，在聊天里回答：
+### Native image input vs OCR
+
+An inbound picture reaches the model one of two ways:
+
+| Mode | What the model gets | When |
+| --- | --- | --- |
+| `native` | a real `image` content block (it sees the pixels) | the routed model declares `image` input |
+| `ocr` | `【OCR 识别结果】` text + the file path | the routed model is text-only, or nothing declares image support |
+
+`imageInput` picks the policy:
+
+- **`auto`** (default) — resolve the route the agent actually chats on, ask
+  `llm.listModels()` for its `inputModalities`, and send an image block when
+  `image` is declared. If the chat route is text-only, `auto` looks for another
+  registered route that declares image support (set `imageInputModel` to pin one
+  instead), and otherwise uses OCR.
+- **`native`** — always attempt the image block. A route that does not *declare*
+  image support is still tried once (the endpoint may accept images without
+  advertising them); when it refuses, that route is suppressed for three hours
+  and later pictures take the OCR path instead of burning a turn each time.
+- **`ocr`** — always the text path. Useful for documents and screenshots, where
+  a dedicated OCR model is cheaper and often more accurate than a vision model.
+
+`/识图` reports and switches the mode at runtime (`auto` / `native` / `ocr`);
+the override lasts until `dsh web` restarts, after which `imageInput` applies
+again. Every inbound picture keeps its `[微信图片] <path>` prefix in both modes,
+so the session log stays replayable and the agent can re-read the file.
+
+```
+/识图                 # current mode + routed model
+/识图 native          # force image blocks
+/识图 ocr             # force OCR text
+```
+
+### Standalone admin console
+
+`node admin/server.ts [--port 8790]` (`admin/start-admin.bat` on Windows)
+starts a loopback-only HTTP console, separate from DSH:
+
+| Tab | What it does |
+| --- | --- |
+| Config | every `CONFIG_FIELDS` key of the bridge, secrets masked with an explicit reveal, validation + timestamped backup before writing |
+| Conversations | `wechat-*` sessions with turns/tokens, transcript viewer, new session, forget (recoverable) |
+| Context | one-click `contextPolicy` scheme switching plus knob tweaks |
+
+Security posture: binds to `127.0.0.1` only, token minted on first start into
+`admin/.admin-token` (override with `WECHAT_ADMIN_TOKEN`), every API call needs
+that token, mutations additionally need the `x-wechat-admin: 1` guard header,
+and the `Host` header must be a loopback authority (so a DNS-rebinding page
+cannot reach it). Session commands are queued on disk
+(`$DSH_HOME/wechat-admin/queue/`) and executed by the bridge within ≤ 2 s; the
+console also shows the bridge's last reports. The file is git-ignored — do not
+commit it.
+
+There is no in-GUI settings page since v0.3.0 (§0.3).
+
+## 5. Commands & tools
+
+Commands (send in WeChat):
+
+| Command | What it does |
+| --- | --- |
+| *(plain text / image / voice / file / video)* | routes to the active agent |
+| `/sessions` | numbered session list (`wechat-` only, most recent first) |
+| `/use N` | switch the active session |
+| `/new <prompt>` | create a fresh agent+session and start |
+| `/stop` | cancel the active turn |
+| `/status` | agent status + session summary |
+| `/send <path>` | send a local image to the current contact |
+| `/model` | two-step model switcher (list, then pick a digit) |
+| `/perm` | two-step permission-preset switcher (list, then pick a digit) |
+| `/识图 [auto\|native\|ocr]` | image-input mode; no argument reports the current mode and routed model |
+| `/早安 on\|off\|status\|test\|HH:MM` (alias `/morning`) | morning weather digest |
+| `/开灯` `/开灯1\|2\|3` `/关灯` | ESP32 light control (gear 3 / low / mid / high, off) |
+| `/yes` `/no` (or `1`/`2` while one request is pending) | answer a permission request |
+| `/help` | command list |
+
+Agent tools (available to the model):
+
+| Tool | Purpose |
+| --- | --- |
+| `wechat_send_image(path)` | send a local image to the peer |
+| `wechat_send_file(path)` | send any local file to the peer |
+| `wechat_send_video(path)` | send a local video (playable mp4/mov attachment) |
+| `generate_image(prompt)` | text-to-image (Kolors), then send it |
+| `speak(text)` | TTS with the cloned voice, sent as an mp3 attachment |
+| `send_email(to, subject, body)` | plain-text mail over the configured SMTP account |
+| `control_esp32_light(mode)` | `query` / `off` / `low` / `mid` / `high` on the LAN light |
+| `set_reminder(text, inMinutes\|atTime)` | schedule a reminder (per peer) |
+| `list_reminders()` | list pending reminders |
+| `cancel_reminder(id)` | cancel a reminder |
+
+## 6. Approvals
+
+WeChat has no buttons, so permission requests are rendered as numbered text
+prompts and answered in chat:
 
 ```
 #1 needs your confirmation
@@ -240,81 +446,116 @@ reply /yes to allow, /no to reject (1/2 while exactly one is pending)
 no reply within 10 minutes -> automatically denied
 ```
 
-`/yes` 授予 `allowed-once`；`/no` 拒绝；超时走 DSH 默认的拒绝。桥只回答它当前
-驱动的那个 agent 的请求，其余沿 answerer 链下传。
+`/yes` grants `allowed-once`; `/no` rejects; timeout falls back to the DSH
+default deny. The bridge answers only requests for the agent it currently
+drives; everything else is delegated down the answerer chain.
 
----
-
-## 开发
+## 7. Development
 
 ```sh
 pnpm install
-pnpm build          # src/ → lib/（tsc）+ 客户端 bundle（lib/client.js）
+pnpm build          # src/ -> lib/ (tsc) + client bundle (lib/client.js)
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts —— 86 项，无需微信账号
-pnpm smoke          # 真机手动冒烟
+pnpm test           # node --test test/*.test.ts — 154 tests, no WeChat account
+pnpm smoke          # manual live-account check
+pnpm setup          # interactive config wizard
 ```
 
-- `test/fake-ilink-server.ts` 实现 iLink 端点（长轮询、sendmessage、sendtyping、
-  getconfig、扫码登录、加密 CDN 下载），回放 `test/fixtures/inbound.ndjson`；
-  入站→会话→出站全链路可离线跑（`.github/workflows/ci.yml`）。
-- 测试分布：gateway 18 / node 24 / markdown 9 / morning 6 / picker 4 /
-  reminders 4 / patch-config 7 / vision 10 / email 4 = **86**。
-- 诚实标注的盲区（暂无单测）：OCR 成功/失败分支、语音下载→ASR 全流程、媒体上行
-  （fake 服务器无 `/upload`）、`/send`、`/help`、ESP32 灯控、重启 resume，以及
-  **原生图片块本身**——`vision.test.ts` 用 stub 目录覆盖模式判定，
-  `attachments.saveImage` 只在真机上跑。真机冒烟覆盖主路径。
-- DSH 是开发者预览版，`@deepseek-ai/*` 依赖钉在 `0.1.5-rc.2`。
+- `test/fake-ilink-server.ts` implements the iLink endpoints (long-poll,
+  sendmessage, sendtyping, getconfig, QR login, encrypted CDN download) and
+  replays `test/fixtures/inbound.ndjson`; the inbound-to-session-to-outbound
+  loop runs offline in CI (`.github/workflows/ci.yml`).
+- Test coverage includes gateway dedup (message id *and* payload fingerprint),
+  inbound routing / media failure paths / message envelope, the command surface,
+  the approval bridge, context rotation policies (including the token-budget
+  fallback chain), light control, preset compatibility across both host
+  versions, and `boot-safety.test.ts`, which pins the "never produce an
+  unhandled rejection" property that used to crash the host.
+- Honest gaps (not yet unit-tested): OCR success/failure branches, the
+  voice-download-to-ASR flow, outbound media upload (the fake server has no
+  `/upload`), `/send`, `/help`, restart resume, and the native-image block
+  itself (`vision.test.ts` covers the mode/policy decision against a stub
+  catalog; `attachments.saveImage` runs only on a live host). Live smoke covers
+  the happy paths.
+- DSH is a developer preview; see §0.1 for the two host versions this tree is
+  known to load on.
 
-**改动生效三步**：`pnpm build` → 重启 `dsh web` → 微信里发条新消息触发。
+## 8. Known limits
 
----
+- Outbound voice/video are delivered as **file attachments** (mp3/mp4), not
+  native bubbles (iLink limitation). `silk.ts` and `gateway.sendVoice()` exist
+  as unused spares (silk needs external ffmpeg + pilk).
+- Some command receipts still contain emoji that are not stripped to match an
+  emoji-free persona.
+- Generated images/voice accumulate under `mediaDir/generated` (no
+  auto-cleanup yet).
+- WeChat `silk`-encoded voice needs real-device verification (m4a verified).
+- Only 1:1 text messaging is targeted; group chats are ignored by design (MVP).
+- The context-size proxy for `rotate-pressure` counts serialized event
+  characters, not model tokens; `rotate-tokens` is the accurate one when the
+  host exposes session projections.
 
-## 已知限制
+## 9. Risks
 
-- 出站语音/视频是**文件附件**（mp3/mp4），不是原生气泡——iLink 限制；
-  `silk.ts` 与 `gateway.sendVoice()` 作为未启用的备用保留（silk 需外部
-  ffmpeg + pilk，不在依赖里）。
-- 部分命令回执仍含 emoji，未与人设的禁 emoji 规则统一。
-- `mediaDir/generated` 下生成的图片与语音暂无自动清理。
-- 微信 `silk` 编码语音的 STT 待真机验证（m4a 已验证）。
-- 只面向一对一私聊；群聊按设计忽略。
+| Risk | Mitigation |
+| --- | --- |
+| iLink exclusive lock — two pollers on one token -> 403 + dropped messages | Dedicated account; loud fatal error + polling stop on 403 |
+| Account restriction — unofficial gateway | Dedicated, disposable account; stated plainly in this README |
+| DSH v0.1 churn | Two host versions verified (§0.1); optional services via `ctx.get()`; boot-safety tests |
+| An unhandled rejection killing the host | All async entry points resolve; `.catch()` at call sites; hot-reload stress pass |
+| Protocol opacity | Protocol ported from hermes-agent; recorded fixtures |
+| Credential files in the repo root | `client-config.json` / `account.json` / `admin/.admin-token` are git-ignored |
 
-## 风险
+## 10. Version history
 
-| 风险 | 缓解 |
-|---|---|
-| iLink 独占锁——同一 token 两个轮询者 → 403 且丢消息 | 专用账号；检测到 403 时给出醒目致命错误并停止轮询 |
-| DSH v0.1 变动频繁 | 钉住 `@deepseek-ai/*` 版本；CI 按钉住版本跑 |
-| 协议细节未见于公开文档 | 报文格式从既有 iLink 客户端归纳；有真实报文录制样本（`test/fixtures/inbound.ndjson`） |
-| 运行时会在仓库根落盘含凭据的文件 | `client-config.json` / `account.json` 已加入 `.gitignore` |
+### v0.3.0 — stability, context lifecycle, standalone console
 
----
+- `contextPolicy` schemes (`manual` / `rotate-turns` / `rotate-turns+handoff` /
+  `rotate-pressure` / `rotate-tokens` / `daily`) with real projection-backed
+  token accounting, idle-only rotation, and a queued free handoff note (§0.2).
+- Host stability: no unhandled rejections from startup, inbound handling or
+  outbound sending; `ctx.get()` + re-read after every `await`; the `config-api`
+  plugin row removed (§0.3).
+- Failure visibility: fenced inbound envelope, media-failure notices that can
+  actually be delivered, payload-fingerprint dedup for messages without an id
+  (§0.4).
+- Features: standalone admin console with recoverable session removal,
+  `control_esp32_light` restored as a tool (§0.5).
+- 154 offline unit tests (was 86).
 
-## 版本历史
+### v0.2.2 — DeepSeek 4.1 multimodal + native image input
 
-见 [Releases](https://github.com/PRTS168/dsh-wechat-suite/releases)、
-[`CHANGELOG.md`](./CHANGELOG.md)（逐条技术变更）与
-[`releases/`](./releases)（各版本发行说明）。近期：
+- Inbound pictures reach the model as a real `image` block when the routed
+  model declares image input, and as DeepSeek-OCR text otherwise; `imageInput`
+  and `/识图` choose the policy, and a route that refuses an image is
+  suppressed for three hours.
+- Declaring the modality is the switch: the harness gates image blocks on the
+  model's declared `inputModalities`, and the adapter's built-in catalog
+  predates DeepSeek 4.1 — see §4 for the `models:` snippet (it *replaces* the
+  plugin catalog rather than extending it).
+- `send_email` over implicit-TLS SMTP; `client-config.json` / `account.json`
+  git-ignored.
 
-- **[v0.2.2](./releases/v0.2.2-release-notes.md)** — 适配 DeepSeek 4.1 多模态：原生图片
-  输入（与 OCR 可切换、`/识图` 命令）、`send_email`、凭据加固；86 项测试
-- **[v0.2.1](./releases/v0.2.1-release-notes.md)** — Web 管理页与人设编辑
-- **[v0.2.0](./releases/v0.2.0-release-notes.md)** — `/perm` 接线、`pnpm setup` 向导、
-  双向文件与视频、入站时间戳
+### v0.2.1 — Web management page and persona editing
 
-## Roadmap
+- **Settings → Plugins → "微信桥配置"** edited every placeholder in the browser,
+  with masked secrets and timestamped backups; the same page edited agent
+  preset personas. *(Removed in v0.3.0 — see §0.3/§0.6.)*
 
-- 近期：群聊（可选、风险较高）、多账号、与 hermes/openclaw 共存的共享轮询代理
-- 远期：复用 `node/` 层的企业微信 / 钉钉 / 飞书 bundle
+### v0.2.0 — `/perm`, and files & videos both ways
 
-## 致谢与来源
+- `/perm` two-step permission-preset switcher, plus `pnpm setup`.
+- Inbound files/videos download and decrypt to `mediaDir` with the original
+  name preserved; `wechat_send_file` / `wechat_send_video` send local files and
+  clips back.
+- Persona residue removed from the repo; upstream fork attribution added.
 
-本仓库是 [Jesse-njx/dsh-chatnode-wechat](https://github.com/Jesse-njx/dsh-chatnode-wechat)
-的**非官方个人分支**，从上游快照 `2bd4c15`（2026-08）分出。它不是上游项目的官方
-发布，也与上游作者无隶属关系。原始提交历史与早期贡献的署名完整保留并归属上游作者；
-基础协议以上游为准。
+## 11. Roadmap
+
+- Next: group chats (opt-in, risk-heavy), multi-account, a shared-poller proxy
+  to coexist with hermes/openclaw.
+- Later: WeCom / DingTalk / Feishu bundles reusing the `node/` layer.
 
 ## License
 
-MIT — 见 [LICENSE](./LICENSE)。
+MIT — see [LICENSE](LICENSE).

@@ -37,7 +37,8 @@
 | `ocr.ts` / `stt.ts` / `tts.ts` / `image-gen.ts` | 硅基流动媒体模型调用 |
 | `reminders.ts` / `morning.ts` | 定时提醒、早安天气 |
 | `approvals.ts` | 审批桥（`/yes` `/no`） |
-| `config-api.ts` / `patch-config.ts` | Web 管理页的主机 API 与 `cordis.patch.yml` 改写 |
+| `patch-config.ts` | `cordis.patch.yml` 读写（v0.3.0 起同时被独立管理台复用） |
+| `config-api.ts` | v0.2.x 的 Web 管理页主机 API；**v0.3.0 已从 bundle 行移除**，仅作参考保留 |
 | `labels.ts` | 会话徽标与 turn 结束原因文案 |
 
 ---
@@ -48,7 +49,7 @@
 pnpm install
 pnpm build          # tsc -p tsconfig.json && node scripts/build-client.mjs
 pnpm typecheck      # tsc --noEmit
-pnpm test           # node --test "test/*.test.ts" —— 86 项，不需要微信账号
+pnpm test           # node --test "test/*.test.ts" —— 154 项，不需要微信账号
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导（只改 profile 的 dsh-chatnode-wechat 段，先备份）
 pnpm login          # 扫码配对，写 WEIXIN_* 凭据
@@ -229,6 +230,9 @@ llm-deepseek:
    - 本仓库 Web 人设编辑器（`config-api.ts`）原本只认 `config.text`，**保存会把
      prefix 写回 text、再次弄坏 preset**。现改为读两种键、写一律输出 `prefix:`，
      因此旧 preset 在网页上保存一次即自动修复（`test/persona.test.ts` 锁住该行为）。
+     **注意**：v0.3.0 起 `config-api` 行已从 bundle 移除（管理台独立成进程），
+     这段修复随模块一起成为参考实现 —— 现在改 preset 请直接编辑
+     `$DSH_HOME/.agent-presets/<名>/`。
 
    排查 preset 是否合法的最快办法——拿宿主 schema 直接校验，不需要启动 dsh：
 
@@ -313,11 +317,11 @@ image/file 块会被丢弃——媒体出站走工具路径（`wechat_send_image
 真实生效的配置是**三部分**：profile 的 `cordis.patch.yml`（节点与网关键）+
 `WEIXIN_*` 凭据（`pnpm login` 写 `$DSH_HOME/.credentials.yaml`，config 兜底）。
 
-Web 管理页（**设置 → 插件 →「微信桥配置」**）改写的就是 `cordis.patch.yml` 中
-`dsh-chatnode-wechat` 这一段：**只改这一段、自动备份、保留注释与其他插件行**。
-对应实现是 `src/node/patch-config.ts`，它有一组测试（`test/patch-config.test.ts`，
-含「字段元数据覆盖 applyPatchConfig 能写的每个键」这类不变量测试）——
-**新增可写配置键时必须同步更新字段元数据，否则该测试会失败**。
+改写 `cordis.patch.yml` 中 `dsh-chatnode-wechat` 这一段的是独立管理台
+（`admin/server.ts`，v0.3.0 起；此前是网页设置页）：**只改这一段、自动备份、
+保留注释与其他插件行**。对应实现是 `src/node/patch-config.ts`，它有一组测试
+（`test/patch-config.test.ts`，含「字段元数据覆盖 applyPatchConfig 能写的每个键」
+这类不变量测试）—— **新增可写配置键时必须同步更新字段元数据，否则该测试会失败**。
 
 ### 发布流程
 
@@ -330,8 +334,24 @@ Web 管理页（**设置 → 插件 →「微信桥配置」**）改写的就是
 pnpm build && node --test --test-timeout=15000 --test-force-exit "test/*.test.ts"
 # 5. 提交（lib/ 要一起提交）→ 打 tag → 推送
 git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main && git push origin vX.Y.Z
-# 6. 建 GitHub Release（网页或 API），正文用 releases/vX.Y.Z-release-notes.md
+# 6. 建 GitHub Release，正文用 releases/vX.Y.Z-release-notes.md 去掉首行标题
 ```
+
+> **推 tag ≠ 发布 Release。** `git push origin vX.Y.Z` 只产生 tag，Releases 页面
+> 不会出现这一版（v0.3.0 就这样漏过一次）。必须额外调一次 API：
+>
+> ```sh
+> # 令牌从 GCM 取（本机已存 PRTS168 的凭据），不要写进任何文件
+> TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p')
+> jq -Rn --rawfile body releases/vX.Y.Z-release-notes.md \
+>   '{tag_name:"vX.Y.Z", name:"vX.Y.Z — …", body:$body, draft:false, prerelease:false}' \
+>   | curl -sS -X POST -H "Authorization: Bearer $TOKEN" \
+>       -H 'Accept: application/vnd.github+json' \
+>       -d @- https://api.github.com/repos/PRTS168/dsh-wechat-suite/releases
+> ```
+>
+> 发布后核对：`GET /releases/latest` 返回新 tag，且 `draft=false`
+> （列表接口可能命中缓存，用 `/releases/latest` 或加时间戳参数复验）。
 
 **注意**：`test/*.test.ts` 用 `pnpm test` 跑偶发超时，加
 `--test-timeout=15000 --test-force-exit` 更稳（reminder 用例含真实计时器）。
@@ -345,13 +365,16 @@ git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main
 - OCR 成功/失败分支
 - 语音下载 → ASR 全流程（fake 服务器无该链路）
 - 媒体**上行**（`sendImage` / `sendFile` / `sendVideo`），fake 服务器无 `/upload` 路由
-- `/send`、`/help`、未知命令、ESP32 灯控（真发 HTTP）、`/早安` 命令级
+- `/send`、`/help`、未知命令、ESP32 灯控的**真实 HTTP 往返**（`light.test.ts`
+  覆盖模式校验、设备路由与工具定义，但不发真请求）、`/早安` 命令级
 - 重启 resume（单测里 `factory.resume` 直接 throw）
 - **原生图片块本身**：`vision.test.ts` 用 stub 目录覆盖**模式判定**，
   但 `attachments.saveImage` 只在真机跑过
 
-单测覆盖的分布（共 86 项）：gateway 18 / node 24 / markdown 9 / morning 6 /
-picker 4 / reminders 4 / patch-config 7 / vision 10 / email 4。
+单测覆盖的分布（共 154 项）：node 24 / context-policy 21 / gateway 18 / light 13 /
+vision 10 / markdown 9 / patch-config 7 / persona 7 / dedup 6 / inbound-media 6 /
+morning 6 / boot-safety 5 / resume 5 / user-message-envelope 5 / email 4 /
+picker 4 / reminders 4。
 
 ## 7. 环境约束
 
