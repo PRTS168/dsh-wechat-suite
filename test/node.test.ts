@@ -11,6 +11,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context } from '@deepseek-ai/cordis'
+// Keep the bridge's approval diagnostics out of the real DSH home: these tests
+// drive real approval requests through the answerer.
+process.env.WECHAT_APPROVAL_TRACE ??= join(tmpdir(), 'wechat-approval-test.log')
+
 import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import AgentRegistry, { type Agent, type AgentFactory } from '@deepseek-ai/dsh-agent'
 import ApprovalService from '@deepseek-ai/dsh-user-approval'

@@ -34,6 +34,7 @@ interface Harness {
   registrations: Array<{ number: number; resolve: (outcome: string) => void }>
   rootListeners: Listener[]
   pluginListeners: Listener[]
+  pluginOptions: Array<Record<string, unknown> | undefined>
 }
 
 function harness(
@@ -43,6 +44,7 @@ function harness(
   const registrations: Array<{ number: number; resolve: (outcome: string) => void }> = []
   const rootListeners: Listener[] = []
   const pluginListeners: Listener[] = []
+  const pluginOptions: Array<Record<string, unknown> | undefined> = []
   const peerId = options.peerId === undefined ? 'peer@im.wechat' : options.peerId
   const node = {
     peerId: peerId ?? undefined,
@@ -62,8 +64,9 @@ function harness(
               sendTyping: async () => {},
             }
           : undefined,
-      on: (_event: string, listener: Listener) => {
+      on: (_event: string, listener: Listener, options?: Record<string, unknown>) => {
         pluginListeners.push(listener)
+        pluginOptions.push(options)
         return () => {}
       },
       root: {
@@ -84,7 +87,7 @@ function harness(
     },
     clearApproval: () => {},
   }
-  return { node: node as never, sent, registrations, rootListeners, pluginListeners }
+  return { node: node as never, sent, registrations, rootListeners, pluginListeners, pluginOptions }
 }
 
 /** Minimal session shape the label helpers need. */
@@ -92,18 +95,21 @@ const session = (id: string) => ({ id, snapshotEvents: () => [] })
 const request = (id: string, reason?: string) => ({ toolName: 'pwsh', reason, agent: { session: session(id) } })
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-test('the answerer registers on the root scope', () => {
+test('the answerer registers globally and ahead of every other answerer', () => {
   const h = harness()
   attachApprovalBridge(h.node)
-  assert.equal(h.rootListeners.length, 1, 'the untagged root scope receives every routed event')
-  assert.equal(h.pluginListeners.length, 0, 'the plugin scope is not used for the answerer')
+  assert.equal(h.pluginListeners.length, 1, 'one answerer on the plugin context')
+  // `global` skips the routed-scope filter (otherwise the request never arrives)
+  // and `prepend` beats the desktop client's own answerer, which would otherwise
+  // claim the request and show a card in the app while WeChat stays silent.
+  assert.deepEqual(h.pluginOptions[0], { prepend: true, global: true })
 })
 
 test('a request for another session namespace is delegated, never answered', async () => {
   const h = harness()
   attachApprovalBridge(h.node)
   let delegated = false
-  const outcome = await h.rootListeners[0]!(request('session-web-gui'), async () => {
+  const outcome = await h.pluginListeners[0]!(request('session-web-gui'), async () => {
     delegated = true
     return 'unavailable'
   })
@@ -116,7 +122,7 @@ test('a wechat session is answered even while the active id bookkeeping is stale
   const h = harness()
   ;(h.node as unknown as { activeSessionId: string | null }).activeSessionId = 'wechat-some-other-boot'
   attachApprovalBridge(h.node)
-  const pending = h.rootListeners[0]!(request('wechat-x', 'escalate sandbox'), async () => 'unavailable')
+  const pending = h.pluginListeners[0]!(request('wechat-x', 'escalate sandbox'), async () => 'unavailable')
   await tick()
   assert.match(h.sent.join('\n'), /需要你的确认/)
   h.registrations[0]!.resolve('allowed-once')
@@ -126,7 +132,7 @@ test('a wechat session is answered even while the active id bookkeeping is stale
 test('our own request prompts in WeChat and honours the reply', async () => {
   const h = harness()
   attachApprovalBridge(h.node)
-  const pending = h.rootListeners[0]!(request('wechat-x', 'escalate sandbox'), async () => 'unavailable')
+  const pending = h.pluginListeners[0]!(request('wechat-x', 'escalate sandbox'), async () => 'unavailable')
   await tick()
   const prompt = h.sent.join('\n')
   assert.match(prompt, /需要你的确认/)
@@ -142,7 +148,7 @@ test('our own request prompts in WeChat and honours the reply', async () => {
 test('a rejected reply reports the rejection and returns it', async () => {
   const h = harness()
   attachApprovalBridge(h.node)
-  const pending = h.rootListeners[0]!(request('wechat-x'), async () => 'unavailable')
+  const pending = h.pluginListeners[0]!(request('wechat-x'), async () => 'unavailable')
   await tick()
   h.registrations[0]!.resolve('rejected')
   assert.equal(await pending, 'rejected')
@@ -153,7 +159,7 @@ test('a rejected reply reports the rejection and returns it', async () => {
 test('no reply falls back to the DSH default deny on timeout', async () => {
   const h = harness({ timeoutSec: 0.02 })
   attachApprovalBridge(h.node)
-  const outcome = await h.rootListeners[0]!(request('wechat-x'), async () => 'unavailable')
+  const outcome = await h.pluginListeners[0]!(request('wechat-x'), async () => 'unavailable')
   assert.equal(outcome, 'rejected')
   await tick()
   assert.match(h.sent.join('\n'), /已拒绝/)
@@ -162,7 +168,7 @@ test('no reply falls back to the DSH default deny on timeout', async () => {
 test('an unknown peer falls back to the bridge allowlist', async () => {
   const h = harness({ peerId: null })
   attachApprovalBridge(h.node)
-  const pending = h.rootListeners[0]!(request('wechat-x'), async () => 'unavailable')
+  const pending = h.pluginListeners[0]!(request('wechat-x'), async () => 'unavailable')
   await tick()
   assert.match(h.sent.join('\n'), /需要你的确认/)
   h.registrations[0]!.resolve('rejected')
@@ -173,7 +179,7 @@ test('with neither peer nor allowlist the request is delegated', async () => {
   const h = harness({ peerId: null, allowFrom: [] })
   attachApprovalBridge(h.node)
   let delegated = false
-  const outcome = await h.rootListeners[0]!(request('wechat-x'), async () => {
+  const outcome = await h.pluginListeners[0]!(request('wechat-x'), async () => {
     delegated = true
     return 'unavailable'
   })
@@ -185,7 +191,7 @@ test('an internal failure is reported in the chat instead of staying silent', as
   const h = harness({ breakCounter: true })
   attachApprovalBridge(h.node)
   let delegated = false
-  const outcome = await h.rootListeners[0]!(request('wechat-x'), async () => {
+  const outcome = await h.pluginListeners[0]!(request('wechat-x'), async () => {
     delegated = true
     return 'unavailable'
   })
