@@ -33,162 +33,55 @@ Chinese; the tables below are the English summary.
 
 ---
 
-## 0. What's new in v0.3.0
+## What's new in v0.3.0
 
-v0.2.x answered *"can I talk to my DSH agent from WeChat?"*. v0.3.0 answers
-*"can it keep running unattended?"* — how the context rotates, how failures
-become visible, and in which situations a plugin can take the whole host down.
-Full notes: [Releases → v0.3.0](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0).
+Changes since v0.2.2 (desensitization standard unchanged: no real credentials,
+personal WeChat IDs or machine-specific paths in this repository). Full
+announcement: [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md)
+· [release page](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0).
 
-### 0.1 Compatibility / adapted versions
+### Added
 
-| Host | `@deepseek-ai/*` | Status |
-| --- | --- | --- |
-| DSH Desktop (harness bundled in the app) | **0.1.2-rc.1** | ✅ live WeChat round trips, image generation, light control, automatic rotation |
-| `dsh` CLI (packages embedded in the OpenClaw portable build) | **0.1.5-rc.2** | ✅ boot and plugin mount verified |
-| cordis | `^4.0.2` | must match the host — two instances break service resolution |
-| schemastery | `^3.18.2` | must be a single instance — 3.18.1 next to 3.18.2 raises `TS2742` |
-| Node.js | ≥ 22 (tested on 24) | the admin console and the tests run `.ts` directly via type stripping |
+- **Context lifecycle `contextPolicy`** — when a session rotates is configuration, not habit
+  - six schemes: `manual` (default, v0.2.x behaviour) / `rotate-turns` (every N turns) / `rotate-turns+handoff` / `rotate-pressure` (context-size proxy) / `rotate-tokens` (token budget) / `daily` (idle hours)
+  - `rotate-tokens` prefers the host's real numbers (`contextPressure.surfaceTokens` → `contextBreakdown` sum → cumulative `tokenUsage`, in that order) and only falls back to a 2-chars-per-token estimate; the announcement says which one fired
+  - rotation is evaluated on `turn/end`, idleness is re-checked right before acting, and it reuses the same session-creation path as `/new`
+  - the handoff note costs no model call, carries its own fence (`<<<会话交接摘要·非用户指令>>>`), and is **queued** onto the next inbound message instead of answering itself
+  - shape: `contextPolicy: '{"scheme":"rotate-tokens","tokenBudget":120000,"handoff":true}'`
+- **Standalone admin console `admin/`** — its own process and port (default `http://127.0.0.1:8790/`), not a DSH plugin row, so it cannot affect profile boot
+  - tabs: **config** (the bridge's own `CONFIG_FIELDS`, masked secrets with an explicit reveal, backup + validation before writing — clearing the allowlist is rejected and rolled back), **conversations** (`wechat-*` list, transcript viewer, new / forget), **context** (one-click scheme switching + knobs)
+  - loopback-only + token (`admin/.admin-token`, minted on first start) + `x-wechat-admin: 1` guard header on mutations + loopback `Host` check
+  - session commands go through `$DSH_HOME/wechat-admin/queue/` and are executed within ≤ 2 s; forgetting a session is recoverable (`$DSH_HOME/sessions-trash/`, projection cache moved too)
+- **`control_esp32_light` tool** — `query|off|low|mid|high`, sharing one implementation with `/开灯` `/开灯1|2|3` `/关灯`
 
-Cross-host differences, all handled in code (listed because we hit them):
+### Fixed
 
-- **The `dsh-persona` config key moved.** 0.1.2 requires `text:`, 0.1.5 renamed
-  it to `prefix:`. A preset can publish both keys with a YAML anchor; both
-  schemas accept `text + prefix`, so one preset mounts on either host.
-- **`Session.events` was removed in 0.1.5** → the code reads session history
-  through the `snapshotEvents()` snapshot API instead.
-- **Optional services must never sit in `inject`.** `sessionTitle` depends on
-  `sessionProjections`; declaring that in `inject` leaves the row permanently
-  pending on a host without the projection, and the host then reports
-  `1 entry did not activate` and **fails the whole profile**. Optional
-  dependencies use `ctx.get()` (returns `undefined` instead of throwing).
-- **Hot reload is normal here.** Profiles commonly run `patchReload: live`, so
-  every config write reloads the plugin tree; every async entry point is
-  written as if its scope may vanish mid-flight.
+- **The host is no longer judged fatal** — a config write triggers a hot reload, the plugin scope is torn down, a `void`-ed async startup function throws on property access (even the logging inside `catch` throws), and the unhandled rejection exited the harness into safe mode
+  - all three entry points (`src/index.ts` credential startup, `node/core.ts` inbound handler, `node/outbound.ts` `sendTextToPeer`) now always resolve, with `.catch()` added at call sites
+  - services are fetched with `ctx.get()` and **re-read after every `await`**
+  - the `config-api` plugin row was removed — management moved to a separate process, structurally deleting the "optional `webServer` stalls profile boot" path
+- **Long-session self-continuation** — after 60 turns / 3083 events the model wrote a fake user message with a future timestamp into its own output and executed it (it produced an unrequested video)
+  - inbound messages are now fenced (`<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 …>>>`), with the timestamp moved from the line prefix to the **closing marker**
+- **Silent failures** — an empty media download logged nothing and said nothing, and the notice itself could not be delivered because `node.peerId` was assigned later
+  - all four cases (image / file / video / unknown item) now log a warning **and** answer in chat; `peerId` assignment moved ahead of the failure paths
+- **Duplicate delivery** — iLink sometimes omits `message_id` (common for voice) and the gateway dedup was `if (messageId && …)`, i.e. no dedup at all: the same message came back 6–9 s later and was answered twice
+  - id-less messages now fall back to a **payload fingerprint** (sender + each item's kind/text/media pointer) with a 30 s window; the id window stays at 300 s
 
-### 0.2 Context lifecycle — `contextPolicy`
+### Other
 
-"*When does a session rotate?*" is now configuration instead of a habit:
+- aligned with DSH **0.1.2-rc.1** (harness bundled in the desktop app) and **0.1.5-rc.2** (packages embedded in the `dsh` CLI); both load and run
+  - `cordis ^4.0.2` must match the host (two instances break service resolution); `schemastery ^3.18.2` must be a single instance (3.18.1 alongside it raises `TS2742`); Node ≥ 22 (tested on 24)
+  - cross-host differences, all handled in code: `dsh-persona`'s key `text:` (0.1.2) → `prefix:` (0.1.5); `Session.events` removed in 0.1.5 → `snapshotEvents()`; optional services never in `inject` (a missing projection yields `1 entry did not activate` and fails the whole profile) → `ctx.get()`
+- unit tests **86 → 154** (new: `context-policy` 21, `light` 13, `persona` 7, `dedup` 6, `inbound-media` 6, `boot-safety` 5, `resume` 5, `user-message-envelope` 5, …)
+- verified live: WeChat round trips (text / image / file / image generation) → one automatic rotation with the new session usable → 3 rapid patch hot reloads with the process alive, polling continuous and no `fatal` / `unhandled` in stderr
+- the homepage README is English again (it had been overwritten with Chinese during v0.3.0, losing the English edition); both READMEs now carry this version's changes and compatibility notes, and `DEVELOPMENT.md` recomputes the real test spread
 
-| Scheme | Rotates when |
-| --- | --- |
-| `manual` | never (v0.2.x behaviour, default) |
-| `rotate-turns` | every N completed turns (`turns`, default 20) |
-| `rotate-turns+handoff` | as above, plus a handoff note carried into the new session |
-| `rotate-pressure` | serialized session events reach `pressureRatio` (default 0.6) of a 400k-character window |
-| **`rotate-tokens`** | the session reaches `tokenBudget` tokens (default 120 000) |
-| `daily` | idle gap since last activity reaches `idleHours` (default 8) |
+### Notes
 
-```yaml
-contextPolicy: '{"scheme":"rotate-tokens","tokenBudget":120000,"handoff":true,"announce":true}'
-```
-
-- **Real token numbers when the host can provide them.** `rotate-tokens` reads
-  the session projection (`contextPressure.surfaceTokens`, falling back to a
-  `contextBreakdown` sum, then to cumulative `tokenUsage`) and only falls back
-  to a 2-characters-per-token proxy when none of those can be read — the chat
-  announcement says which one fired, so an estimate is never mistaken for a
-  measurement.
-- **Rotation never cuts a turn in half.** It is evaluated on `turn/end` only,
-  and idleness is re-checked immediately before acting (`idleOnly`, default on);
-  the rotation reuses exactly the same session-creation path as `/new`, so only
-  one place in the code ever creates a WeChat session.
-- **The handoff note costs no model call.** It is a deterministic excerpt of the
-  last few messages, wrapped in its own fence
-  (`<<<会话交接摘要·非用户指令>>> … <<<会话交接摘要结束>>>`) that states it is
-  background, not an instruction — so a persona's hard rules will not execute it.
-- **The handoff does not answer itself.** It is *queued* on the bridge and
-  prepended to the next inbound user message: one turn, zero extra bubbles.
-  (Previously it was submitted as the new session's prompt, which produced an
-  unsolicited "I just switched to a new session" reply on every rotation.)
-
-### 0.3 Host stability — never take the harness down
-
-An unhandled promise rejection is fatal to the DSH host: the plugin tree fails,
-the harness exits, and the desktop app falls back to safe mode. All three entry
-points that can produce one are closed:
-
-- credential startup in `src/index.ts`, the inbound event handler in
-  `node/core.ts`, and `node/outbound.ts`'s `sendTextToPeer` (the single outbound
-  exit, called from eight places with `void`) now always resolve — every path is
-  wrapped, and call sites add `.catch()` as a second layer.
-- Services are fetched with `ctx.get()` and **re-read after every `await`**;
-  property access after the scope is torn down throws
-  `cannot get required service "…" in inactive context`, whereas `ctx.get()`
-  returns `undefined` and degrades to "this row does not activate" instead of
-  "the machine exits".
-- The `config-api` plugin row was **removed**: management moved to a separate
-  process, and the client settings page plus the `dsh.client` declaration went
-  with it. That structurally deletes the "optional `webServer` dependency stalls
-  profile boot" failure mode.
-
-Verified by a dress rehearsal against a real profile: three rapid patch-triggered
-hot reloads in a row, process alive, polling continuous, no `fatal` / `unhandled`
-in stderr.
-
-### 0.4 Failure visibility
-
-- **Inbound messages are fenced.** Every user message handed to the model is
-  wrapped in `<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 YYYY-MM-DD HH:mm>>>`.
-  The timestamp moved from a line prefix to the closing marker because a
-  line-leading speaker marker is exactly where a model is most likely to
-  continue the pattern — and a fabricated user message gets executed as an
-  instruction. That is how a 60-turn session self-continued into "video? send
-  one" and produced an unrequested video.
-- **Inbound media no longer fails silently.** A download that returns nothing,
-  or an item that carries no downloadable media, now logs a warning *and*
-  answers in chat (image / file / video / unknown item type are distinguished).
-- **The warning can actually reach you.** Those paths used to run before
-  `node.peerId` was assigned, while `sendTextToPeer` returns early with no peer —
-  so the notice was generated and dropped. Assignment now happens first.
-- **Redelivery is caught.** iLink sometimes omits `message_id` (common for
-  voice), and the gateway's dedup was `if (messageId && …)` — i.e. no dedup at
-  all. The same message returned 6–9 s later and was answered twice (rotation
-  could even route the two copies into different sessions). Messages without an
-  id now fall back to a **payload fingerprint** (sender + each item's
-  kind/text/media pointer) with a **30 s** window — long enough to catch a
-  redelivery, short enough not to swallow a deliberate repeated "hi". The
-  message-id window stays at 300 s.
-
-### 0.5 Features
-
-- **Standalone admin console (`admin/`)** — its own process, its own port
-  (default `http://127.0.0.1:8790/`). Because it is not a DSH plugin row, it
-  cannot affect profile boot, and stopping it cannot stop the bridge. Three
-  tabs: **config** (every field from the bridge's own `CONFIG_FIELDS`, secrets
-  masked with an explicit reveal, backup + validation before writing — clearing
-  the allowlist is rejected and rolled back), **conversations** (`wechat-*`
-  sessions with a transcript viewer), **context schemes** (one-click switching
-  plus knob tweaking). New/forget session commands are written to
-  `$DSH_HOME/wechat-admin/queue/`, executed by the bridge within ≤ 2 s, with the
-  result written back. Loopback-only, token minted on first start into
-  `admin/.admin-token`, every API call requires it, mutations additionally
-  require the `x-wechat-admin: 1` guard header (unforgeable cross-site), and the
-  `Host` header must be a loopback authority.
-- **Forgetting a session is recoverable** — the session directory and its
-  projection cache move to `$DSH_HOME/sessions-trash/<stamp>-<id>/` (the
-  projection has to move too, or the GUI list resurrects it) and the host is
-  told to unbind it.
-- **`control_esp32_light` is back as an agent tool** (`query|off|low|mid|high`),
-  sharing one implementation with the chat commands `/开灯`, `/开灯1|2|3`,
-  `/关灯`.
-- **No persona content in this repository.** Presets live outside it under
-  `$DSH_HOME/.agent-presets/<name>/`; the v0.3.0 source tree was re-checked for
-  persona strings and secrets before release.
-
-### 0.6 Upgrading from v0.2.x
-
-1. **The `config-api` plugin row is gone** — there is no in-GUI settings page
-   any more (persona editing went with it). Edit
-   `profiles/<profile>/cordis.patch.yml` or use the standalone console.
-2. **The message format the model sees changed** (fenced block). If you have a
-   custom persona rule that keys off the old `[发送于 …]` prefix, update it; the
-   matching hard rules live in your preset, which this repo does not ship.
-3. **Deleting a session is recoverable**, but check the trash before clearing
-   `$DSH_HOME/sessions-trash/`.
-4. Keep dependency versions aligned with the host (see §0.1) — cordis and
-   schemastery especially.
-
+- **Config surface changed**: the `config-api` row is gone, so there is no in-GUI settings page any more (persona editing went with it); edit `profiles/<profile>/cordis.patch.yml` or use the standalone console
+- **The message format the model sees changed** (fenced block) — update any persona rule or custom prompt keyed off the old `[发送于 …]` prefix; the matching hard rules live in your preset, and this repo ships no persona content
+- **Forgetting a session is recoverable** — check `$DSH_HOME/sessions-trash/` before clearing it
+- keep dependency versions aligned with the host; `cordis` / `schemastery` especially
 ---
 
 ## 1. What it does
@@ -197,7 +90,7 @@ in stderr.
   (Markdown headings to `【】`, code fences stripped and indented, tables
   de-lined, emphasis removed).
 - **Inbound envelope.** Every user message reaches the model inside the fenced
-  block described in §0.4, timestamp included, so the model can always tell a
+  block described under *Fixed* above, timestamp included, so the model can always tell a
   real user turn from anything it wrote itself.
 - **Images both ways, native or OCR.** Inbound images are downloaded, decrypted
   and stored under `mediaDir`. How the model receives them depends on the routed
@@ -221,7 +114,7 @@ in stderr.
 - **Session management.** `/sessions /use /new /stop /status`, auto-resume of
   the most recent `wechat-` session after a restart, and hard isolation from
   Web-GUI sessions (shared SessionStore) via the `wechat-` prefix.
-- **Context lifecycle.** `contextPolicy` (see §0.2) rotates long sessions on
+- **Context lifecycle.** `contextPolicy` (see *Added* above) rotates long sessions on
   turns, context pressure, a token budget or idle time, with an optional
   free handoff note; the standalone console switches schemes in one click.
 - **Runtime switching.** `/model` and `/perm` two-step menus switch the agent's
@@ -242,7 +135,7 @@ in stderr.
 - **Digest-style outbound.** No tool-call firehose: heartbeat line every
   `digestIntervalSec`, replies chunked to `maxMessageChars` with throttling,
   end-of-turn notices only for error / abort / truncation.
-- **Standalone admin console.** Outside the plugin tree (see §0.5): config,
+- **Standalone admin console.** Outside the plugin tree (see *Added* above): config,
   transcripts, session creation/removal, context scheme switching.
 
 Two separable Cordis plugins are shipped:
@@ -312,7 +205,7 @@ plugins:
     maxMessageChars: 2000             # WeChat bubble cap (protocol limit)
     sendChunkDelayMs: 1500            # throttle between outbound bubbles
     imageInput: auto                  # auto | native | ocr (see below)
-    contextPolicy: '{"scheme":"manual"}'   # see §0.2
+    contextPolicy: '{"scheme":"manual"}'   # see What's new -> Added
     # imageInputModel: amd/DeepSeek-V4-Flash-Vision-Exp  # vision route for pictures only
     # agentPreset: wechat             # optional persona preset (lives outside this repo)
     # agentProvider / agentModel: ... # model route for the WeChat agent
@@ -395,7 +288,7 @@ cannot reach it). Session commands are queued on disk
 console also shows the bridge's last reports. The file is git-ignored — do not
 commit it.
 
-There is no in-GUI settings page since v0.3.0 (§0.3).
+There is no in-GUI settings page since v0.3.0 (*Fixed* above).
 
 ## 5. Commands & tools
 
@@ -477,7 +370,7 @@ pnpm setup          # interactive config wizard
   itself (`vision.test.ts` covers the mode/policy decision against a stub
   catalog; `attachments.saveImage` runs only on a live host). Live smoke covers
   the happy paths.
-- DSH is a developer preview; see §0.1 for the two host versions this tree is
+- DSH is a developer preview; see *Other* above for the two host versions this tree is
   known to load on.
 
 ## 8. Known limits
@@ -501,7 +394,7 @@ pnpm setup          # interactive config wizard
 | --- | --- |
 | iLink exclusive lock — two pollers on one token -> 403 + dropped messages | Dedicated account; loud fatal error + polling stop on 403 |
 | Account restriction — unofficial gateway | Dedicated, disposable account; stated plainly in this README |
-| DSH v0.1 churn | Two host versions verified (§0.1); optional services via `ctx.get()`; boot-safety tests |
+| DSH v0.1 churn | Two host versions verified (*Other* above); optional services via `ctx.get()`; boot-safety tests |
 | An unhandled rejection killing the host | All async entry points resolve; `.catch()` at call sites; hot-reload stress pass |
 | Protocol opacity | Protocol ported from hermes-agent; recorded fixtures |
 | Credential files in the repo root | `client-config.json` / `account.json` / `admin/.admin-token` are git-ignored |
@@ -510,17 +403,10 @@ pnpm setup          # interactive config wizard
 
 ### v0.3.0 — stability, context lifecycle, standalone console
 
-- `contextPolicy` schemes (`manual` / `rotate-turns` / `rotate-turns+handoff` /
-  `rotate-pressure` / `rotate-tokens` / `daily`) with real projection-backed
-  token accounting, idle-only rotation, and a queued free handoff note (§0.2).
-- Host stability: no unhandled rejections from startup, inbound handling or
-  outbound sending; `ctx.get()` + re-read after every `await`; the `config-api`
-  plugin row removed (§0.3).
-- Failure visibility: fenced inbound envelope, media-failure notices that can
-  actually be delivered, payload-fingerprint dedup for messages without an id
-  (§0.4).
-- Features: standalone admin console with recoverable session removal,
-  `control_esp32_light` restored as a tool (§0.5).
+Context rotation policies, host-stability hardening, failure visibility and the
+standalone admin console — see [What's new in v0.3.0](#whats-new-in-v030) and
+[`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md).
+
 - 154 offline unit tests (was 86).
 
 ### v0.2.2 — DeepSeek 4.1 multimodal + native image input
@@ -540,7 +426,7 @@ pnpm setup          # interactive config wizard
 
 - **Settings → Plugins → "微信桥配置"** edited every placeholder in the browser,
   with masked secrets and timestamped backups; the same page edited agent
-  preset personas. *(Removed in v0.3.0 — see §0.3/§0.6.)*
+  preset personas. *(Removed in v0.3.0 — see What's new -> Fixed / Notes.)*
 
 ### v0.2.0 — `/perm`, and files & videos both ways
 
