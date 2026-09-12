@@ -14,6 +14,7 @@ import { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import type { WechatConversationNode } from './core.ts'
 import { sendTextToPeer } from './outbound.ts'
 import { sessionBadge, sessionName } from './labels.ts'
+import { controlLight, type LightMode } from './light.ts'
 
 /**
  * Sessions ordered most-recent-first. Only `wechat-` prefixed sessions
@@ -225,34 +226,24 @@ export async function routeCommand(node: WechatConversationNode, text: string): 
   }
 }
 
-/** ESP32 gear label for each command. */
-const ESP32_ROUTE: Record<string, string> = {
-  '关灯': '/off',
-  '开灯': '/high',   // plain /开灯 → gear 3 per user preference
-  '开灯1': '/low',
-  '开灯2': '/mid',
-  '开灯3': '/high',
+/** Light mode per chat command. */
+const ESP32_COMMAND_MODE: Record<string, LightMode> = {
+  '关灯': 'off',
+  '开灯': 'high',   // plain /开灯 → gear 3 per user preference
+  '开灯1': 'low',
+  '开灯2': 'mid',
+  '开灯3': 'high',
 }
 
-/** Fire one ESP32 light request (GET) and return a human result line. */
+/**
+ * Fire one ESP32 light request (GET) and return a human result line.
+ * Shares `light.ts` with the `control_esp32_light` tool so the two surfaces
+ * cannot drift apart; only the entry points differ (command vs. tool call).
+ */
 async function controlEsp32Light(node: WechatConversationNode, command: string): Promise<string> {
-  const route = ESP32_ROUTE[command]
-  const base = (node.config.esp32BaseUrl ?? 'http://192.168.1.11:80').replace(/\/+$/, '')
-  if (!route) return `❌ 未知灯光命令 /${command}`
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 5000)
-  try {
-    const res = await fetch(base + route, { signal: controller.signal })
-    const text = (await res.text()).trim()
-    if (!res.ok) return `❌ ESP32 响应异常（HTTP ${res.status}）`
-    const label: Record<string, string> = { '/off': '关灯', '/low': '开灯（1 档·低）', '/mid': '开灯（2 档·中）', '/high': '开灯（3 档·高）' }
-    const desc = label[route] ?? route
-    return text ? `✅ ${desc}：${text}` : `✅ ${desc}`
-  } catch (error) {
-    return `❌ 无法连接 ESP32 灯光设备（${error instanceof Error ? error.message : String(error)}）`
-  } finally {
-    clearTimeout(timer)
-  }
+  const mode = ESP32_COMMAND_MODE[command]
+  if (!mode) return `❌ 未知灯光命令 /${command}`
+  return await controlLight(node.config.esp32BaseUrl, mode)
 }
 
 /**

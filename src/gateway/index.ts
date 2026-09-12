@@ -34,6 +34,8 @@ import {
   ITEM_VOICE,
   ITEM_FILE,
   MESSAGE_DEDUP_TTL_SECONDS,
+  CONTENT_DEDUP_TTL_SECONDS,
+  inboundContentKey,
   RATE_LIMIT_ERRCODE,
   SESSION_EXPIRED_ERRCODE,
   WEIXIN_CDN_BASE_URL,
@@ -835,8 +837,22 @@ export class WechatGateway extends Service {
     const sender = String(message.from_user_id ?? '')
     const messageId = String(message.message_id ?? '')
     if (!sender || sender === this.c.accountId) return
-    if (messageId && this.isDuplicate(messageId)) return
-    if (messageId) this.remember(messageId)
+    if (messageId) {
+      if (this.isDuplicate(messageId)) return
+      this.remember(messageId)
+    } else {
+      // iLink does not always carry a message_id (seen on voice notes), and a
+      // missing id used to mean "no dedup at all" — so one voice note was
+      // answered twice, six to nine seconds apart, and the second answer
+      // complained that the user had repeated themselves. Fall back to a payload
+      // identity with a SHORT window: long enough to catch a redelivery, short
+      // enough that someone genuinely repeating themselves still gets an answer.
+      const fallback = inboundContentKey(message)
+      if (fallback) {
+        if (this.isDuplicate(fallback, CONTENT_DEDUP_TTL_SECONDS)) return
+        this.remember(fallback)
+      }
+    }
 
     const contextToken = String(message.context_token ?? '')
     if (contextToken) this.contextTokens.set(sender, contextToken)
@@ -844,9 +860,9 @@ export class WechatGateway extends Service {
     this.ctx.emit('wechat/message', message)
   }
 
-  private isDuplicate(id: string): boolean {
+  private isDuplicate(id: string, ttlSeconds = MESSAGE_DEDUP_TTL_SECONDS): boolean {
     const seen = this.dedup.get(id)
-    if (seen !== undefined && Date.now() - seen < MESSAGE_DEDUP_TTL_SECONDS * 1000) return true
+    if (seen !== undefined && Date.now() - seen < ttlSeconds * 1000) return true
     return false
   }
 

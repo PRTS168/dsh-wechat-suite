@@ -86,7 +86,7 @@ function fakeServer(options: { failAuth?: boolean } = {}): { server: FakeServer;
 }
 
 function configFor(connect: SmtpConfig['connect']): SmtpConfig {
-  return { host: '127.0.0.1', port: 465, username: 'user@example.com', password: 'secret', fromName: 'yuki', connect }
+  return { host: '127.0.0.1', port: 465, username: 'user@example.com', password: 'secret', fromName: 'dsh-bridge', connect }
 }
 
 test('smtpSend walks greeting → EHLO → AUTH → MAIL/RCPT → DATA → QUIT in order', async () => {

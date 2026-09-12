@@ -9,20 +9,60 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { installModelSelection, type ModelSelection, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type { AgentPresets } from '@deepseek-ai/dsh-agent-presets'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type { PendingApproval } from './approvals.ts'
 import { attachApprovalBridge } from './approvals.ts'
 import { attachSessionOutbound, sendTextToPeer } from './outbound.ts'
 import { handleInbound } from './inbound.ts'
+import { attachAdminControl } from './admin-control.ts'
+import {
+  buildHandoff,
+  parseContextPolicy,
+  rotationReason,
+  signalsFromEvents,
+  transcriptFromEvents,
+  type ContextPolicy,
+} from './context-policy.ts'
 import { listSessions, newSessionId } from './commands.ts'
 import { sessionBadge } from './labels.ts'
 import type { MorningService } from './morning.ts'
 import type { InboundMessage } from '../gateway/types.ts'
+
+/**
+ * One entry from `sessionPersistence.list()`.
+ *
+ * DSH 0.1.5 returns `SessionPersistenceSnapshot`, which carries the identity
+ * under `.header`; older versions exposed `id`/`createdAt` at the top level.
+ * Both are accepted so the bridge runs on either.
+ */
+export interface PersistenceEntry {
+  id?: string
+  createdAt?: number
+  header?: { id?: string; createdAt?: number }
+}
+
+/** Pick the newest persisted `wechat-` session, or undefined when there is none. */
+export function selectNewestWechat(entries: readonly PersistenceEntry[]): { id: string; createdAt: number } | undefined {
+  const wechat = entries
+    .map((entry) => ({ id: entry.header?.id ?? entry.id, createdAt: entry.header?.createdAt ?? entry.createdAt ?? 0 }))
+    .filter((entry): entry is { id: string; createdAt: number } => typeof entry.id === 'string' && entry.id.length > 0)
+    .filter((entry) => entry.id.startsWith('wechat-'))
+    .sort((a, b) => b.createdAt - a.createdAt)
+  return wechat[0]
+}
+
+/** The runtime `SessionId` is a branded string; the brand is erased at runtime. */
+function asSessionId(id: string): SessionId {
+  return id as unknown as SessionId
+}
 
 /** Runtime shape of the node plugin's config (defaults applied). */
 export interface NodeConfig {
@@ -89,6 +129,11 @@ export interface NodeConfig {
   agentProvider?: string
   /** Model id for `/new` agents. */
   agentModel?: string
+  /**
+   * Context-management scheme (JSON). Parsed by `context-policy.ts`; `manual`
+   * or absent keeps the legacy behaviour (rotate only when a human types /new).
+   */
+  contextPolicy?: string
 }
 
 export class WechatConversationNode {
@@ -125,6 +170,26 @@ export class WechatConversationNode {
   readonly ctx: Context
   readonly config: NodeConfig
 
+  /**
+   * Context-management policy for this conversation (see context-policy.ts).
+   * `manual` reproduces the legacy behaviour: the session grows until a human
+   * types `/new`.
+   */
+  readonly contextPolicy: ContextPolicy
+
+  /** Re-entrancy guard: one rotation at a time. */
+  private rotating = false
+
+  /**
+   * A rotation's handoff note, waiting for the owner's next message.
+   *
+   * Deliberately NOT submitted as a turn of its own: doing that produced an extra
+   * unsolicited reply on every rotation (a fresh-session greeting), because a user
+   * message — fenced or not — starts a turn. The note rides along with the next
+   * real inbound message instead, so a rotation costs zero extra replies.
+   */
+  private pendingHandoff: string | null = null
+
   constructor(ctx: Context, config: NodeConfig) {
     this.ctx = ctx
     this.config = config
@@ -134,12 +199,62 @@ export class WechatConversationNode {
         'An agent that accepts instructions from any WeChat contact is a prompt-injection front door.',
       )
     }
+    this.contextPolicy = parseContextPolicy(config.contextPolicy)
     this.disposers.push(attachSessionOutbound(this))
     this.disposers.push(attachApprovalBridge(this))
+    this.disposers.push(attachContextRotation(this))
+    this.disposers.push(attachAdminControl(this))
     this.ctx.on('wechat/message', (message: InboundMessage) => {
-      void handleInbound(this, message)
+      // Same fatal-rejection rule as the credentials boot in src/index.ts: a
+      // throw escaping an event handler becomes an unhandled rejection, and the
+      // host treats that as a fatal load failure. Handling one chat message must
+      // never be able to take the whole harness down — log it and stay alive.
+      handleInbound(this, message).catch((error) => {
+        try {
+          this.ctx.get('logger')?.warn?.(
+            '[dsh-chatnode-wechat] inbound handling failed: %s',
+            error instanceof Error ? error.message : String(error),
+          )
+        } catch {
+          // The context itself is gone (live patch reload); nothing to log to.
+        }
+      })
     })
     this.pickDefaultSession()
+  }
+
+  /** Whether a rotation is currently in flight (used by tests and the guard). */
+  isRotating(): boolean {
+    return this.rotating
+  }
+
+  /** Claim the rotation slot; returns false when one is already running. */
+  beginRotation(): boolean {
+    if (this.rotating) return false
+    this.rotating = true
+    return true
+  }
+
+  /** Release the rotation slot. */
+  endRotation(): void {
+    this.rotating = false
+  }
+
+  /** Take the queued rotation note for the next inbound message (once). */
+  consumeHandoff(): string {
+    const note = this.pendingHandoff
+    this.pendingHandoff = null
+    return note ?? ''
+  }
+
+  /** Queue a rotation note for the next inbound message. */
+  setPendingHandoff(note: string | null): void {
+    this.pendingHandoff = note && note.trim() ? note : null
+  }
+
+  /** Whether a rotation note is waiting (tests and diagnostics). */
+  hasPendingHandoff(): boolean {
+    return this.pendingHandoff !== null
   }
 
   /** The active WeChat session, if any. Never a non-`wechat-` session: this
@@ -384,8 +499,16 @@ export class WechatConversationNode {
     return fallback ? { provider: fallback.provider, model: fallback.model } : undefined
   }
 
-  /** Create a fresh agent+session via the agent factory and make it active. */
-  async createSession(prompt: string): Promise<void> {    const sessionId = newSessionId(this)
+  /**
+   * Create a fresh agent+session via the agent factory and make it active.
+   *
+   * `notice` controls the chat line: `''` (default) uses the built-in
+   * "已创建新会话" text, `null` stays silent, and any other string is sent
+   * verbatim — automatic rotation passes its own reason there, and honours the
+   * policy's `announce: false` by passing `null`.
+   */
+  async createSession(prompt: string, notice: string | null = ''): Promise<void> {
+    const sessionId = newSessionId(this)
     try {
       const meta: Record<string, string> = {}
       if (this.config.cwd) meta.cwd = this.config.cwd
@@ -421,7 +544,12 @@ export class WechatConversationNode {
           source: { kind: 'user' },
         }))
       }
-      await sendTextToPeer(this, `✅ 已创建新会话 ${sessionBadge(this, handle.agent.session)}${prompt ? '，开始处理…' : '（无初始提示词）'}`)
+      if (notice !== null) {
+        await sendTextToPeer(
+          this,
+          notice || `✅ 已创建新会话 ${sessionBadge(this, handle.agent.session)}${prompt ? '，开始处理…' : '（无初始提示词）'}`,
+        )
+      }
     } catch (error) {
       await sendTextToPeer(this, `❌ 创建会话失败: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -458,15 +586,13 @@ export class WechatConversationNode {
    */
   async resumeLatestWechatSession(): Promise<boolean> {
     const persistence = this.ctx.get('sessionPersistence') as
-      | { list(signal?: AbortSignal): Promise<Array<{ id: SessionId; createdAt: number }>> }
+      | { list(signal?: AbortSignal): Promise<readonly PersistenceEntry[]> }
       | undefined
     if (!persistence) return false
     try {
-      const headers = await persistence.list()
-      const wechat = headers
-        .filter((h) => String(h.id).startsWith('wechat-'))
-        .sort((a, b) => b.createdAt - a.createdAt)
-      const target = wechat[0]
+      const entries = await persistence.list()
+      const wechat = selectNewestWechat(entries)
+      const target = wechat ? { id: asSessionId(wechat.id) } : undefined
       if (!target) return false
       const live = this.ctx.agents.get(target.id)
       if (live) {
@@ -564,4 +690,112 @@ export class WechatConversationNode {
     this.picker = null
     for (const number of [...this.pending.keys()]) this.clearApproval(number)
   }
+}
+
+// ---------------------------------------------------------------------------
+// Context rotation (see context-policy.ts for the decision half)
+// ---------------------------------------------------------------------------
+
+/**
+ * Rotate the WeChat conversation when the configured policy says so.
+ *
+ * Registered on `session/event` and evaluated only on `turn/end` — the one
+ * moment the bridge knows the agent finished a turn. Idleness is re-checked
+ * immediately before acting, because a queued WeChat message can start the next
+ * turn while this one is being evaluated: rotating then would cut a live turn in
+ * half and strand the agent with the old session's context.
+ *
+ * Rotation goes through the SAME `createSession()` as `/new`, so there is exactly
+ * one code path that creates WeChat sessions, and a rotation can never leave two
+ * agents pointed at the same chat. The handoff note (when enabled) is fenced with
+ * its own markers and labelled as background, never as an instruction: a rotation
+ * must not look like the owner asking for something.
+ */
+/**
+ * Real context size of a session, read from the host's projection cache.
+ *
+ * The token scheme wants a token budget, and the honest source is what the host
+ * already measured. `$DSH_HOME/storages/session_projcache/sessions/<id>.json`
+ * carries it: `contextPressure.surfaceTokens` (the live context surface) with
+ * `contextBreakdown` and the cumulative `tokenUsage` as fallbacks. Returns
+ * undefined when nothing usable is there — the policy module then falls back to
+ * its character proxy and says so in the rotation reason.
+ *
+ * Read-only, best effort, and it must never throw: this runs on the turn/end path.
+ */
+export function readContextTokens(sessionId: string): number | undefined {
+  try {
+    const home = process.env.DSH_HOME || join(homedir(), '.dsh')
+    const file = join(home, 'storages', 'session_projcache', 'sessions', `${sessionId}.json`)
+    const doc = JSON.parse(readFileSync(file, 'utf8')) as { record?: { rows?: Record<string, { val?: unknown }> } }
+    const rows = doc.record?.rows
+    if (!rows) return undefined
+
+    const pressure = (rows.contextPressure?.val as { surfaceTokens?: number } | undefined)?.surfaceTokens
+    if (typeof pressure === 'number' && pressure > 0) return pressure
+
+    const breakdown = rows.contextBreakdown?.val as { systemTokens?: number; toolsTokens?: number; messageTokens?: number } | undefined
+    if (breakdown) {
+      const sum = (breakdown.systemTokens ?? 0) + (breakdown.toolsTokens ?? 0) + (breakdown.messageTokens ?? 0)
+      if (sum > 0) return sum
+    }
+
+    const totals = (rows.tokenUsage?.val as { totals?: { uncachedInputTokens?: number; cacheReadTokens?: number; outputTokens?: number } } | undefined)?.totals
+    if (totals) {
+      const sum = (totals.uncachedInputTokens ?? 0) + (totals.cacheReadTokens ?? 0) + (totals.outputTokens ?? 0)
+      if (sum > 0) return sum
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function attachContextRotation(node: WechatConversationNode): () => void {
+  const evaluate = (session: Session): void => {
+    if (node.contextPolicy.scheme === 'manual') return
+    const events = session.snapshotEvents()
+    const contextTokens = readContextTokens(String(session.id))
+    const reason = rotationReason(node.contextPolicy, { ...signalsFromEvents(events, new Date()), contextTokens })
+    if (!reason) return
+    if (!node.beginRotation()) return
+
+    void (async () => {
+      try {
+        // Re-check against the CURRENT session state: an inbound message may have
+        // started the next turn between the event and this continuation.
+        const current = node.activeSession()
+        if (!current || String(current.id) !== String(session.id)) return
+        const fresh = signalsFromEvents(current.snapshotEvents(), new Date())
+        if (node.contextPolicy.idleOnly !== false && fresh.turnOpen) return
+
+        const notice = node.contextPolicy.announce === false ? null : `🔄 已自动开启新会话（${reason}）`
+        // The handoff is queued, NOT submitted: passing it as the new session's
+        // prompt made every rotation answer itself, which is exactly the extra
+        // extra "fresh session" greeting bubble the owner saw on 2026-09-12 15:32.
+        node.setPendingHandoff(node.contextPolicy.handoff ? buildHandoff(transcriptFromEvents(events), reason) : null)
+        try {
+          node.ctx.get('logger')?.info?.('[dsh-chatnode-wechat] rotating conversation: %s', reason)
+        } catch { /* context gone; the rotation below is still worth attempting */ }
+        await node.createSession('', notice)
+      } catch (error) {
+        try {
+          node.ctx.get('logger')?.warn?.(
+            '[dsh-chatnode-wechat] context rotation failed: %s',
+            error instanceof Error ? error.message : String(error),
+          )
+        } catch { /* nothing to log to */ }
+      } finally {
+        node.endRotation()
+      }
+    })()
+  }
+
+  const listener = (session: Session, event: { type?: string }): void => {
+    if (String(session.id) !== String(node.activeSessionId ?? '')) return
+    if (event?.type !== 'turn/end') return
+    evaluate(session)
+  }
+  const disposer = node.ctx.on('session/event', listener as never)
+  return () => disposer()
 }

@@ -75,6 +75,12 @@ export interface Config {
     agentProvider?: string;
     /** Model id for `/new` agents. */
     agentModel?: string;
+    /**
+     * Context-management scheme (JSON), switched from the standalone admin page
+     * (`admin/server.ts`) and executed by `attachContextRotation` in core.ts.
+     * Absent or `manual` = the legacy behaviour.
+     */
+    contextPolicy?: string;
 }
 export declare const Config: z<Schemastery.ObjectS<{
     allowFrom: z<string[], string[]>;
@@ -108,6 +114,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     agentPreset: z<string, string>;
     agentProvider: z<string, string>;
     agentModel: z<string, string>;
+    contextPolicy: z<string, string>;
 }>, Schemastery.ObjectT<{
     allowFrom: z<string[], string[]>;
     digestIntervalSec: z<number, number>;
@@ -140,6 +147,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     agentPreset: z<string, string>;
     agentProvider: z<string, string>;
     agentModel: z<string, string>;
+    contextPolicy: z<string, string>;
 }>>;
 /** Cordis plugin name used by loader diagnostics. */
 export declare const name = "dsh-chatnode-wechat";
@@ -197,6 +205,7 @@ export declare const wechatConversationNode: {
         agentPreset: z<string, string>;
         agentProvider: z<string, string>;
         agentModel: z<string, string>;
+        contextPolicy: z<string, string>;
     }>, Schemastery.ObjectT<{
         allowFrom: z<string[], string[]>;
         digestIntervalSec: z<number, number>;
@@ -229,6 +238,7 @@ export declare const wechatConversationNode: {
         agentPreset: z<string, string>;
         agentProvider: z<string, string>;
         agentModel: z<string, string>;
+        contextPolicy: z<string, string>;
     }>>;
     apply: typeof apply;
 };

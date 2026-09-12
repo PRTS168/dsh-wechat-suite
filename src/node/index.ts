@@ -24,6 +24,7 @@ import { MorningService } from './morning.ts'
 import { generateImage } from './image-gen.ts'
 import { synthesizeSpeech } from './tts.ts'
 import { sendEmail } from './email.ts'
+import { lightToolDefinition } from './light.ts'
 
 /** Plugin config. `allowFrom` is REQUIRED and validated at apply time. */
 export interface Config {
@@ -85,6 +86,12 @@ export interface Config {
   agentProvider?: string
   /** Model id for `/new` agents. */
   agentModel?: string
+  /**
+   * Context-management scheme (JSON), switched from the standalone admin page
+   * (`admin/server.ts`) and executed by `attachContextRotation` in core.ts.
+   * Absent or `manual` = the legacy behaviour.
+   */
+  contextPolicy?: string
 }
 
 export const Config = z.object({
@@ -126,6 +133,7 @@ export const Config = z.object({
   agentPreset: z.string(),
   agentProvider: z.string(),
   agentModel: z.string(),
+  contextPolicy: z.string(),
 })
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -535,6 +543,17 @@ export function apply(ctx: Context, config: Config): void {
   )
   ctx.effect(() => {
     return () => unregisterSendEmail()
+  })
+
+  // control_esp32_light — the ESP32 PWM light as an AGENT tool. The chat commands
+  // (/开灯, /关灯, /开灯1~3) predate it and stay; this restores the tool the
+  // retired `dsh-wechat-tools` plugin provided, so the model can act on
+  // "把灯打开" / "调暗一点" without the user typing a command. Both surfaces run
+  // the same code path in light.ts, and the definition lives there so tests can
+  // pin the tool's name, enum and behaviour.
+  const unregisterLight = ctx.tools.register(lightToolDefinition(config.esp32BaseUrl))
+  ctx.effect(() => {
+    return () => unregisterLight()
   })
 }
 

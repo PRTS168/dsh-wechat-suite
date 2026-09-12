@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>微信桥 · 管理台</title>
+<style>
+  :root { color-scheme: dark; --bg:#14161a; --panel:#1c1f26; --line:#2b3038; --fg:#e6e8ec; --dim:#9aa1ad; --acc:#4d6bfe; --ok:#3fb950; --warn:#d29922; --err:#f85149; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.55 system-ui,"Segoe UI",sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:baseline; flex-wrap:wrap; }
+  h1 { font-size:16px; margin:0; font-weight:600; }
+  .dim { color:var(--dim); font-size:12px; }
+  nav { display:flex; gap:8px; padding:12px 20px 0; }
+  nav button { background:var(--panel); color:var(--fg); border:1px solid var(--line); padding:7px 14px; border-radius:8px; cursor:pointer; }
+  nav button.on { border-color:var(--acc); color:#fff; background:#20263a; }
+  main { padding:16px 20px 60px; max-width:1080px; }
+  section { display:none; } section.on { display:block; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+  .grid { display:grid; grid-template-columns:220px 1fr; gap:10px 14px; align-items:center; }
+  label { color:var(--dim); }
+  input[type=text], input[type=number], textarea { width:100%; background:#12141a; color:var(--fg); border:1px solid var(--line); border-radius:7px; padding:7px 9px; font:inherit; }
+  button.act { background:var(--acc); color:#fff; border:0; border-radius:7px; padding:8px 16px; cursor:pointer; }
+  button.mini { background:#232833; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:3px 8px; cursor:pointer; font-size:12px; }
+  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .tag { display:inline-block; padding:1px 7px; border-radius:999px; border:1px solid var(--line); font-size:12px; color:var(--dim); }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .err { color:var(--err); }
+  table { width:100%; border-collapse:collapse; } th,td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); font-size:13px; }
+  th { color:var(--dim); font-weight:500; }
+  tr.sel td { background:#20263a; }
+  .scheme { border:1px solid var(--line); border-radius:9px; padding:12px 14px; margin-bottom:10px; cursor:pointer; background:#191c22; }
+  .scheme.on { border-color:var(--acc); background:#1e2434; }
+  .scheme h3 { margin:0 0 4px; font-size:14px; }
+  pre { white-space:pre-wrap; word-break:break-word; background:#12141a; border:1px solid var(--line); border-radius:8px; padding:10px; max-height:520px; overflow:auto; font-size:12.5px; }
+  .msg-u { color:#8ab4ff; } .msg-a { color:#c8d3e6; }
+  #toast { position:fixed; right:16px; bottom:16px; background:#20263a; border:1px solid var(--line); padding:10px 14px; border-radius:9px; display:none; max-width:60ch; }
+</style>
+</head>
+<body>
+<header>
+  <h1>微信桥 · 管理台</h1>
+  <span class="dim" id="env">加载中…</span>
+  <span class="dim" id="patchPath"></span>
+</header>
+
+<nav>
+  <button data-tab="config" class="on">配置</button>
+  <button data-tab="conv">对话</button>
+  <button data-tab="scheme">上下文方案</button>
+</nav>
+
+<main>
+  <section id="config" class="on">
+    <div class="card">
+      <div class="row"><strong>桥的配置</strong><span class="dim">写入 profile patch；每次保存都会备份并校验</span></div>
+      <div id="fields" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:12px"><button class="act" id="save">保存修改</button><span class="dim" id="saveMsg"></span></div>
+    </div>
+    <div id="envCard" class="card"></div>
+  </section>
+
+  <section id="conv">
+    <div class="card">
+      <div class="row"><strong>微信会话</strong><span class="dim">删除=移入回收站（可恢复），并让宿主进程解绑</span>
+        <button class="mini" id="reloadConv">刷新</button></div>
+      <div class="row" style="margin:10px 0">
+        <input type="text" id="newSessionPrompt" placeholder="新会话的初始提示词（可留空）" style="max-width:420px">
+        <button class="act" id="newSession">新建微信会话</button>
+        <span class="dim" id="newSessionMsg"></span>
+      </div>
+      <table id="convTable"><thead><tr><th>会话</th><th>标题</th><th>轮次</th><th>输出 tokens</th><th>大小</th><th>最后活动</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <div class="row"><strong>转录</strong><span class="dim" id="transcriptId">未选择</span></div>
+      <pre id="transcript">点击上方任意一行查看最近 60 条消息。</pre>
+    </div>
+    <div class="card">
+      <div class="row"><strong>桥侧命令回执</strong><span class="dim">新建/删除由宿主进程执行，这里显示最近 10 条结果</span>
+        <button class="mini" id="reloadBox">刷新</button></div>
+      <pre id="sessionBox">（暂无）</pre>
+    </div>
+  </section>
+
+  <section id="scheme">
+    <div class="card">
+      <div class="row"><strong>上下文管理方案</strong><span class="dim">点卡片=按默认参数立即切换；下面的参数可自由微调后再应用</span></div>
+      <div id="schemes" style="margin-top:12px"></div>
+      <div class="dim" id="policyNow"></div>
+    </div>
+    <div class="card">
+      <div class="row"><strong>参数微调</strong><span class="dim" id="knobFor">先点一个方案</span></div>
+      <div class="grid" id="knobs" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:10px"><button class="act" id="applyScheme">应用</button><span class="dim" id="schemeMsg"></span></div>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get('token') || '__ADMIN_TOKEN__';
+const H = { 'content-type': 'application/json', 'x-admin-token': TOKEN, 'x-wechat-admin': '1' };
+let STATE = null;
+
+const $ = (s) => document.querySelector(s);
+const toast = (m) => { const t = $('#toast'); t.innerHTML = m; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 6000); };
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+
+async function api(path, opts) {
+  const r = await fetch(path, { headers: H, ...opts });
+  const j = await r.json().catch(() => ({ ok: false, error: 'bad json' }));
+  if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
+  document.querySelectorAll('section').forEach((s) => s.classList.toggle('on', s.id === b.dataset.tab));
+  if (b.dataset.tab === 'conv') { loadConversations(); loadReports(); }
+  if (b.dataset.tab === 'scheme') renderSchemes();
+}));
+
+function renderFields() {
+  const groups = {};
+  for (const f of STATE.fields) (groups[f.group] ||= []).push(f);
+  const html = Object.entries(groups).map(([g, fields]) => `
+    <fieldset style="border:1px solid var(--line);border-radius:9px;margin:0 0 12px;padding:10px 12px">
+      <legend class="dim">${esc(g)}</legend>
+      <div class="grid">
+        ${fields.map((f) => {
+          const secret = f.secret;
+          const val = secret ? (STATE.values[f.key] ?? '') : (STATE.plainValues[f.key] ?? '');
+          const input = f.kind === 'list'
+            ? `<textarea rows="2" data-key="${f.key}" data-secret="${!!secret}" placeholder="${esc(f.placeholder || '每行一个')}">${esc(val)}</textarea>`
+            : `<input type="text" data-key="${f.key}" data-secret="${!!secret}" placeholder="${esc(f.placeholder || f.default || '')}" value="${esc(val)}">`;
+          return `<label title="${esc(f.hint || '')}">${esc(f.label)}</label>
+            <div class="row">${input}${secret ? `<button class="mini" data-reveal="${f.key}">显示</button>` : ''}</div>`;
+        }).join('')}
+      </div>
+    </fieldset>`).join('');
+  $('#fields').innerHTML = html;
+
+  // Remember what was loaded. save() submits only fields that actually changed:
+  // in a profile with `patchReload: live` every rewrite is a live plugin reload,
+  // and a no-op save has no business triggering one.
+  document.querySelectorAll('[data-key]').forEach((el) => { el.dataset.original = el.value; });
+
+  document.querySelectorAll('[data-reveal]').forEach((b) => b.addEventListener('click', async () => {
+    const key = b.dataset.reveal;
+    const j = await api('/api/reveal?key=' + encodeURIComponent(key));
+    const input = document.querySelector(`[data-key="${key}"]`);
+    input.value = j.value; input.dataset.secret = 'false'; input.dataset.original = j.value;
+    b.remove();
+  }));
+}
+
+function renderEnv() {
+  const e = STATE.environment;
+  const yn = (v) => v ? '<span class="ok">✓</span>' : '<span class="err">✗</span>';
+  $('#env').innerHTML = `profile ${esc(e.profile)} · patch ${yn(e.patchExists)} · preset <span class="${e.presetExists?'ok':'err'}">${esc(e.preset)}</span> · 微信凭据 ${yn(e.weixinCredentials)} · SiliconFlow ${yn(e.siliconflowCredential)}`;
+  $('#patchPath').textContent = e.patchFile;
+  $('#envCard').innerHTML = `<div class="row"><strong>环境自检</strong><span class="dim">桥下次启动时会看到的状态</span></div>
+    <div class="grid" style="margin-top:8px">
+      <label>DSH home</label><div>${esc(e.dshHome)}</div>
+      <label>profile patch</label><div>${esc(e.patchFile)} <span class="tag">${e.patchExists ? '存在' : '不存在'}</span></div>
+      <label>人设 preset</label><div>${esc(e.preset)} <span class="tag">${e.presetExists ? '已挂载可用' : '缺失——会创建会话失败'}</span></div>
+      <label>白名单</label><div>${e.allowFrom.map(esc).join(', ') || '<span class="warn">空——桥不会挂载</span>'}</div>
+      <label>凭据库</label><div>WEIXIN_* ${yn(e.weixinCredentials)} · GJLD_API_KEY(硅基流动) ${yn(e.siliconflowCredential)}</div>
+    </div>`;
+}
+
+async function save() {
+  const updates = {};
+  for (const f of STATE.fields) {
+    const el = document.querySelector(`[data-key="${f.key}"]`);
+    if (!el) continue;
+    if (f.secret && el.dataset.secret === 'true') continue; // masked: untouched
+    const value = el.value.trim();
+    if (value === (el.dataset.original ?? '')) continue;    // unchanged: do not rewrite the patch
+    updates[f.key] = value === '' ? null : value;
+  }
+  if (Object.keys(updates).length === 0) {
+    $('#saveMsg').innerHTML = '<span class="dim">没有改动</span>';
+    toast('没有字段发生变化，未写盘（本 profile 每次写盘都会触发一次插件重载）');
+    return;
+  }
+  const btn = $('#save');
+  btn.disabled = true;
+  btn.textContent = '保存中…';
+  try {
+    const j = await api('/api/config', { method: 'POST', body: JSON.stringify({ updates }) });
+    $('#saveMsg').innerHTML = `<span class="ok">已保存</span> 变更 ${j.changed.length} 项 · 备份 ${esc(j.backup.split(/[\\/]/).pop())}`;
+    toast('配置已保存（已备份并可回滚）');
+    await load();
+  } catch (e) { $('#saveMsg').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  finally { btn.disabled = false; btn.textContent = '保存修改'; }
+}
+$('#save').addEventListener('click', save);
+
+async function loadConversations() {
+  const j = await api('/api/conversations');
+  const tb = $('#convTable tbody');
+  tb.innerHTML = j.conversations.map((c) => `<tr data-id="${esc(c.id)}"><td>${esc(c.id)}</td><td>${esc(c.title || '—')}</td>
+    <td>${c.turns}</td><td>${c.outputTokens}</td><td>${(c.bytes/1024).toFixed(0)} KB</td>
+    <td>${esc(new Date(c.lastActivity).toLocaleString())}</td>
+    <td><button class="mini" data-del="${esc(c.id)}">删除</button></td></tr>`).join('');
+  tb.querySelectorAll('tr').forEach((tr) => tr.addEventListener('click', async (ev) => {
+    if (ev.target.closest('[data-del]')) return;      // the delete button handles itself
+    tb.querySelectorAll('tr').forEach((x) => x.classList.toggle('sel', x === tr));
+    $('#transcriptId').textContent = tr.dataset.id;
+    $('#transcript').textContent = '载入中…';
+    const t = await api('/api/transcript?id=' + encodeURIComponent(tr.dataset.id));
+    $('#transcript').innerHTML = t.messages.map((m) =>
+      `<div class="${m.role === 'user' ? 'msg-u' : 'msg-a'}"><b>${m.role === 'user' ? '微信用户' : '助手'}：</b>${esc(m.text)}</div>`).join('') || '（无可显示消息）';
+  }));
+  tb.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => forgetSession(b.dataset.del)));
+}
+$('#reloadConv').addEventListener('click', loadConversations);
+
+// ── session control (queued to the host process) ────────────────────────────
+
+async function newSession() {
+  const prompt = $('#newSessionPrompt').value.trim();
+  const btn = $('#newSession');
+  btn.disabled = true;
+  try {
+    await api('/api/session/new', { method: 'POST', body: JSON.stringify({ prompt }) });
+    $('#newSessionMsg').innerHTML = '<span class="ok">已排队</span> 桥会在 ≤2 秒内新建会话';
+    $('#newSessionPrompt').value = '';
+    setTimeout(() => { void loadConversations(); void loadReports(); }, 3000);
+  } catch (e) { $('#newSessionMsg').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  finally { btn.disabled = false; }
+}
+$('#newSession').addEventListener('click', newSession);
+
+async function forgetSession(id) {
+  if (!confirm(`删除会话 ${id}？\n\n会把它移入 $DSH_HOME/sessions-trash/（可手动恢复），并让桥解绑它。`)) return;
+  try {
+    const j = await api('/api/session/forget', { method: 'POST', body: JSON.stringify({ sessionId: id }) });
+    toast(`已删除 ${esc(id)} → 回收站 ${esc(j.trash || '')}`);
+    await loadConversations();
+    await loadReports();
+  } catch (e) { toast('<span class="err">' + esc(e.message) + '</span>'); }
+}
+
+async function loadReports() {
+  try {
+    const j = await api('/api/session/box');
+    $('#sessionBox').textContent = j.reports.length === 0
+      ? '（暂无）'
+      : j.reports.map((r) => `${r.at || ''}  ${r.command?.op || '?'}  →  ${r.ok ? 'OK' : 'FAIL'}  ${r.detail || ''}`).join('\n');
+  } catch { /* the report box is decorative */ }
+}
+$('#reloadBox').addEventListener('click', loadReports);
+
+// ── context schemes ─────────────────────────────────────────────────────────
+
+let SELECTED = null;
+
+/** Editable knobs, with the unit and range that actually makes sense. */
+const KNOB_META = {
+  turns:        { type: 'number', label: '轮数上限', min: 1 },
+  tokenBudget:  { type: 'number', label: 'token 预算（上下文达到即换）', min: 1000 },
+  pressureRatio:{ type: 'number', label: '上下文占比阈值（0–1）', min: 0.05, max: 1, step: 0.05 },
+  idleHours:    { type: 'number', label: '空闲小时数', min: 1 },
+  handoff:      { type: 'boolean', label: '换会话时生成要点交接' },
+  announce:     { type: 'boolean', label: '在微信里播报轮换' },
+  idleOnly:     { type: 'boolean', label: '仅在空闲时轮换（推荐开）' },
+};
+
+function renderKnobs() {
+  if (!SELECTED) { $('#knobs').innerHTML = ''; $('#knobFor').textContent = '先点一个方案'; return; }
+  $('#knobFor').textContent = `${SELECTED.id} · ${SELECTED.label}`;
+  $('#knobs').innerHTML = Object.entries(SELECTED.knobs).map(([key, value]) => {
+    const meta = KNOB_META[key] || { type: typeof value === 'boolean' ? 'boolean' : 'number', label: key };
+    const input = meta.type === 'boolean'
+      ? `<input type="checkbox" data-knob="${key}" ${value ? 'checked' : ''}>`
+      : `<input type="text" data-knob="${key}" value="${esc(String(value))}" style="max-width:200px">`;
+    return `<label title="${esc(key)}">${esc(meta.label)}</label><div class="row">${input}</div>`;
+  }).join('');
+}
+
+function readKnobs() {
+  const out = {};
+  document.querySelectorAll('[data-knob]').forEach((el) => {
+    const key = el.dataset.knob;
+    if (el.type === 'checkbox') out[key] = el.checked;
+    else {
+      const n = Number(el.value.trim());
+      if (Number.isFinite(n)) out[key] = n;
+    }
+  });
+  return out;
+}
+
+async function applyScheme(scheme, overrides) {
+  try {
+    const j = await api('/api/scheme', { method: 'POST', body: JSON.stringify({ scheme, overrides }) });
+    $('#schemeMsg').innerHTML = `<span class="ok">已应用</span> ${esc(JSON.stringify(j.policy))}`;
+    toast(`已切到「${scheme}」：${esc(JSON.stringify(j.policy))}`);
+    await load();
+    if (SELECTED) renderKnobs();
+  } catch (e) { $('#schemeMsg').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+}
+$('#applyScheme').addEventListener('click', () => {
+  if (!SELECTED) { toast('先点一个方案卡片'); return; }
+  void applyScheme(SELECTED.id, readKnobs());
+});
+
+function renderSchemes() {
+  $('#schemes').innerHTML = STATE.schemes.map((s) => `<div class="scheme ${s.id === STATE.activeScheme ? 'on' : ''}" data-id="${s.id}">
+      <h3>${s.id === STATE.activeScheme ? '● ' : ''}${esc(s.label)}</h3>
+      <div class="dim">${esc(s.summary)}</div>
+      <div class="dim" style="margin-top:6px">默认参数：${esc(JSON.stringify(s.knobs))}</div>
+    </div>`).join('');
+  $('#policyNow').textContent = '当前方案：' + STATE.activeScheme;
+  document.querySelectorAll('.scheme').forEach((el) => el.addEventListener('click', () => {
+    SELECTED = STATE.schemes.find((s) => s.id === el.dataset.id) || null;
+    renderKnobs();
+    // Clicking a card switches immediately with its defaults (fast path); the
+    // editor below is for tuning afterwards.
+    void applyScheme(el.dataset.id, undefined);
+  }));
+}
+
+async function load() {
+  STATE = await api('/api/state');
+  renderEnv(); renderFields(); renderSchemes();
+}
+load().catch((e) => toast('<span class="err">加载失败：' + esc(e.message) + '</span>'));
+</script>
+</body>
+</html>

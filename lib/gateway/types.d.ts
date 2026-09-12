@@ -59,6 +59,26 @@ export declare const SESSION_EXPIRED_ERRCODE = -14;
 export declare const RATE_LIMIT_ERRCODE = -2;
 /** Dedup TTL for inbound message ids (seconds). */
 export declare const MESSAGE_DEDUP_TTL_SECONDS = 300;
+/**
+ * How long a payload-identity dedup entry lives, for messages iLink delivers
+ * without a `message_id`.
+ *
+ * The observed redelivery gap is 6–9 seconds, so 30s catches it comfortably while
+ * still letting someone deliberately repeat a short line ("你好") later on.
+ */
+export declare const CONTENT_DEDUP_TTL_SECONDS = 30;
+/**
+ * Payload identity for a message that carries no `message_id`.
+ *
+ * Built from the sender plus, per item, its kind, its visible text (including
+ * WeChat's own voice transcription) and its media pointer. A redelivery of the
+ * same message reproduces this string exactly; anything the user genuinely types
+ * again looks the same to us too — hence the short TTL rather than a longer one.
+ *
+ * Returns undefined when the payload holds nothing identifying, in which case the
+ * message is passed through rather than guessed at.
+ */
+export declare function inboundContentKey(message: InboundMessage): string | undefined;
 /** Whether an iLink error tuple means the session went stale, not rate-limited. */
 export declare function isStaleSessionRet(ret: number | undefined, errcode: number | undefined, errmsg: string | undefined): boolean;
 /** A media reference inside an item (CDN query param + AES key). */

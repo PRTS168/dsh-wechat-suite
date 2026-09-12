@@ -47,8 +47,17 @@ export { listSessions } from './node/commands.ts'
 /** Cordis plugin name used by loader diagnostics and profile config. */
 export const name = 'dsh-chatnode-wechat'
 
-/** Services the bundle needs (provided by dsh-base). */
-export const inject = ['sessions', 'agents', 'approval', 'credentials', 'sessionTitle']
+/**
+ * Services the bundle needs (provided by dsh-base).
+ *
+ * `sessionTitle` is deliberately NOT listed: it is optional (it itself requires
+ * `sessionProjections`), and an optional service named in `inject` leaves this
+ * row pending forever when it does not activate — dsh-app-boot then fails the
+ * whole profile ("plugin tree failed to load: 1 entry did not activate").
+ * The node reads it through `ctx.get('sessionTitle')` and falls back to the
+ * first user message instead (see src/node/labels.ts).
+ */
+export const inject = ['sessions', 'agents', 'approval', 'credentials']
 
 /** Bundle config: gateway fields plus the node's `allowFrom` policy. */
 export interface Config {
@@ -84,6 +93,12 @@ export interface Config {
   imageGenModel?: string
   /** Where generated images are saved (defaults to <mediaDir>/generated). */
   imageGenDir?: string
+  /**
+   * Context-management scheme (JSON), switched from the standalone admin page
+   * (`admin/server.ts`) and executed by the conversation node. Absent = `manual`
+   * (the conversation grows until a human types `/new`).
+   */
+  contextPolicy?: string
   /** SiliconFlow API key for speech-to-text (defaults to ocrApiKey when absent). */
   sttApiKey?: string
   /** ASR model id (defaults to XingChenAGI/XingChenASR-V3.2-Ultra). */
@@ -135,6 +150,9 @@ export const Config = z.object({
   agentPreset: z.string(),
   agentProvider: z.string(),
   agentModel: z.string(),
+  // Context-management scheme (JSON), switched from the standalone admin page.
+  // Accepted shapes live in src/node/context-policy.ts.
+  contextPolicy: z.string(),
   baseUrl: z.string().default(ILINK_BASE_URL),
   cdnBaseUrl: z.string().default(WEIXIN_CDN_BASE_URL),
   token: z.string().default(''),
@@ -190,38 +208,89 @@ export function apply(ctx: Context, config: Config): void {
     agentPreset: config.agentPreset,
     agentProvider: config.agentProvider,
     agentModel: config.agentModel,
+    contextPolicy: config.contextPolicy,
   })
   // Credentials go through the dsh credentials service — never in the patch
   // file. Resolve them at boot and start polling only when they exist.
   ctx.inject(['wechat', 'credentials'], (bootCtx) => {
-    void bootWithCredentials(bootCtx, config)
+    // `.catch()` is NOT decoration: this profile reloads patches live, so the
+    // scope is routinely torn down while the awaits below are pending. An
+    // escaped rejection here is FATAL to the whole host —
+    // "dsh: fatal load failure: cannot get required service "wechat" in
+    // inactive context" → the harness exits and the desktop app blocks the
+    // profile (safe mode). That is exactly what a config write did on
+    // 2026-09-12 15:02. A failure now degrades to "this row did not activate".
+    bootWithCredentials(bootCtx, config).catch((error) => {
+      logQuietly(bootCtx, `credentials boot failed: ${error instanceof Error ? error.message : String(error)}`)
+    })
   })
+}
+
+/**
+ * Log through `ctx.get('logger')` and never throw.
+ *
+ * Property access on a torn-down context throws, so a logger reached as
+ * `ctx.logger` inside a `catch` turns one error into two — the second one
+ * outside any handler. Every failure path in this file uses this helper.
+ */
+function logQuietly(ctx: Context, message: string): void {
+  try {
+    const logger = ctx.get('logger') as { warn?: (msg: string) => void; info?: (msg: string) => void } | undefined
+    logger?.warn?.(`[dsh-chatnode-wechat] ${message}`)
+  } catch {
+    // Nothing left to log to; the caller is already handling a dead context.
+  }
 }
 
 /**
  * Resolve WEIXIN_* credentials from `ctx.credentials` and start the gateway.
  * Without credentials the gateway stays idle; run `pnpm login` (the
  * CLI-driven QR flow) to pair a WeChat account.
+ *
+ * Services are read with `ctx.get()` rather than as properties, and re-read
+ * after every await: property access throws "cannot get required service … in
+ * inactive context" once a live patch reload has torn the scope down, and this
+ * function keeps running for a few ticks after the scope it started in is gone.
  */
 async function bootWithCredentials(ctx: Context, config: Config): Promise<void> {
+  const credentials = ctx.get('credentials')
+  if (!credentials) return
+  let token: { value?: string } | undefined
+  let accountId: { value?: string } | undefined
+  let baseUrl: { value?: string } | undefined
   try {
-    const token = await ctx.credentials.resolve(credentialRef('WEIXIN_BOT_TOKEN'))
-    const accountId = await ctx.credentials.resolve(credentialRef('WEIXIN_ACCOUNT_ID'))
-    const baseUrl = await ctx.credentials.resolve(credentialRef('WEIXIN_BASE_URL'))
+    token = await credentials.resolve(credentialRef('WEIXIN_BOT_TOKEN'))
+    accountId = await credentials.resolve(credentialRef('WEIXIN_ACCOUNT_ID'))
+    baseUrl = await credentials.resolve(credentialRef('WEIXIN_BASE_URL'))
+  } catch (error) {
+    logQuietly(ctx, `credentials resolution failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  // The scope may be gone by now: re-read instead of trusting the first look.
+  const wechat = ctx.get('wechat')
+  if (!wechat) return
+  try {
     if (token?.value && accountId?.value) {
-      ctx.wechat.setCredentials({
+      wechat.setCredentials({
         token: token.value,
         accountId: accountId.value,
         baseUrl: baseUrl?.value || config.baseUrl,
       })
     }
   } catch (error) {
-    ctx.logger?.warn?.('[dsh-chatnode-wechat] credentials resolution failed: %s', error instanceof Error ? error.message : error)
+    logQuietly(ctx, `gateway credentials rejected: ${error instanceof Error ? error.message : String(error)}`)
   }
-  await ctx.wechat.start()
-  if (!ctx.wechat.configured) {
-    ctx.logger?.info?.(
-      '[dsh-chatnode-wechat] no WEIXIN_BOT_TOKEN/WEIXIN_ACCOUNT_ID credentials — gateway idle. ' +
+  const live = ctx.get('wechat')
+  if (!live) return
+  try {
+    await live.start()
+  } catch (error) {
+    logQuietly(ctx, `gateway start failed: ${error instanceof Error ? error.message : String(error)}`)
+    return
+  }
+  if (ctx.get('wechat') && !live.configured) {
+    logQuietly(
+      ctx,
+      'no WEIXIN_BOT_TOKEN/WEIXIN_ACCOUNT_ID credentials — gateway idle. ' +
       'Run the QR login script (packages/chatnode-wechat: `pnpm login`) to pair a WeChat account.',
     )
   }

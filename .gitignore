@@ -18,3 +18,7 @@ scripts/token-check.mjs
 # 忽略规则，避免一次 `git add .` 就把微信 token 推上公开仓库。
 client-config.json
 account.json
+
+# 管理台运行期状态：本机 token 与日志，绝不提交
+admin/.admin-token
+admin/*.log

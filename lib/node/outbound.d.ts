@@ -35,7 +35,20 @@ export declare function digestLine(session: Session, badge?: string): string;
  *  code / links lose their markers.
  */
 export declare function markdownToWechat(content: string): string;
-/** Send text to the current peer, chunked and throttled. */
+/**
+ * Send text to the current peer, chunked and throttled.
+ *
+ * This is the single choke point for outbound chat traffic, and it is called
+ * from eight places as `void sendTextToPeer(...)`. It therefore must NEVER
+ * reject: a rejection from a fire-and-forget call is an unhandled rejection, and
+ * the host treats those as fatal load failures (2026-09-12: a live patch reload
+ * tore the scope down mid-await and "cannot get required service wechat in
+ * inactive context" took the whole harness down into safe mode).
+ *
+ * So the service is read through `ctx.get()` — property access throws on a
+ * torn-down context, `get()` returns undefined — and every remaining failure is
+ * swallowed after a best-effort log.
+ */
 export declare function sendTextToPeer(node: WechatConversationNode, text: string): Promise<void>;
 /**
  * Attach the outbound digest pipeline. Listens on `session/event` once and

@@ -29,7 +29,16 @@ export { extractText, isGroupMessage } from './node/inbound.ts';
 export { listSessions } from './node/commands.ts';
 /** Cordis plugin name used by loader diagnostics and profile config. */
 export declare const name = "dsh-chatnode-wechat";
-/** Services the bundle needs (provided by dsh-base). */
+/**
+ * Services the bundle needs (provided by dsh-base).
+ *
+ * `sessionTitle` is deliberately NOT listed: it is optional (it itself requires
+ * `sessionProjections`), and an optional service named in `inject` leaves this
+ * row pending forever when it does not activate — dsh-app-boot then fails the
+ * whole profile ("plugin tree failed to load: 1 entry did not activate").
+ * The node reads it through `ctx.get('sessionTitle')` and falls back to the
+ * first user message instead (see src/node/labels.ts).
+ */
 export declare const inject: string[];
 /** Bundle config: gateway fields plus the node's `allowFrom` policy. */
 export interface Config {
@@ -65,6 +74,12 @@ export interface Config {
     imageGenModel?: string;
     /** Where generated images are saved (defaults to <mediaDir>/generated). */
     imageGenDir?: string;
+    /**
+     * Context-management scheme (JSON), switched from the standalone admin page
+     * (`admin/server.ts`) and executed by the conversation node. Absent = `manual`
+     * (the conversation grows until a human types `/new`).
+     */
+    contextPolicy?: string;
     /** SiliconFlow API key for speech-to-text (defaults to ocrApiKey when absent). */
     sttApiKey?: string;
     /** ASR model id (defaults to XingChenAGI/XingChenASR-V3.2-Ultra). */
@@ -115,6 +130,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     agentPreset: z<string, string>;
     agentProvider: z<string, string>;
     agentModel: z<string, string>;
+    contextPolicy: z<string, string>;
     baseUrl: z<string, string>;
     cdnBaseUrl: z<string, string>;
     token: z<string, string>;
@@ -156,6 +172,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     agentPreset: z<string, string>;
     agentProvider: z<string, string>;
     agentModel: z<string, string>;
+    contextPolicy: z<string, string>;
     baseUrl: z<string, string>;
     cdnBaseUrl: z<string, string>;
     token: z<string, string>;
@@ -211,6 +228,7 @@ declare const _default: {
         agentPreset: z<string, string>;
         agentProvider: z<string, string>;
         agentModel: z<string, string>;
+        contextPolicy: z<string, string>;
         baseUrl: z<string, string>;
         cdnBaseUrl: z<string, string>;
         token: z<string, string>;
@@ -252,6 +270,7 @@ declare const _default: {
         agentPreset: z<string, string>;
         agentProvider: z<string, string>;
         agentModel: z<string, string>;
+        contextPolicy: z<string, string>;
         baseUrl: z<string, string>;
         cdnBaseUrl: z<string, string>;
         token: z<string, string>;

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-cowork/chatnode-wechat",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Chat with, monitor, and approve your DSH agents from WeChat — an iLink gateway + conversation node bundle for DeepSeek Harness",
   "keywords": [
     "deepseek-harness",
@@ -29,11 +29,6 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./config-api": {
-      "types": "./lib/node/config-api.d.ts",
-      "default": "./lib/node/config-api.js"
-    },
-    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -83,12 +78,6 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime"
-      ],
-      "platform": "web"
     }
   }
 }

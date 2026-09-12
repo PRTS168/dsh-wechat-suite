@@ -23,6 +23,7 @@ import { WechatGateway } from '../src/gateway/index.ts'
 import { wechatConversationNode } from '../src/node/index.ts'
 import { startFakeIlinkServer, mediaKey, type FakeIlinkServer } from './fake-ilink-server.ts'
 import type { InboundMessage } from '../src/gateway/types.ts'
+import { USER_MESSAGE_OPEN } from '../src/node/inbound.ts'
 import { splitForWechat } from '../src/node/outbound.ts'
 
 let server: FakeIlinkServer
@@ -169,8 +170,13 @@ test('inbound allowlisted text reaches the active agent via followup', async () 
   await waitFor(() => followedUp.length === 1)
   assert.ok(followedUp[0]!.content[0]!.type === 'text')
   const text = (followedUp[0]!.content[0] as { text: string }).text
-  // inbound user messages carry a send-time stamp line, then the raw text
-  assert.match(text, /^\[发送于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\n你好，帮我看看这个项目$/)
+  // inbound user messages are fenced, with the send time on the CLOSING marker
+  // (a leading `[发送于 …]` speaker line invited the model to autocomplete a
+  // fake next user turn — see wrapUserMessage() in src/node/inbound.ts).
+  assert.match(
+    text,
+    /^<<<微信用户消息>>>\n你好，帮我看看这个项目\n<<<微信用户消息结束｜发送于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}>>>$/,
+  )
 })
 
 test('non-allowlisted senders are logged and never fed to the model', async () => {
@@ -198,7 +204,7 @@ test('voice transcription text is routed with a voice marker', async () => {
   })
   await waitFor(() => followedUp.length === 1)
   const text = (followedUp[0]!.content[0] as { text: string }).text
-  assert.ok(text.startsWith('[发送于 '), text)
+  assert.ok(text.startsWith(USER_MESSAGE_OPEN), text)
   assert.ok(text.includes('[语音转写]'))
   assert.ok(text.includes('请总结 README'))
 })
@@ -460,7 +466,7 @@ test('image-only message: download, save to mediaDir, route path to the agent', 
   })
   await waitFor(() => followedUp.length === 1, 3000)
   const text = (followedUp[0]!.content[0] as { text: string }).text
-  assert.ok(text.startsWith('[发送于 '), text)
+  assert.ok(text.startsWith(USER_MESSAGE_OPEN), text)
   const match = /\[微信图片\]\s*(\S+)/.exec(text)
   assert.ok(match, `followup should carry an image path, got: ${text}`)
   const absPath = match![1]!
@@ -493,7 +499,7 @@ test('file message: download, save under mediaDir, route path + name to the agen
   })
   await waitFor(() => followedUp.length === 1, 3000)
   const text = (followedUp[0]!.content[0] as { text: string }).text
-  assert.ok(text.startsWith('[发送于 '), text)
+  assert.ok(text.startsWith(USER_MESSAGE_OPEN), text)
   assert.ok(text.includes('[微信文件]'), text)
   assert.ok(text.includes('（报告.pdf）'), text)
   const match = /\[微信文件\]\s*([^\s（]+)/.exec(text)
@@ -528,7 +534,7 @@ test('video message: download, save as mp4 under mediaDir, route path to the age
   })
   await waitFor(() => followedUp.length === 1, 3000)
   const text = (followedUp[0]!.content[0] as { text: string }).text
-  assert.ok(text.startsWith('[发送于 '), text)
+  assert.ok(text.startsWith(USER_MESSAGE_OPEN), text)
   assert.ok(text.includes('[微信视频]'), text)
   const match = /\[微信视频\]\s*(\S+)/.exec(text)
   assert.ok(match, `followup should carry a video path, got: ${text}`)

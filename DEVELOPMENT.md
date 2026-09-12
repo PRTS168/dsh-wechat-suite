@@ -182,7 +182,7 @@ llm-deepseek:
 **仓库根**，内含微信 `token` / `account_id` / `sync_buf` **明文**。
 两者已列入 `.gitignore`（历史中从未被提交）。**不要在仓库根跑实例后执行 `git add .`。**
 
-### ⑥ 升级到 DSH 0.1.5-rc.2 时的五个断裂点（务必先读）
+### ⑥ 升级到 DSH 0.1.5-rc.2 时的六个断裂点（务必先读）
 
 从 `0.1.1-rc.2` 升到 `0.1.5-rc.2` 时踩到的真实问题。**注意**：升级前那 86 项测试
 全绿是**假绿**——它们跑的是本仓库钉住的依赖副本，而线上加载的是宿主的 `0.1.5-rc.2`。
@@ -211,6 +211,31 @@ llm-deepseek:
 5. **cordis 也要跟着升。** `0.1.5-rc.2` 整批包要求 peer `^4.0.2`，顶层若还是
    `4.0.1` 会报 unmet peer。cordis 是服务注册表，双实例会破坏服务解析，必须对齐。
    对齐后 `pnpm peers check` 应输出 "No peer dependency issues found"。
+6. **`dsh-persona` 的配置键改名了：`text` → `prefix`。** 0.1.5 的 schema 是
+   `{ prefix: 必填, suffix, complete, includeRuntimeContext }`，**完全没有 `text` 键**。
+   旧 preset（Web 页早期保存过的、以及历史插件 `dsh-wechat` 的 `writePersona()`
+   生成的）里那行 `text: |-` 会让 preset 挂载失败：
+
+   ```
+   failed to apply loader entry persona (@deepseek-ai/dsh-persona): invalid config:
+     $.prefix missing required value (at prefix)
+   ```
+
+   表现为微信侧「创建会话失败」，而且**新建的会话日志里只有一行 session 头、
+   没有任何消息事件**——这是"preset 挂不上"的特征签名，值得记住。
+
+   两处修法（都已落地）：
+   - preset 文件那一行改成 `prefix: |-`，内容不用动；
+   - 本仓库 Web 人设编辑器（`config-api.ts`）原本只认 `config.text`，**保存会把
+     prefix 写回 text、再次弄坏 preset**。现改为读两种键、写一律输出 `prefix:`，
+     因此旧 preset 在网页上保存一次即自动修复（`test/persona.test.ts` 锁住该行为）。
+
+   排查 preset 是否合法的最快办法——拿宿主 schema 直接校验，不需要启动 dsh：
+
+   ```js
+   const { Config } = await import('<宿主>/@deepseek-ai/dsh-persona/lib/index.js')
+   Config({ prefix: '你的文本' })   // 缺 prefix 时抛 "$.prefix missing required value"
+   ```
 
 **升级流程**（下次 DSH 再升级照做）：
 

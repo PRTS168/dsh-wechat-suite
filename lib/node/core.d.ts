@@ -10,9 +10,30 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { type ModelSelectionRef } from '@deepseek-ai/dsh-agent';
-import type { Session, SessionId } from '@deepseek-ai/dsh-session';
+import { SessionId, type Session } from '@deepseek-ai/dsh-session';
 import type { PendingApproval } from './approvals.ts';
+import { type ContextPolicy } from './context-policy.ts';
 import type { MorningService } from './morning.ts';
+/**
+ * One entry from `sessionPersistence.list()`.
+ *
+ * DSH 0.1.5 returns `SessionPersistenceSnapshot`, which carries the identity
+ * under `.header`; older versions exposed `id`/`createdAt` at the top level.
+ * Both are accepted so the bridge runs on either.
+ */
+export interface PersistenceEntry {
+    id?: string;
+    createdAt?: number;
+    header?: {
+        id?: string;
+        createdAt?: number;
+    };
+}
+/** Pick the newest persisted `wechat-` session, or undefined when there is none. */
+export declare function selectNewestWechat(entries: readonly PersistenceEntry[]): {
+    id: string;
+    createdAt: number;
+} | undefined;
 /** Runtime shape of the node plugin's config (defaults applied). */
 export interface NodeConfig {
     /** Hard allowlist of WeChat sender ids allowed to drive the agent. REQUIRED. */
@@ -78,6 +99,11 @@ export interface NodeConfig {
     agentProvider?: string;
     /** Model id for `/new` agents. */
     agentModel?: string;
+    /**
+     * Context-management scheme (JSON). Parsed by `context-policy.ts`; `manual`
+     * or absent keeps the legacy behaviour (rotate only when a human types /new).
+     */
+    contextPolicy?: string;
 }
 export declare class WechatConversationNode {
     /** The active session the WeChat user drives. */
@@ -103,7 +129,36 @@ export declare class WechatConversationNode {
     morningService?: MorningService;
     readonly ctx: Context;
     readonly config: NodeConfig;
+    /**
+     * Context-management policy for this conversation (see context-policy.ts).
+     * `manual` reproduces the legacy behaviour: the session grows until a human
+     * types `/new`.
+     */
+    readonly contextPolicy: ContextPolicy;
+    /** Re-entrancy guard: one rotation at a time. */
+    private rotating;
+    /**
+     * A rotation's handoff note, waiting for the owner's next message.
+     *
+     * Deliberately NOT submitted as a turn of its own: doing that produced an extra
+     * unsolicited reply on every rotation (a fresh-session greeting), because a user
+     * message — fenced or not — starts a turn. The note rides along with the next
+     * real inbound message instead, so a rotation costs zero extra replies.
+     */
+    private pendingHandoff;
     constructor(ctx: Context, config: NodeConfig);
+    /** Whether a rotation is currently in flight (used by tests and the guard). */
+    isRotating(): boolean;
+    /** Claim the rotation slot; returns false when one is already running. */
+    beginRotation(): boolean;
+    /** Release the rotation slot. */
+    endRotation(): void;
+    /** Take the queued rotation note for the next inbound message (once). */
+    consumeHandoff(): string;
+    /** Queue a rotation note for the next inbound message. */
+    setPendingHandoff(note: string | null): void;
+    /** Whether a rotation note is waiting (tests and diagnostics). */
+    hasPendingHandoff(): boolean;
     /** The active WeChat session, if any. Never a non-`wechat-` session: this
      *  process shares its SessionStore with the Web GUI, and an inbound WeChat
      *  message must never be routed into a web conversation. */
@@ -167,8 +222,15 @@ export declare class WechatConversationNode {
         provider: string;
         model: string;
     } | undefined;
-    /** Create a fresh agent+session via the agent factory and make it active. */
-    createSession(prompt: string): Promise<void>;
+    /**
+     * Create a fresh agent+session via the agent factory and make it active.
+     *
+     * `notice` controls the chat line: `''` (default) uses the built-in
+     * "已创建新会话" text, `null` stays silent, and any other string is sent
+     * verbatim — automatic rotation passes its own reason there, and honours the
+     * policy's `announce: false` by passing `null`.
+     */
+    createSession(prompt: string, notice?: string | null): Promise<void>;
     /**
      * Ensure the bridge targets a live WeChat agent before routing inbound
      * traffic. Correction order:
@@ -200,4 +262,33 @@ export declare class WechatConversationNode {
     /** Tear down all registered listeners (called on plugin dispose). */
     dispose(): void;
 }
+/**
+ * Rotate the WeChat conversation when the configured policy says so.
+ *
+ * Registered on `session/event` and evaluated only on `turn/end` — the one
+ * moment the bridge knows the agent finished a turn. Idleness is re-checked
+ * immediately before acting, because a queued WeChat message can start the next
+ * turn while this one is being evaluated: rotating then would cut a live turn in
+ * half and strand the agent with the old session's context.
+ *
+ * Rotation goes through the SAME `createSession()` as `/new`, so there is exactly
+ * one code path that creates WeChat sessions, and a rotation can never leave two
+ * agents pointed at the same chat. The handoff note (when enabled) is fenced with
+ * its own markers and labelled as background, never as an instruction: a rotation
+ * must not look like the owner asking for something.
+ */
+/**
+ * Real context size of a session, read from the host's projection cache.
+ *
+ * The token scheme wants a token budget, and the honest source is what the host
+ * already measured. `$DSH_HOME/storages/session_projcache/sessions/<id>.json`
+ * carries it: `contextPressure.surfaceTokens` (the live context surface) with
+ * `contextBreakdown` and the cumulative `tokenUsage` as fallbacks. Returns
+ * undefined when nothing usable is there — the policy module then falls back to
+ * its character proxy and says so in the rotation reason.
+ *
+ * Read-only, best effort, and it must never throw: this runs on the turn/end path.
+ */
+export declare function readContextTokens(sessionId: string): number | undefined;
+export declare function attachContextRotation(node: WechatConversationNode): () => void;
 //# sourceMappingURL=core.d.ts.map

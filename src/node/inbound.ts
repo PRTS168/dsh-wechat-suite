@@ -45,9 +45,49 @@ function sendStamp(date = new Date()): string {
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}`
 }
 
-/** Prefix content handed to the model with the message send/receive time. */
+/** Opening fence of one inbound user message handed to the model. */
+export const USER_MESSAGE_OPEN = '<<<微信用户消息>>>'
+
+/** Label inside the closing fence (the send time rides along with it). */
+export const USER_MESSAGE_CLOSE = '微信用户消息结束'
+
+/**
+ * Wrap content handed to the model in an explicit user-message fence.
+ *
+ * Why a fence instead of the old `[发送于 YYYY-MM-DD HH:mm]\n<text>` prefix line:
+ * that prefix was a *speaker marker* in a chat-shaped transcript, so the model
+ * autocompleted "the next speaker line" with it. On 2026-09-12 it wrote
+ * `[发送于 2026-09-12 14:20] 视频呢？发个` INSIDE its own turn — an instruction the
+ * user never sent, carrying a timestamp 80 seconds in the future — and then
+ * obeyed it, creating and sending a video nobody had asked for.
+ *
+ * A delimited block does not look like the next turn, and moving the time to the
+ * CLOSING marker leaves a fabricated user turn with no leading pattern to
+ * continue. The persona preset carries the matching hard rules (only the last
+ * real user message is an instruction; a future-stamped or self-written "user
+ * message" never is).
+ */
+export function wrapUserMessage(content: string, date = new Date()): string {
+  return `${USER_MESSAGE_OPEN}\n${content}\n<<<${USER_MESSAGE_CLOSE}｜发送于 ${sendStamp(date)}>>>`
+}
+
+/** Wrap content handed to the model with the message send/receive time. */
 function stampLine(content: string): string {
-  return `[发送于 ${sendStamp()}]\n${content}`
+  return wrapUserMessage(content)
+}
+
+/**
+ * Attach a pending rotation handoff (once) in front of an inbound message.
+ *
+ * The note was never meant to be its own turn: submitting it as the new session's
+ * prompt made the agent answer the rotation itself (a fresh-session greeting). It now
+ * rides on the owner's next message instead — one turn, no extra bubble — and it
+ * keeps its own fence, so the persona's hard rules still treat it as background
+ * rather than as an instruction.
+ */
+function withHandoff(node: WechatConversationNode, content: string): string {
+  const note = node.consumeHandoff()
+  return note ? `${note}\n\n${content}` : content
 }
 
 /** Whether a message is a group/room message (MVP: not supported). */
@@ -115,6 +155,32 @@ function inboundMediaDir(node: WechatConversationNode): string {
 }
 
 /**
+ * Report a dropped inbound media message on BOTH planes: a host log line for
+ * whoever operates the bridge, and a WeChat line for whoever sent it.
+ *
+ * Why this exists: the download paths used to `return` silently when the gateway
+ * produced no bytes — nothing on disk, nothing in the log, nothing in the chat.
+ * That is indistinguishable from "the message never arrived", and it is exactly
+ * the gap that made a fabricated "inbound video failed to land" report
+ * impossible to refute from the outside. Every failure that drops media now
+ * says so, in the log and in the conversation.
+ */
+async function reportMediaFailure(
+  node: WechatConversationNode,
+  kind: 'image' | 'file' | 'video' | 'unsupported',
+  reason: string,
+): Promise<void> {
+  node.ctx.logger?.warn?.('[dsh-chatnode-wechat] %s inbound dropped: %s', kind, reason)
+  const notice: Record<'image' | 'file' | 'video' | 'unsupported', string> = {
+    image: '❌ 图片下载失败，请重试。',
+    file: '❌ 文件下载失败，请重试。',
+    video: '❌ 视频下载失败，请重试。',
+    unsupported: `❌ 这条消息暂时无法处理（${reason}）。`,
+  }
+  await sendTextToPeer(node, notice[kind])
+}
+
+/**
  * Handle an image-only message: download + decrypt, persist to disk, then hand
  * the file path to the active agent so its `read_image`/vision tool can decode
  * it (the default model is text-only and reads images by path, not inline).
@@ -122,6 +188,11 @@ function inboundMediaDir(node: WechatConversationNode): string {
 async function handleInboundImage(node: WechatConversationNode, sender: string, message: InboundMessage): Promise<void> {
   const imageItem = extractImageItem(message)
   if (!imageItem) return
+
+  // The peer must be known BEFORE anything can fail: `sendTextToPeer` is a no-op
+  // without a peer id, so a failure notice issued earlier simply vanished —
+  // which is how "❌ 图片下载失败，请重试。" never reached anyone.
+  node.peerId = sender
 
   let downloaded: { bytes: Uint8Array; mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' } | null
   try {
@@ -134,7 +205,10 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
     await sendTextToPeer(node, '❌ 图片下载失败，请重试。')
     return
   }
-  if (!downloaded) return
+  if (!downloaded) {
+    await reportMediaFailure(node, 'image', 'downloadImage returned no bytes')
+    return
+  }
 
   const dir = inboundMediaDir(node)
   try {
@@ -155,7 +229,6 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
     return
   }
 
-  node.peerId = sender
   const ready = await node.ensureWechatTarget()
   const agent = ready ? node.activeAgent() : undefined
   if (!agent) {
@@ -228,7 +301,7 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
   const layoutNote = imageBlock
     ? ''
     : '\n\n【图片交付】当前模型未接收原生图片，以上为其磁盘路径（可用读图工具查看）。'
-  const text = stampLine(`[微信图片] ${absPath}\n${lead}${ocrSection}${layoutNote}`)
+  const text = stampLine(withHandoff(node, `[微信图片] ${absPath}\n${lead}${ocrSection}${layoutNote}`))
 
   const content: ContentBlock[] = imageBlock
     ? [{ type: 'text', text }, imageBlock]
@@ -295,7 +368,7 @@ async function handleInboundVoice(node: WechatConversationNode, sender: string, 
     return
   }
   const messageValue = createUserMessage({
-    content: [{ type: 'text', text: stampLine(`[语音转写]\n${transcribed.trim()}`) }],
+    content: [{ type: 'text', text: stampLine(withHandoff(node, `[语音转写]\n${transcribed.trim()}`)) }],
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
@@ -315,10 +388,18 @@ async function handleInboundFile(
   message: InboundMessage,
   kind: 'file' | 'video',
 ): Promise<void> {
-  const found = extractAttachment(message)
-  if (!found) return
-
+  // Set the peer FIRST: every failure below reports through sendTextToPeer,
+  // which is a no-op when no peer is known.
   node.peerId = sender
+  const found = extractAttachment(message)
+  if (!found) {
+    // Called with no usable payload (an item whose media block is missing both
+    // the encrypted query param and a plain URL). Nothing was downloaded and
+    // nothing reached the model — say so instead of vanishing.
+    await reportMediaFailure(node, kind, 'the item carries no downloadable media')
+    return
+  }
+
   let downloaded: { bytes: Uint8Array; fileName?: string } | null
   try {
     downloaded = await node.ctx.wechat.downloadAttachment(found.item)
@@ -330,7 +411,10 @@ async function handleInboundFile(
     await sendTextToPeer(node, kind === 'video' ? '❌ 视频下载失败，请重试。' : '❌ 文件下载失败，请重试。')
     return
   }
-  if (!downloaded) return
+  if (!downloaded) {
+    await reportMediaFailure(node, kind, 'downloadAttachment returned no bytes')
+    return
+  }
 
   const dir = inboundMediaDir(node)
   try {
@@ -371,7 +455,7 @@ async function handleInboundFile(
   const label = kind === 'video' ? '[微信视频]' : '[微信文件]'
   const nameNote = wireName ? `（${wireName}）` : ''
   const messageValue = createUserMessage({
-    content: [{ type: 'text', text: stampLine(`${label} ${absPath}${nameNote}`) }],
+    content: [{ type: 'text', text: stampLine(withHandoff(node, `${label} ${absPath}${nameNote}`)) }],
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
@@ -413,6 +497,22 @@ export async function handleInbound(node: WechatConversationNode, message: Inbou
       await handleInboundFile(node, sender, message, att.kind)
       return
     }
+    // Media-only message that yielded no usable payload: it carried items, but
+    // none of them is a voice note, image, file or video this bridge can fetch.
+    // Silence here is how a dropped message becomes invisible — so report the
+    // item types on both planes instead (sticker/location/card messages land
+    // here, and the reply tells the sender why nothing happened).
+    const itemTypes = (Array.isArray(message.item_list) ? message.item_list : [])
+      .map((item) => item?.type)
+      .filter((type): type is number => typeof type === 'number')
+    if (itemTypes.length > 0) {
+      // The peer is not known yet on this branch (the text path sets it later),
+      // and sendTextToPeer is a no-op without one — set it before reporting.
+      node.peerId = sender
+      await reportMediaFailure(node, 'unsupported', `类型 ${[...new Set(itemTypes)].join(', ')}`)
+    } else {
+      node.ctx.logger?.info?.('[dsh-chatnode-wechat] ignoring empty message from %s', sender)
+    }
     return
   }
 
@@ -437,7 +537,7 @@ export async function handleInbound(node: WechatConversationNode, message: Inbou
   }
 
   const messageValue = createUserMessage({
-    content: [{ type: 'text', text: stampLine(text) }],
+    content: [{ type: 'text', text: stampLine(withHandoff(node, text)) }],
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
