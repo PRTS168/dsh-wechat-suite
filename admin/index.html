@@ -5,106 +5,158 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>微信桥 · 管理台</title>
 <style>
-  :root { color-scheme: dark; --bg:#14161a; --panel:#1c1f26; --line:#2b3038; --fg:#e6e8ec; --dim:#9aa1ad; --acc:#4d6bfe; --ok:#3fb950; --warn:#d29922; --err:#f85149; }
+  :root {
+    color-scheme: dark;
+    --bg:#0e1013; --panel:#14171c; --panel-2:#181c22; --line:#23272e; --line-2:#2e333c;
+    --fg:#e8eaed; --dim:#8b93a1; --dim-2:#6b7280;
+    --acc:#6ea8fe; --acc-dim:#1e2a3d; --ok:#3fb950; --warn:#d29922; --err:#f85149;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; font:14px/1.55 system-ui,"Segoe UI",sans-serif; background:var(--bg); color:var(--fg); }
-  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:16px; align-items:baseline; flex-wrap:wrap; }
-  h1 { font-size:16px; margin:0; font-weight:600; }
-  .dim { color:var(--dim); font-size:12px; }
-  nav { display:flex; gap:8px; padding:12px 20px 0; }
-  nav button { background:var(--panel); color:var(--fg); border:1px solid var(--line); padding:7px 14px; border-radius:8px; cursor:pointer; }
-  nav button.on { border-color:var(--acc); color:#fff; background:#20263a; }
-  main { padding:16px 20px 60px; max-width:1080px; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13.5px/1.6 var(--sans); -webkit-font-smoothing:antialiased; }
+  a { color:var(--acc); text-decoration:none; }
+  code, .mono { font-family:var(--mono); font-size:12.5px; }
+
+  /* ── top bar ─────────────────────────────────────────────────────────── */
+  header { position:sticky; top:0; z-index:20; background:rgba(14,16,19,.94); backdrop-filter:blur(8px);
+           border-bottom:1px solid var(--line); display:flex; align-items:center; gap:14px; padding:0 18px; height:52px; }
+  .brand { font-weight:600; letter-spacing:.02em; }
+  .brand span { color:var(--dim-2); font-weight:400; margin-left:6px; }
+  .spacer { flex:1; }
+  .modes { display:flex; border:1px solid var(--line-2); border-radius:7px; overflow:hidden; }
+  .modes button { background:transparent; color:var(--dim); border:0; padding:5px 13px; font:inherit; cursor:pointer; }
+  .modes button + button { border-left:1px solid var(--line-2); }
+  .modes button.on { background:var(--acc-dim); color:#dce9ff; }
+  .pill { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--dim); }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--dim-2); flex:none; }
+  .dot.ok { background:var(--ok); box-shadow:0 0 0 3px rgba(63,185,80,.14); }
+  .dot.warn { background:var(--warn); box-shadow:0 0 0 3px rgba(210,153,34,.14); }
+  .dot.bad { background:var(--err); box-shadow:0 0 0 3px rgba(248,81,73,.16); }
+
+  /* ── shell ───────────────────────────────────────────────────────────── */
+  .shell { display:grid; grid-template-columns:186px 1fr; min-height:calc(100vh - 52px); }
+  nav { border-right:1px solid var(--line); padding:14px 10px; position:sticky; top:52px; align-self:start; height:calc(100vh - 52px); overflow:auto; }
+  nav .group { color:var(--dim-2); font-size:11px; letter-spacing:.09em; text-transform:uppercase; padding:12px 8px 6px; }
+  nav button { display:block; width:100%; text-align:left; background:transparent; color:var(--dim); border:0;
+               border-left:2px solid transparent; padding:7px 9px; font:inherit; cursor:pointer; border-radius:0 6px 6px 0; }
+  nav button:hover { color:var(--fg); background:var(--panel); }
+  nav button.on { color:#dce9ff; background:var(--acc-dim); border-left-color:var(--acc); }
+  main { padding:20px 22px 96px; max-width:1000px; }
   section { display:none; } section.on { display:block; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
-  .grid { display:grid; grid-template-columns:220px 1fr; gap:10px 14px; align-items:center; }
-  label { color:var(--dim); }
-  input[type=text], input[type=number], textarea { width:100%; background:#12141a; color:var(--fg); border:1px solid var(--line); border-radius:7px; padding:7px 9px; font:inherit; }
-  button.act { background:var(--acc); color:#fff; border:0; border-radius:7px; padding:8px 16px; cursor:pointer; }
-  button.mini { background:#232833; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:3px 8px; cursor:pointer; font-size:12px; }
-  .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  .tag { display:inline-block; padding:1px 7px; border-radius:999px; border:1px solid var(--line); font-size:12px; color:var(--dim); }
+  h2 { font-size:15px; margin:0 0 4px; font-weight:600; }
+  .lead { color:var(--dim); margin:0 0 16px; max-width:70ch; }
+
+  /* ── blocks ──────────────────────────────────────────────────────────── */
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:15px 16px; margin-bottom:12px; }
+  .card > .head { display:flex; align-items:baseline; gap:10px; margin-bottom:12px; }
+  .card > .head strong { font-size:13.5px; }
+  .card > .head .hint { color:var(--dim); font-size:12px; }
+  .rule { height:1px; background:var(--line); margin:14px -16px; }
+
+  .field { display:grid; grid-template-columns:170px 1fr; gap:6px 14px; padding:9px 0; align-items:start; }
+  .field + .field { border-top:1px solid var(--line); }
+  .field > .label { color:var(--dim); padding-top:6px; }
+  .field > .label b { display:block; color:var(--fg); font-weight:500; }
+  .field > .label small { display:block; color:var(--dim-2); font-size:11.5px; line-height:1.5; margin-top:2px; }
+  .field .control { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .hint { color:var(--dim); font-size:12px; margin-top:5px; max-width:62ch; }
+  .hint.warn { color:var(--warn); }
+  input[type=text], input[type=number], textarea, select {
+    background:#0b0d10; color:var(--fg); border:1px solid var(--line-2); border-radius:6px;
+    padding:6px 9px; font:inherit; min-width:0; }
+  input[type=text], input[type=number], select { width:100%; max-width:420px; }
+  input.mono, textarea.mono { font-family:var(--mono); font-size:12.5px; }
+  textarea { width:100%; resize:vertical; }
+  input:focus, textarea:focus, select:focus, button:focus-visible { outline:1px solid var(--acc); outline-offset:1px; border-color:var(--acc); }
+  input:disabled, select:disabled { opacity:.55; }
+  label.check { display:inline-flex; align-items:center; gap:7px; color:var(--fg); }
+
+  button.act { background:var(--acc); color:#08111f; border:0; border-radius:6px; padding:7px 14px; font:inherit; font-weight:500; cursor:pointer; }
+  button.act:disabled { opacity:.5; cursor:not-allowed; }
+  button.ghost { background:var(--panel-2); color:var(--fg); border:1px solid var(--line-2); border-radius:6px; padding:6px 11px; font:inherit; cursor:pointer; }
+  button.ghost:hover { border-color:var(--acc); color:#dce9ff; }
+  button.mini { background:transparent; color:var(--dim); border:1px solid var(--line-2); border-radius:5px; padding:3px 8px; font:inherit; font-size:12px; cursor:pointer; }
+  button.mini:hover { color:var(--fg); border-color:var(--acc); }
+  button.danger { color:var(--err); border-color:#43272a; }
+  button.danger:hover { color:#ffb4ae; border-color:var(--err); }
+
+  .tag { display:inline-block; padding:1px 7px; border-radius:4px; border:1px solid var(--line-2); font-size:11.5px; color:var(--dim); }
   .ok { color:var(--ok); } .warn { color:var(--warn); } .err { color:var(--err); }
-  table { width:100%; border-collapse:collapse; } th,td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); font-size:13px; }
-  th { color:var(--dim); font-weight:500; }
-  tr.sel td { background:#20263a; }
-  .scheme { border:1px solid var(--line); border-radius:9px; padding:12px 14px; margin-bottom:10px; cursor:pointer; background:#191c22; }
-  .scheme.on { border-color:var(--acc); background:#1e2434; }
-  .scheme h3 { margin:0 0 4px; font-size:14px; }
-  pre { white-space:pre-wrap; word-break:break-word; background:#12141a; border:1px solid var(--line); border-radius:8px; padding:10px; max-height:520px; overflow:auto; font-size:12.5px; }
-  .msg-u { color:#8ab4ff; } .msg-a { color:#c8d3e6; }
-  #toast { position:fixed; right:16px; bottom:16px; background:#20263a; border:1px solid var(--line); padding:10px 14px; border-radius:9px; display:none; max-width:60ch; }
+  .dim { color:var(--dim); } .dim2 { color:var(--dim-2); }
+
+  pre { white-space:pre-wrap; word-break:break-word; background:#0b0d10; border:1px solid var(--line);
+        border-radius:7px; padding:11px 12px; max-height:460px; overflow:auto; font-family:var(--mono); font-size:12.5px; margin:0; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--dim-2); font-weight:500; font-size:11.5px; letter-spacing:.03em; text-transform:uppercase; }
+  tbody tr { cursor:default; }
+  tbody tr.sel td { background:var(--acc-dim); }
+  tbody tr.pick { cursor:pointer; }
+  tbody tr.pick:hover td { background:var(--panel-2); }
+
+  .statusline { display:flex; align-items:center; gap:11px; font-size:15px; font-weight:500; }
+  .checks { display:grid; gap:0; margin-top:12px; }
+  .check { display:grid; grid-template-columns:14px 132px 1fr; gap:12px; padding:9px 0; border-top:1px solid var(--line); align-items:start; }
+  .check .what { color:var(--dim); }
+  .check .why { color:var(--fg); font-size:12.5px; }
+  .check .fix { color:var(--warn); font-size:12px; margin-top:3px; }
+
+  .choices { display:grid; gap:9px; }
+  .choice { border:1px solid var(--line-2); border-radius:8px; padding:11px 13px; cursor:pointer; background:var(--panel-2); }
+  .choice:hover { border-color:#3c4657; }
+  .choice.on { border-color:var(--acc); background:var(--acc-dim); }
+  .choice b { display:block; font-weight:600; margin-bottom:3px; }
+  .choice span { color:var(--dim); font-size:12.5px; }
+
+  .savebar { position:fixed; left:186px; right:0; bottom:0; z-index:30; display:none; align-items:center; gap:12px;
+             padding:11px 22px; background:rgba(20,23,28,.97); border-top:1px solid var(--line-2); backdrop-filter:blur(8px); }
+  .savebar.on { display:flex; }
+  #toast { position:fixed; right:18px; bottom:70px; background:var(--panel-2); border:1px solid var(--line-2);
+           padding:10px 14px; border-radius:8px; display:none; max-width:58ch; z-index:40; box-shadow:0 8px 26px rgba(0,0,0,.45); }
+  .banner { border:1px solid #43272a; background:#1d1416; color:#ffb4ae; border-radius:8px; padding:10px 13px; margin-bottom:12px; font-size:12.5px; }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:10px; }
+  .stat { background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:11px 13px; }
+  .stat .k { color:var(--dim-2); font-size:11.5px; letter-spacing:.04em; text-transform:uppercase; }
+  .stat .v { font-size:19px; font-family:var(--mono); margin-top:3px; }
+  .kbd { font-family:var(--mono); font-size:12px; background:#0b0d10; border:1px solid var(--line-2); border-radius:4px; padding:1px 5px; }
 </style>
 </head>
 <body>
+
 <header>
-  <h1>微信桥 · 管理台</h1>
-  <span class="dim" id="env">加载中…</span>
-  <span class="dim" id="patchPath"></span>
+  <div class="brand">微信桥<span>管理台</span></div>
+  <div class="modes" id="modes">
+    <button data-mode="simple">新手模式</button>
+    <button data-mode="advanced">高级模式</button>
+  </div>
+  <div class="spacer"></div>
+  <span class="pill" id="healthPill"><span class="dot" id="healthDot"></span><span id="healthText">体检中…</span></span>
+  <span class="pill" id="patchPill" title="配置文件"></span>
 </header>
 
-<nav>
-  <button data-tab="config" class="on">配置</button>
-  <button data-tab="conv">对话</button>
-  <button data-tab="scheme">上下文方案</button>
-</nav>
+<div class="shell">
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
 
-<main>
-  <section id="config" class="on">
-    <div class="card">
-      <div class="row"><strong>桥的配置</strong><span class="dim">写入 profile patch；每次保存都会备份并校验</span></div>
-      <div id="fields" style="margin-top:10px"></div>
-      <div class="row" style="margin-top:12px"><button class="act" id="save">保存修改</button><span class="dim" id="saveMsg"></span></div>
-    </div>
-    <div id="envCard" class="card"></div>
-  </section>
-
-  <section id="conv">
-    <div class="card">
-      <div class="row"><strong>微信会话</strong><span class="dim">删除=移入回收站（可恢复），并让宿主进程解绑</span>
-        <button class="mini" id="reloadConv">刷新</button></div>
-      <div class="row" style="margin:10px 0">
-        <input type="text" id="newSessionPrompt" placeholder="新会话的初始提示词（可留空）" style="max-width:420px">
-        <button class="act" id="newSession">新建微信会话</button>
-        <span class="dim" id="newSessionMsg"></span>
-      </div>
-      <table id="convTable"><thead><tr><th>会话</th><th>标题</th><th>轮次</th><th>输出 tokens</th><th>大小</th><th>最后活动</th><th></th></tr></thead><tbody></tbody></table>
-    </div>
-    <div class="card">
-      <div class="row"><strong>转录</strong><span class="dim" id="transcriptId">未选择</span></div>
-      <pre id="transcript">点击上方任意一行查看最近 60 条消息。</pre>
-    </div>
-    <div class="card">
-      <div class="row"><strong>桥侧命令回执</strong><span class="dim">新建/删除由宿主进程执行，这里显示最近 10 条结果</span>
-        <button class="mini" id="reloadBox">刷新</button></div>
-      <pre id="sessionBox">（暂无）</pre>
-    </div>
-  </section>
-
-  <section id="scheme">
-    <div class="card">
-      <div class="row"><strong>上下文管理方案</strong><span class="dim">点卡片=按默认参数立即切换；下面的参数可自由微调后再应用</span></div>
-      <div id="schemes" style="margin-top:12px"></div>
-      <div class="dim" id="policyNow"></div>
-    </div>
-    <div class="card">
-      <div class="row"><strong>参数微调</strong><span class="dim" id="knobFor">先点一个方案</span></div>
-      <div class="grid" id="knobs" style="margin-top:8px"></div>
-      <div class="row" style="margin-top:10px"><button class="act" id="applyScheme">应用</button><span class="dim" id="schemeMsg"></span></div>
-    </div>
-  </section>
-</main>
+<div class="savebar" id="savebar">
+  <span id="saveCount" class="dim">有未保存的修改</span>
+  <button class="act" id="saveBtn">保存</button>
+  <button class="ghost" id="revertBtn">放弃修改</button>
+  <span id="saveMsg" class="dim"></span>
+</div>
 
 <div id="toast"></div>
 
 <script>
+// ── plumbing ────────────────────────────────────────────────────────────────
 const TOKEN = new URLSearchParams(location.search).get('token') || '__ADMIN_TOKEN__';
 const H = { 'content-type': 'application/json', 'x-admin-token': TOKEN, 'x-wechat-admin': '1' };
-let STATE = null;
-
 const $ = (s) => document.querySelector(s);
-const toast = (m) => { const t = $('#toast'); t.innerHTML = m; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 6000); };
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const toast = (html) => { const t = $('#toast'); t.innerHTML = html; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 6500); };
 
 async function api(path, opts) {
   const r = await fetch(path, { headers: H, ...opts });
@@ -112,222 +164,649 @@ async function api(path, opts) {
   if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
   return j;
 }
+const S = { data: null, health: null, problems: null, memory: null, models: null, backups: null, dirty: {}, section: 'overview' };
+const isAdvanced = () => S.mode === 'advanced';
 
-document.querySelectorAll('nav button').forEach((b) => b.addEventListener('click', () => {
-  document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
-  document.querySelectorAll('section').forEach((s) => s.classList.toggle('on', s.id === b.dataset.tab));
-  if (b.dataset.tab === 'conv') { loadConversations(); loadReports(); }
-  if (b.dataset.tab === 'scheme') renderSchemes();
-}));
+// ── sections ────────────────────────────────────────────────────────────────
+// nav is generated from this table so the two modes can never drift apart.
+const SECTIONS = [
+  { id:'overview',    label:'概览',        both:true,  render: renderOverview },
+  { id:'connect',     label:'谁能跟我说话', adv:'连接与凭据', render: renderConnect },
+  { id:'model',       label:'用哪个大脑',   adv:'模型',      render: renderModel },
+  { id:'memory',      label:'它记不记得住', adv:'长期记忆',   render: renderMemory },
+  { id:'context',     label:'聊久了怎么办', adv:'上下文方案', render: renderContext },
+  { id:'chat',        label:'对话',        only:true, render: renderChat },
+  { id:'fields',      label:'全部配置项',   only:true, render: renderFields },
+  { id:'diag',        label:'出问题了',     adv:'诊断与备份', render: renderDiag },
+];
 
-function renderFields() {
-  const groups = {};
-  for (const f of STATE.fields) (groups[f.group] ||= []).push(f);
-  const html = Object.entries(groups).map(([g, fields]) => `
-    <fieldset style="border:1px solid var(--line);border-radius:9px;margin:0 0 12px;padding:10px 12px">
-      <legend class="dim">${esc(g)}</legend>
-      <div class="grid">
-        ${fields.map((f) => {
-          const secret = f.secret;
-          const val = secret ? (STATE.values[f.key] ?? '') : (STATE.plainValues[f.key] ?? '');
-          const input = f.kind === 'list'
-            ? `<textarea rows="2" data-key="${f.key}" data-secret="${!!secret}" placeholder="${esc(f.placeholder || '每行一个')}">${esc(val)}</textarea>`
-            : `<input type="text" data-key="${f.key}" data-secret="${!!secret}" placeholder="${esc(f.placeholder || f.default || '')}" value="${esc(val)}">`;
-          return `<label title="${esc(f.hint || '')}">${esc(f.label)}</label>
-            <div class="row">${input}${secret ? `<button class="mini" data-reveal="${f.key}">显示</button>` : ''}</div>`;
-        }).join('')}
-      </div>
-    </fieldset>`).join('');
-  $('#fields').innerHTML = html;
-
-  // Remember what was loaded. save() submits only fields that actually changed:
-  // in a profile with `patchReload: live` every rewrite is a live plugin reload,
-  // and a no-op save has no business triggering one.
-  document.querySelectorAll('[data-key]').forEach((el) => { el.dataset.original = el.value; });
-
-  document.querySelectorAll('[data-reveal]').forEach((b) => b.addEventListener('click', async () => {
-    const key = b.dataset.reveal;
-    const j = await api('/api/reveal?key=' + encodeURIComponent(key));
-    const input = document.querySelector(`[data-key="${key}"]`);
-    input.value = j.value; input.dataset.secret = 'false'; input.dataset.original = j.value;
-    b.remove();
-  }));
+function renderNav() {
+  const groups = isAdvanced()
+    ? [{ title:'配置', ids:['overview','connect','model','memory','context'] },
+       { title:'运维', ids:['chat','fields','diag'] }]
+    : [{ title:'配置', ids:['overview','connect','model','memory','context'] },
+       { title:'帮助', ids:['diag'] }];
+  $('#nav').innerHTML = groups.map((g) => `<div class="group">${esc(g.title)}</div>` + g.ids.map((id) => {
+    const s = SECTIONS.find((x) => x.id === id);
+    if (!s || (s.only && !isAdvanced())) return '';
+    const label = isAdvanced() && s.adv ? s.adv : s.label;
+    return `<button data-go="${id}" class="${S.section === id ? 'on' : ''}">${esc(label)}</button>`;
+  }).join('')).join('');
+  $('#nav').querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => go(b.dataset.go)));
 }
 
-function renderEnv() {
-  const e = STATE.environment;
-  const yn = (v) => v ? '<span class="ok">✓</span>' : '<span class="err">✗</span>';
-  $('#env').innerHTML = `profile ${esc(e.profile)} · patch ${yn(e.patchExists)} · preset <span class="${e.presetExists?'ok':'err'}">${esc(e.preset)}</span> · 微信凭据 ${yn(e.weixinCredentials)} · SiliconFlow ${yn(e.siliconflowCredential)}`;
-  $('#patchPath').textContent = e.patchFile;
-  $('#envCard').innerHTML = `<div class="row"><strong>环境自检</strong><span class="dim">桥下次启动时会看到的状态</span></div>
-    <div class="grid" style="margin-top:8px">
-      <label>DSH home</label><div>${esc(e.dshHome)}</div>
-      <label>profile patch</label><div>${esc(e.patchFile)} <span class="tag">${e.patchExists ? '存在' : '不存在'}</span></div>
-      <label>人设 preset</label><div>${esc(e.preset)} <span class="tag">${e.presetExists ? '已挂载可用' : '缺失——会创建会话失败'}</span></div>
-      <label>白名单</label><div>${e.allowFrom.map(esc).join(', ') || '<span class="warn">空——桥不会挂载</span>'}</div>
-      <label>凭据库</label><div>WEIXIN_* ${yn(e.weixinCredentials)} · 硅基流动 Key ${yn(e.siliconflowCredential)}</div>
-    </div>`;
+function go(id) {
+  S.section = id;
+  renderNav();
+  const s = SECTIONS.find((x) => x.id === id);
+  $('#main').innerHTML = '';
+  if (s) s.render($('#main'));
+  window.scrollTo({ top: 0 });
+}
+
+// ── config fields (the single source of truth is the server's CONFIG_FIELDS) ─
+const F = (key) => (S.data?.fields ?? []).find((f) => f.key === key) || { key, label:key };
+const rawValue = (key) => (S.data?.plainValues ?? {})[key] ?? '';
+const shownValue = (key) => (F(key).secret ? (S.data?.values ?? {})[key] ?? '' : rawValue(key));
+
+/** A control bound to one config key; changes are collected, not written. */
+function field(key, opts = {}) {
+  const f = F(key);
+  const secret = !!f.secret;
+  const value = shownValue(key);
+  const changed = S.dirty[key] !== undefined;
+  const current = changed ? (S.dirty[key] ?? '') : value;
+  const label = opts.label ?? f.label;
+  const sub = opts.sub ?? f.hint ?? '';
+  let control;
+  if (opts.type === 'select') {
+    const options = opts.options ?? [];
+    const known = options.some((o) => o.value === current);
+    control = `<select data-key="${esc(key)}" class="mono">
+      ${options.map((o) => `<option value="${esc(o.value)}"${o.value === current ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}
+      ${known || !current ? '' : `<option value="${esc(current)}" selected>${esc(current)}（当前）</option>`}
+      <option value="__custom__"${opts.custom ? ' selected' : ''}>自定义…</option>
+    </select>`;
+  } else if (opts.type === 'textarea' || f.kind === 'list') {
+    control = `<textarea rows="${opts.rows ?? 2}" data-key="${esc(key)}" data-secret="${secret}" class="mono"
+      placeholder="${esc(f.placeholder || '每行一个')}">${esc(current)}</textarea>`;
+  } else if (opts.type === 'checkbox') {
+    control = `<label class="check"><input type="checkbox" data-key="${esc(key)}" ${current === 'on' ? 'checked' : ''}> ${esc(opts.checkLabel ?? '开启')}</label>`;
+  } else {
+    control = `<input type="text" data-key="${esc(key)}" data-secret="${secret}" class="mono"
+      placeholder="${esc(f.placeholder || f.default || '')}" value="${esc(current)}">`;
+  }
+  const reveal = secret ? `<button class="mini" data-reveal="${esc(key)}">显示</button>` : '';
+  const flag = changed ? ' <span class="tag warn">已改</span>' : '';
+  return `<div class="field">
+    <div class="label"><b>${esc(label)}${flag}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</div>
+    <div><div class="control">${control}${reveal}</div>${opts.after ?? ''}</div>
+  </div>`;
+}
+
+/** Bind the controls just rendered: collect edits into S.dirty. */
+function bindFields(root = document) {
+  root.querySelectorAll('[data-key]').forEach((el) => {
+    // Idempotent: sections re-render and re-bind, and a second bind would reset
+    // the baseline (dataset.original) to the edited value, which silently makes
+    // a real change look like "no change" to the save bar.
+    if (el.dataset.bound === '1') return;
+    el.dataset.bound = '1';
+    const key = el.dataset.key;
+    el.dataset.original = el.value;
+    el.dataset.originalChecked = el.checked ? '1' : '0';
+    const mark = (dirty) => {
+      const b = el.closest('.field')?.querySelector('.label b');
+      if (!b) return;
+      const tag = b.querySelector('.tag');
+      if (dirty && !tag) b.insertAdjacentHTML('beforeend', ' <span class="tag warn">已改</span>');
+      // The tag has to come off again when the value returns to the original,
+      // or the field keeps claiming a change the counter no longer counts.
+      if (!dirty && tag) tag.remove();
+    };
+    const collect = () => {
+      let v;
+      if (el.type === 'checkbox') v = el.checked ? 'on' : '';
+      else v = el.value.trim();
+      // The "custom…" sentinel is a UI affordance, never a value.
+      if (v === '__custom__') { delete S.dirty[key]; mark(false); updateSaveBar(); return; }
+      const original = el.type === 'checkbox'
+        ? (el.dataset.originalChecked === '1' ? 'on' : '')
+        : (el.dataset.original ?? '').trim();
+      if (v === original) delete S.dirty[key];
+      else S.dirty[key] = v;
+      mark(S.dirty[key] !== undefined);
+      updateSaveBar();
+    };
+    el.addEventListener('change', collect);
+    el.addEventListener('input', collect);
+    root.querySelectorAll(`[data-reveal="${key}"]`).forEach((btn) => btn.addEventListener('click', async () => {
+      try {
+        const j = await api('/api/reveal?key=' + encodeURIComponent(key));
+        el.value = j.value; el.dataset.secret = 'false'; el.dataset.original = j.value;
+        delete S.dirty[key]; mark(false); updateSaveBar(); btn.remove();
+      } catch (e) { toast('<span class="err">' + esc(e.message) + '</span>'); }
+    }));
+  });
+}
+
+/** Which fields exist only in advanced mode — used to explain hidden changes. */
+const ADVANCED_ONLY = ['cwd','mediaDir','agentProvider','imageInput','imageInputModel','memoryFile','problemFile','contextPolicy','imageInput','ocrApiKey','ocrModel','ocrBaseUrl','imageGenApiKey','imageGenModel','imageGenDir','sttApiKey','sttModel','ttsApiKey','ttsModel','ttsVoice','smtpHost','smtpPort','smtpUsername','smtpPassword','smtpFromName','esp32BaseUrl','digestIntervalSec','approvalTimeoutSec','maxMessageChars','sendChunkDelayMs','reminderFile','morningFile'];
+
+function updateSaveBar() {
+  const keys = Object.keys(S.dirty);
+  const hidden = isAdvanced() ? [] : keys.filter((k) => ADVANCED_ONLY.includes(k));
+  $('#savebar').classList.toggle('on', keys.length > 0);
+  const labels = keys.slice(0, 4).map((k) => F(k).label || k).join('、');
+  $('#saveCount').innerHTML = keys.length === 1
+    ? `将修改：<span class="mono">${esc(labels)}</span>`
+    : `将修改 ${keys.length} 项：<span class="mono">${esc(labels)}${keys.length > 4 ? ' …' : ''}</span>`
+      + (hidden.length ? ` <span class="warn">（其中 ${hidden.length} 项是高级设置，新手模式看不到）</span>` : '');
 }
 
 async function save() {
   const updates = {};
-  for (const f of STATE.fields) {
-    const el = document.querySelector(`[data-key="${f.key}"]`);
-    if (!el) continue;
-    if (f.secret && el.dataset.secret === 'true') continue; // masked: untouched
-    const value = el.value.trim();
-    if (value === (el.dataset.original ?? '')) continue;    // unchanged: do not rewrite the patch
-    updates[f.key] = value === '' ? null : value;
+  for (const [key, value] of Object.entries(S.dirty)) {
+    const f = F(key);
+    if (f.kind === 'number' && value !== '' && !/^-?\d+$/.test(value)) {
+      $('#saveMsg').innerHTML = `<span class="err">${esc(f.label)} 只能填整数，收到「${esc(value)}」</span>`;
+      toast(`<span class="err">${esc(f.label)} 只能填整数（留空 = 用默认值）</span>`);
+      return;
+    }
+    // HH:MM is the one free-text value whose typos fail silently: the bridge
+    // treats an unparsable time as "off", so the daily run just never happens.
+    if (key === 'memoryConsolidateTime' && value !== '' && !/^\d{1,2}:\d{2}$/.test(value)) {
+      $('#saveMsg').innerHTML = `<span class="err">整理时间要写成 HH:MM，收到「${esc(value)}」</span>`;
+      return;
+    }
+    updates[key] = value === '' ? null : value;
   }
-  if (Object.keys(updates).length === 0) {
-    $('#saveMsg').innerHTML = '<span class="dim">没有改动</span>';
-    toast('没有字段发生变化，未写盘（本 profile 每次写盘都会触发一次插件重载）');
-    return;
-  }
-  const btn = $('#save');
-  btn.disabled = true;
-  btn.textContent = '保存中…';
+  if (Object.keys(updates).length === 0) return;
+  const names = Object.keys(updates).map((k) => F(k).label || k);
+  // This profile is patchReload: live — saving reloads the plugin — so the click
+  // says what it is about to do before doing it.
+  if (isAdvanced() && !confirm(`保存并写入 profile 配置？\n\n将修改 ${names.length} 项：\n${names.join('、')}\n\n这个 profile 是热重载：写盘后桥会立即重新加载。`)) return;
+  const btn = $('#saveBtn');
+  btn.disabled = true; btn.textContent = '保存中…';
   try {
     const j = await api('/api/config', { method: 'POST', body: JSON.stringify({ updates }) });
-    $('#saveMsg').innerHTML = `<span class="ok">已保存</span> 变更 ${j.changed.length} 项 · 备份 ${esc(j.backup.split(/[\\/]/).pop())}`;
-    toast('配置已保存（已备份并可回滚）');
-    await load();
-  } catch (e) { $('#saveMsg').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-  finally { btn.disabled = false; btn.textContent = '保存修改'; }
+    $('#saveMsg').innerHTML = `<span class="ok">已保存</span> ${j.changed.length} 项 · 备份 ${esc(String(j.backup || '').split(/[\\/]/).pop())}`;
+    toast('已保存。改动会在桥下次重载时生效（本 profile 是热重载，通常几秒内）。');
+    S.dirty = {};
+    updateSaveBar();
+    await loadAll();
+  } catch (e) {
+    $('#saveMsg').innerHTML = `<span class="err">${esc(e.message)}</span>`;
+  } finally {
+    btn.disabled = false; btn.textContent = '保存';
+  }
 }
-$('#save').addEventListener('click', save);
 
-async function loadConversations() {
-  const j = await api('/api/conversations');
-  const tb = $('#convTable tbody');
-  tb.innerHTML = j.conversations.map((c) => `<tr data-id="${esc(c.id)}"><td>${esc(c.id)}</td><td>${esc(c.title || '—')}</td>
-    <td>${c.turns}</td><td>${c.outputTokens}</td><td>${(c.bytes/1024).toFixed(0)} KB</td>
-    <td>${esc(new Date(c.lastActivity).toLocaleString())}</td>
-    <td><button class="mini" data-del="${esc(c.id)}">删除</button></td></tr>`).join('');
-  tb.querySelectorAll('tr').forEach((tr) => tr.addEventListener('click', async (ev) => {
-    if (ev.target.closest('[data-del]')) return;      // the delete button handles itself
-    tb.querySelectorAll('tr').forEach((x) => x.classList.toggle('sel', x === tr));
-    $('#transcriptId').textContent = tr.dataset.id;
-    $('#transcript').textContent = '载入中…';
-    const t = await api('/api/transcript?id=' + encodeURIComponent(tr.dataset.id));
-    $('#transcript').innerHTML = t.messages.map((m) =>
-      `<div class="${m.role === 'user' ? 'msg-u' : 'msg-a'}"><b>${m.role === 'user' ? '微信用户' : '助手'}：</b>${esc(m.text)}</div>`).join('') || '（无可显示消息）';
+// ── 概览 ────────────────────────────────────────────────────────────────────
+function renderOverview(root) {
+  const h = S.health;
+  const e = S.data?.environment ?? {};
+  const mem = S.memory ?? { facts: 0 };
+  const lines = S.problems?.lines ?? [];
+  const convs = S.data?.conversations?.length ?? 0;
+  root.innerHTML = `
+    <h2>${isAdvanced() ? '概览' : '现在能不能用'}</h2>
+    <p class="lead">${isAdvanced()
+      ? '桥的健康状况、最近的失败记录与关键计数。左边是配置，需要改哪里点哪里。'
+      : '先看这一行。绿灯就表示已经能用了——直接在微信里给它发消息即可。红灯会告诉你缺什么、去哪儿填。'}</p>
+
+    <div class="card">
+      <div class="statusline"><span class="dot ${h ? (h.ok ? 'ok' : 'bad') : ''}"></span>
+        <span>${esc(h ? h.summary : '体检中…')}</span>
+        <span class="spacer"></span>
+        <button class="ghost" id="recheck">重新体检</button></div>
+      <div class="checks">
+        ${(h?.checks ?? []).map((c) => `<div class="check">
+          <span class="dot ${c.state}"></span>
+          <span class="what">${esc(c.label)}</span>
+          <span><span class="why">${esc(c.detail)}</span>${c.fix ? `<div class="fix">怎么解决：${esc(c.fix)}</div>` : ''}</span>
+        </div>`).join('') || '<div class="dim">正在读取…</div>'}
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="stat"><div class="k">微信对话</div><div class="v">${convs}</div><div class="dim2">个会话在磁盘上</div></div>
+      <div class="stat"><div class="k">记得的事</div><div class="v">${mem.facts ?? 0}</div><div class="dim2">条长期记忆</div></div>
+      <div class="stat"><div class="k">最近的问题</div><div class="v ${lines.length ? 'warn' : ''}">${lines.length}</div><div class="dim2">条失败记录</div></div>
+      <div class="stat"><div class="k">人设</div><div class="v" style="font-size:15px">${esc(e.preset || '—')}</div><div class="dim2">${e.presetExists ? '已就位' : '缺失'}</div></div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="head"><strong>在微信里怎么用它</strong><span class="hint">直接发消息就行；下面这些命令是给"改设置/查状态"用的</span></div>
+      <table><tbody>
+        <tr><td style="width:150px"><span class="kbd">/status</span></td><td class="dim">看它现在活着没有、网关通不通</td></tr>
+        <tr><td><span class="kbd">/context</span></td><td class="dim">看这段对话用了多少上下文、什么时候会自动压缩</td></tr>
+        <tr><td><span class="kbd">/memory</span></td><td class="dim">看它记住了你什么</td></tr>
+        <tr><td><span class="kbd">/problems</span></td><td class="dim">看最近出过什么问题</td></tr>
+        <tr><td><span class="kbd">/new</span></td><td class="dim">开一段新对话（旧的还在，可以 /sessions 切回去）</td></tr>
+      </tbody></table>
+    </div>`;
+  $('#recheck').addEventListener('click', async () => { await loadHealth(); go('overview'); toast('已重新体检'); });
+}
+
+// ── 连接 ────────────────────────────────────────────────────────────────────
+function renderConnect(root) {
+  const e = S.data?.environment ?? {};
+  root.innerHTML = `
+    <h2>${isAdvanced() ? '连接与凭据' : '谁能跟它说话'}</h2>
+    <p class="lead">${isAdvanced()
+      ? '白名单、人设 preset、工作目录、媒体落盘位置，以及宿主凭据的自检结果。'
+      : '这一页决定"谁能让它回话"。只有你填在这里的微信号，它才会理——别人的消息它直接忽略。'}</p>
+    ${S.data?.unreadable ? `<div class="banner">配置文件存在但读不出来：${esc(S.data.unreadable)}。页面显示的不是真实配置，保存会被拒绝——先解决文件权限。</div>` : ''}
+    <div class="card">
+      <div class="head"><strong>白名单</strong><span class="hint">填错了它就完全不回话，改完记得保存</span></div>
+      ${field('allowFrom', {
+        label:'你的微信 ID', sub:'一行一个。以 @im.wechat 结尾的那串就是。',
+        rows: 3,
+        after: `<div class="hint">不知道自己的 ID？在微信里问它一句「我的 ID 是什么」——它回话时用的就是那个号。空着的话桥不会启动。</div>`,
+      })}
+      ${field('agentPreset', { label:'人设', sub:'它叫 $DSH_HOME/.agent-presets/<名字>/agent.cordis.yml，改名字要保证那个文件存在。' })}
+      ${isAdvanced() ? field('cwd', { label:'新会话工作目录', sub:'/new 时 agent 的工作目录（影响它能直接读写哪些文件）。' }) : ''}
+      ${isAdvanced() ? field('mediaDir', { label:'媒体落盘目录', sub:'收到的图片/文件/视频存哪儿。' }) : ''}
+    </div>
+    <div class="card">
+      <div class="head"><strong>宿主凭据</strong><span class="hint">这些不在桥的配置里，是 DSH 自己的凭据库</span></div>
+      <table><tbody>
+        <tr><td>微信登录</td><td>${e.weixinCredentials ? '<span class="ok">已配置</span>' : '<span class="warn">没找到 WEIXIN_*</span>'}</td></tr>
+        <tr><td>硅基流动 Key</td><td>${e.siliconflowCredential ? '<span class="ok">已配置</span>' : '<span class="warn">没配（只聊天可以不管）</span>'}</td></tr>
+        <tr><td>DSH home</td><td class="mono">${esc(e.dshHome || '')}</td></tr>
+        <tr><td>配置文件</td><td class="mono">${esc(e.patchFile || '')} <span class="tag">${e.patchExists ? '存在' : '不存在'}</span></td></tr>
+      </tbody></table>
+    </div>`;
+  bindFields(root);
+}
+
+// ── 模型 ────────────────────────────────────────────────────────────────────
+function renderModel(root) {
+  const m = S.models ?? { provider:'deepseek-official', models:[], relays:[], current:{} };
+  const options = (m.models ?? []).map((id) => ({ value: id, label: id }));
+  root.innerHTML = `
+    <h2>${isAdvanced() ? '模型' : '用哪个大脑'}</h2>
+    <p class="lead">${isAdvanced()
+      ? '聊天用的 provider/model 路由。第三方中转的 provider id 由适配器注册，这里只列名字，需要时手工填写。'
+      : '选它用哪个大脑。不懂就保持默认——默认这个又快又够用。'}</p>
+    <div class="card">
+      ${options.length ? field('agentModel', {
+        type:'select', options,
+        label:'聊天模型', sub:'来自 DSH settings.yaml 里声明的模型列表。',
+        after:'<div class="hint">选「自定义…」可以直接填一个 id（高级用法，填错会导致它无法回话）。</div>',
+      }) : field('agentModel', { label:'聊天模型', sub:'settings.yaml 里没读到模型列表，手动填一个 id。' })}
+      ${isAdvanced() ? field('agentProvider', { label:'provider', sub:'默认 deepseek-official。用第三方中转时才需要改。' }) : ''}
+      ${isAdvanced() && (m.relays ?? []).length ? `<div class="hint">settings.yaml 里还声明了这些中转：${esc(m.relays.join('、'))}</div>` : ''}
+    </div>
+    ${isAdvanced() ? `<div class="card">
+      <div class="head"><strong>图片识别</strong><span class="hint">给图片用哪条路由，以及识别模式</span></div>
+      ${field('imageInput', { label:'图片输入模式', sub:'auto=能看原生图就看，否则用 OCR；native=强制原生；ocr=只走文字识别。' })}
+      ${field('imageInputModel', { label:'图片专用模型', sub:'留空 = 跟随聊天模型。格式 provider/model。' })}
+    </div>` : ''}`;
+  bindFields(root);
+  // "自定义…" swaps the select for a text box, so a hand-typed id stays possible.
+  root.querySelectorAll('select[data-key]').forEach((sel) => sel.addEventListener('change', () => {
+    if (sel.value !== '__custom__') return;
+    const key = sel.dataset.key;
+    const input = document.createElement('input');
+    input.type = 'text'; input.className = 'mono'; input.dataset.key = key;
+    input.placeholder = F(key).placeholder || 'provider/model 或 model';
+    input.value = sel.dataset.lastReal || (S.models?.current?.model ?? '');
+    sel.replaceWith(input);
+    bindFields(root);
+    input.focus();
   }));
-  tb.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => forgetSession(b.dataset.del)));
-}
-$('#reloadConv').addEventListener('click', loadConversations);
-
-// ── session control (queued to the host process) ────────────────────────────
-
-async function newSession() {
-  const prompt = $('#newSessionPrompt').value.trim();
-  const btn = $('#newSession');
-  btn.disabled = true;
-  try {
-    await api('/api/session/new', { method: 'POST', body: JSON.stringify({ prompt }) });
-    $('#newSessionMsg').innerHTML = '<span class="ok">已排队</span> 桥会在 ≤2 秒内新建会话';
-    $('#newSessionPrompt').value = '';
-    setTimeout(() => { void loadConversations(); void loadReports(); }, 3000);
-  } catch (e) { $('#newSessionMsg').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-  finally { btn.disabled = false; }
-}
-$('#newSession').addEventListener('click', newSession);
-
-async function forgetSession(id) {
-  if (!confirm(`删除会话 ${id}？\n\n会把它移入 $DSH_HOME/sessions-trash/（可手动恢复），并让桥解绑它。`)) return;
-  try {
-    const j = await api('/api/session/forget', { method: 'POST', body: JSON.stringify({ sessionId: id }) });
-    toast(`已删除 ${esc(id)} → 回收站 ${esc(j.trash || '')}`);
-    await loadConversations();
-    await loadReports();
-  } catch (e) { toast('<span class="err">' + esc(e.message) + '</span>'); }
+  root.querySelectorAll('select[data-key]').forEach((sel) => { sel.dataset.lastReal = sel.value; });
 }
 
-async function loadReports() {
-  try {
-    const j = await api('/api/session/box');
-    $('#sessionBox').textContent = j.reports.length === 0
-      ? '（暂无）'
-      : j.reports.map((r) => `${r.at || ''}  ${r.command?.op || '?'}  →  ${r.ok ? 'OK' : 'FAIL'}  ${r.detail || ''}`).join('\n');
-  } catch { /* the report box is decorative */ }
+// ── 记忆 ────────────────────────────────────────────────────────────────────
+function renderMemory(root) {
+  const mem = S.memory ?? { exists:false, facts:0, text:'', file:'' };
+  const time = rawValue('memoryConsolidateTime') || '04:30';
+  root.innerHTML = `
+    <h2>${isAdvanced() ? '长期记忆' : '它记不记得住'}</h2>
+    <p class="lead">${isAdvanced()
+      ? 'MEMORY.md 是跨会话的事实文件：每天自动整理一次，把当天你说过的长期事实挑出来写进去；换会话时它带着走。'
+      : '它会把你亲口说过的重要事情记下来（住哪、习惯、设备、答应过的事），换了对话也还记得。记的是事实，不是聊天记录。'}</p>
+    <div class="card">
+      <div class="head"><strong>记住的内容</strong><span class="hint">${mem.exists ? `${mem.facts} 条` : '还没有记忆文件'}</span>
+        <span class="spacer"></span><button class="mini" id="reloadMem">刷新</button></div>
+      <pre>${mem.exists ? esc(mem.text) : '还没开始记。聊几天就会出现。'}</pre>
+      <div class="hint">文件：<span class="mono">${esc(mem.file || '')}</span>（可以直接用记事本改，改完它下一次注入就用新的）</div>
+    </div>
+    <div class="card">
+      <div class="head"><strong>什么时候整理</strong><span class="hint">整理 = 用当天聊的内容更新上面的文件</span></div>
+      ${field('memoryConsolidateTime', {
+        label:'每天整理时间', sub:'24 小时制 HH:MM。留空 = 不自动整理（记忆还在，只是不会自动更新）。',
+        after: `<div class="hint">出厂默认 04:30。要求：距当天最后一条消息 2 小时以上、且当天至少有 5 句"你说的话"，否则跳过（不浪费模型调用）。</div>`,
+      })}
+      ${field('memoryInjectEvery', { label:'多久提醒它一次', sub:'每 N 条消息把记忆作为背景重新注入一次。改了记忆或换了会话时会立刻注入。' })}
+      ${isAdvanced() ? field('memoryFile', { label:'记忆文件路径', sub:'默认 $DSH_HOME/wechat-memory/MEMORY.md。' }) : ''}
+    </div>`;
+  bindFields(root);
+  $('#reloadMem').addEventListener('click', async () => { await loadMemory(); renderMemory(root); });
 }
-$('#reloadBox').addEventListener('click', loadReports);
 
-// ── context schemes ─────────────────────────────────────────────────────────
-
-let SELECTED = null;
-
-/** Editable knobs, with the unit and range that actually makes sense. */
-const KNOB_META = {
-  turns:        { type: 'number', label: '轮数上限', min: 1 },
-  tokenBudget:  { type: 'number', label: 'token 预算（上下文达到即换）', min: 1000 },
-  pressureRatio:{ type: 'number', label: '上下文占比阈值（0–1）', min: 0.05, max: 1, step: 0.05 },
-  idleHours:    { type: 'number', label: '空闲小时数', min: 1 },
-  handoff:      { type: 'boolean', label: '换会话时生成要点交接' },
-  announce:     { type: 'boolean', label: '在微信里播报轮换' },
-  idleOnly:     { type: 'boolean', label: '仅在空闲时轮换（推荐开）' },
+// ── 上下文方案 ──────────────────────────────────────────────────────────────
+const SCHEME_PLAIN = {
+  manual: { who:'simple', title:'一直用同一个对话', body:'不自动换对话。它记得的东西全在，也不会"聊着聊着换人"。上下文满了由 DSH 自动压缩（保留最近一大段原文）。' },
+  'rotate-turns': { who:'simple', title:'聊久了自动开新对话', body:'每 20 轮、且你不在等回复时，自动开一段新对话并告诉你一声。旧的还在，/sessions 能切回去。' },
 };
 
-function renderKnobs() {
-  if (!SELECTED) { $('#knobs').innerHTML = ''; $('#knobFor').textContent = '先点一个方案'; return; }
-  $('#knobFor').textContent = `${SELECTED.id} · ${SELECTED.label}`;
-  $('#knobs').innerHTML = Object.entries(SELECTED.knobs).map(([key, value]) => {
-    const meta = KNOB_META[key] || { type: typeof value === 'boolean' ? 'boolean' : 'number', label: key };
-    const input = meta.type === 'boolean'
-      ? `<input type="checkbox" data-knob="${key}" ${value ? 'checked' : ''}>`
-      : `<input type="text" data-knob="${key}" value="${esc(String(value))}" style="max-width:200px">`;
-    return `<label title="${esc(key)}">${esc(meta.label)}</label><div class="row">${input}</div>`;
-  }).join('');
+function renderContext(root) {
+  const schemes = S.data?.schemes ?? [];
+  const active = S.data?.activeScheme ?? 'manual';
+  const selected = S.selectedScheme ?? active;
+  const simple = ['manual', 'rotate-turns'];
+  const shown = isAdvanced() ? schemes : schemes.filter((s) => simple.includes(s.id));
+  root.innerHTML = `
+    <h2>${isAdvanced() ? '上下文方案' : '聊久了怎么办'}</h2>
+    <p class="lead">${isAdvanced()
+      ? '上下文方案决定会话何时轮换（换 = 开新会话，旧会话仍在磁盘上）。点卡片立即按默认参数应用，或展开参数自己调。'
+      : '对话太长会变慢变贵，所以有个"什么时候开新对话"的选择。不确定就选第一个。'}</p>
+    <div class="card">
+      <div class="choices">
+        ${shown.map((s) => {
+          const plain = SCHEME_PLAIN[s.id];
+          const title = (!isAdvanced() && plain) ? plain.title : s.label;
+          const body = (!isAdvanced() && plain) ? plain.body : s.summary;
+          return `<div class="choice ${s.id === selected ? 'on' : ''}" data-id="${esc(s.id)}">
+            <b>${s.id === active ? '● ' : ''}${esc(title)}</b>
+            <span>${esc(body)}</span>
+            ${isAdvanced() ? `<div class="dim2 mono" style="margin-top:5px;font-size:11.5px">${esc(JSON.stringify(s.knobs))}</div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="row" style="margin-top:12px;display:flex;gap:10px;align-items:center">
+        <button class="act" id="applyScheme">用这个方案</button>
+        <span class="dim" id="schemeMsg">当前：${esc(active)}</span>
+      </div>
+    </div>
+    ${isAdvanced() ? `<div class="card">
+      <div class="head"><strong>参数微调</strong><span class="hint" id="knobFor">先点一个方案</span></div>
+      <div id="knobs" class="grid2"></div>
+      ${field('contextPolicy', { label:'原始 JSON', sub:'这行就是写进 profile 的最终值；手改它会覆盖上面的选择。', rows: 2 })}
+    </div>` : ''}`;
+
+  const pick = (id) => { S.selectedScheme = id; renderContext(root); };
+  root.querySelectorAll('.choice').forEach((el) => el.addEventListener('click', () => pick(el.dataset.id)));
+  if (isAdvanced()) {
+    bindFields(root);
+    renderKnobs();
+    // The raw JSON field shows what is actually stored. It used to be
+    // overwritten with the newly clicked scheme, which made it differ from the
+    // baseline bindFields() had just recorded: a phantom "unsaved change" that
+    // would apply the scheme on the next save without the user asking.
+  }
+  $('#applyScheme').addEventListener('click', async () => {
+    const id = S.selectedScheme ?? active;
+    if (!id) { toast('先点一个方案'); return; }
+    const overrides = isAdvanced() ? readKnobs() : undefined;
+    try {
+      const j = await api('/api/scheme', { method: 'POST', body: JSON.stringify({ scheme: id, overrides }) });
+      $('#schemeMsg').innerHTML = `<span class="ok">已应用</span> ${esc(JSON.stringify(j.policy))}`;
+      toast('已应用上下文方案');
+      await loadAll();
+    } catch (e) { $('#schemeMsg').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  });
 }
 
+let SELECTED = null;
+const KNOB_META = {
+  turns:        { type:'number', label:'轮数上限', min:1, hint:'满多少轮就换对话' },
+  tokenBudget:  { type:'number', label:'token 预算', min:1000, hint:'上下文到这个数就换' },
+  pressureRatio:{ type:'number', label:'上下文占比', min:0.05, max:1, step:0.05, hint:'占窗口的百分比，0–1' },
+  idleHours:    { type:'number', label:'空闲小时', min:1, hint:'多久没说话才算空闲' },
+  handoff:      { type:'boolean', label:'生成要点交接', hint:'换对话前让旧对话产出一段要点，多一次模型调用' },
+  announce:     { type:'boolean', label:'在微信里播报', hint:'换对话时告诉你一声' },
+  idleOnly:     { type:'boolean', label:'只在空闲时换（推荐）', hint:'正在处理任务时不换，避免把活切成两半' },
+};
+function renderKnobs() {
+  // Knob edits are remembered per scheme, so switching cards to compare them
+  // does not silently throw away what was already typed.
+  S.knobs ??= {};
+  const box = $('#knobs');
+  const label = $('#knobFor');
+  if (!box) return;
+  const id = S.selectedScheme ?? S.data?.activeScheme;
+  const scheme = (S.data?.schemes ?? []).find((s) => s.id === id);
+  SELECTED = scheme ?? null;
+  if (!scheme) { box.innerHTML = ''; if (label) label.textContent = '先点一个方案'; return; }
+  if (label) label.textContent = `${scheme.id} · ${scheme.label}`;
+  box.innerHTML = Object.entries(scheme.knobs).map(([key, value]) => {
+    const meta = KNOB_META[key] || { type: typeof value === 'boolean' ? 'boolean' : 'number', label:key };
+    const remembered = S.knobs[scheme.id]?.[key];
+    const shown = remembered === undefined ? value : remembered;
+    const control = meta.type === 'boolean'
+      ? `<label class="check"><input type="checkbox" data-knob="${esc(key)}" ${shown ? 'checked' : ''}> ${esc(meta.label)}</label>`
+      : `<input type="number" data-knob="${esc(key)}" class="mono" style="max-width:140px" value="${esc(String(shown))}">`;
+    return `<div class="stat"><div class="k">${esc(meta.label)}${remembered === undefined ? '' : ' <span class="tag warn">已改</span>'}</div><div style="margin-top:5px">${control}</div>
+      <div class="dim2" style="margin-top:4px">${esc(meta.hint || '')}</div></div>`;
+  }).join('');
+  // Collect as the user types so the values survive a re-render and the apply
+  // button always sends what is on screen.
+  box.querySelectorAll('[data-knob]').forEach((el) => el.addEventListener('change', () => {
+    const id2 = scheme.id;
+    S.knobs[id2] ??= {};
+    S.knobs[id2][el.dataset.knob] = el.type === 'checkbox' ? el.checked : Number(el.value.trim());
+  }));
+}
 function readKnobs() {
   const out = {};
   document.querySelectorAll('[data-knob]').forEach((el) => {
     const key = el.dataset.knob;
     if (el.type === 'checkbox') out[key] = el.checked;
-    else {
-      const n = Number(el.value.trim());
-      if (Number.isFinite(n)) out[key] = n;
-    }
+    else { const n = Number(el.value.trim()); if (Number.isFinite(n)) out[key] = n; }
   });
   return out;
 }
 
-async function applyScheme(scheme, overrides) {
-  try {
-    const j = await api('/api/scheme', { method: 'POST', body: JSON.stringify({ scheme, overrides }) });
-    $('#schemeMsg').innerHTML = `<span class="ok">已应用</span> ${esc(JSON.stringify(j.policy))}`;
-    toast(`已切到「${scheme}」：${esc(JSON.stringify(j.policy))}`);
-    await load();
-    if (SELECTED) renderKnobs();
-  } catch (e) { $('#schemeMsg').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+// ── 对话 ────────────────────────────────────────────────────────────────────
+function renderChat(root) {
+  const convs = S.data?.conversations ?? [];
+  root.innerHTML = `
+    <h2>对话</h2>
+    <p class="lead">磁盘上的微信会话。删除 = 移入回收站（可手动恢复），并让宿主进程解绑它。</p>
+    <div class="card">
+      <div class="head"><strong>会话</strong><span class="hint">${convs.length} 个</span>
+        <span class="spacer"></span><button class="mini" id="reloadConv">刷新</button></div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <input type="text" id="newPrompt" placeholder="新会话的初始提示词（可留空）">
+        <button class="act" id="newSession">新建会话</button>
+        <span class="dim" id="newMsg"></span>
+      </div>
+      <table><thead><tr><th>会话</th><th>标题</th><th>轮次</th><th>输出</th><th>大小</th><th>最后活动</th><th></th></tr></thead>
+      <tbody>${convs.map((c) => `<tr class="pick" data-id="${esc(c.id)}">
+        <td class="mono">${esc(c.id)}</td><td>${esc(c.title || '—')}</td><td class="mono">${c.turns}</td>
+        <td class="mono">${c.outputTokens}</td><td class="mono">${(c.bytes/1024).toFixed(0)}K</td>
+        <td class="dim">${esc(new Date(c.lastActivity).toLocaleString())}</td>
+        <td><button class="mini danger" data-del="${esc(c.id)}">删除</button></td></tr>`).join('')}</tbody></table>
+    </div>
+    <div class="card">
+      <div class="head"><strong>转录</strong><span class="hint mono" id="tid">未选择</span></div>
+      <pre id="transcript">点上面任意一行，看这段对话最近的 60 条消息。</pre>
+    </div>
+    <div class="card">
+      <div class="head"><strong>桥侧命令回执</strong><span class="hint">新建/删除由宿主进程执行</span>
+        <span class="spacer"></span><button class="mini" id="reloadBox">刷新</button></div>
+      <pre id="sessionBox">（暂无）</pre>
+    </div>`;
+  const rows = root.querySelectorAll('tr.pick');
+  rows.forEach((tr) => tr.addEventListener('click', async (ev) => {
+    if (ev.target.closest('[data-del]')) return;
+    rows.forEach((x) => x.classList.toggle('sel', x === tr));
+    $('#tid').textContent = tr.dataset.id;
+    $('#transcript').textContent = '载入中…';
+    try {
+      const t = await api('/api/transcript?id=' + encodeURIComponent(tr.dataset.id));
+      $('#transcript').innerHTML = t.messages.length === 0 ? '（无可显示消息）' : t.messages.map((m) =>
+        `<div><b class="${m.role === 'user' ? 'ok' : 'dim'}">${m.role === 'user' ? '微信用户' : '助手'}：</b>${esc(m.text)}</div>`).join('');
+    } catch (e) { $('#transcript').textContent = '读取失败：' + e.message; }
+  }));
+  root.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => forget(b.dataset.del)));
+  $('#reloadConv').addEventListener('click', async () => { await loadState(); renderChat(root); });
+  $('#reloadBox').addEventListener('click', loadReports);
+  $('#newSession').addEventListener('click', async () => {
+    const prompt = $('#newPrompt').value.trim();
+    try {
+      await api('/api/session/new', { method: 'POST', body: JSON.stringify({ prompt }) });
+      $('#newMsg').innerHTML = '<span class="ok">已排队</span>';
+      toast('已排队，桥会在 ≤2 秒内新建会话');
+      setTimeout(async () => { await loadState(); await loadReports(); renderChat(root); }, 3000);
+    } catch (e) { $('#newMsg').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  });
+  void loadReports();
 }
-$('#applyScheme').addEventListener('click', () => {
-  if (!SELECTED) { toast('先点一个方案卡片'); return; }
-  void applyScheme(SELECTED.id, readKnobs());
-});
 
-function renderSchemes() {
-  $('#schemes').innerHTML = STATE.schemes.map((s) => `<div class="scheme ${s.id === STATE.activeScheme ? 'on' : ''}" data-id="${s.id}">
-      <h3>${s.id === STATE.activeScheme ? '● ' : ''}${esc(s.label)}</h3>
-      <div class="dim">${esc(s.summary)}</div>
-      <div class="dim" style="margin-top:6px">默认参数：${esc(JSON.stringify(s.knobs))}</div>
-    </div>`).join('');
-  $('#policyNow').textContent = '当前方案：' + STATE.activeScheme;
-  document.querySelectorAll('.scheme').forEach((el) => el.addEventListener('click', () => {
-    SELECTED = STATE.schemes.find((s) => s.id === el.dataset.id) || null;
-    renderKnobs();
-    // Clicking a card switches immediately with its defaults (fast path); the
-    // editor below is for tuning afterwards.
-    void applyScheme(el.dataset.id, undefined);
+async function forget(id) {
+  if (!confirm(`删除会话 ${id}？\n\n会移入 $DSH_HOME/sessions-trash/（可手动恢复），并让桥解绑。`)) return;
+  try {
+    const j = await api('/api/session/forget', { method: 'POST', body: JSON.stringify({ sessionId: id }) });
+    toast(`已删除 ${esc(id)} → ${esc(j.trash || '回收站')}`);
+    await loadState(); go('chat');
+  } catch (e) { toast('<span class="err">' + esc(e.message) + '</span>'); }
+}
+
+async function loadReports() {
+  const box = $('#sessionBox');
+  if (!box) return;
+  try {
+    const j = await api('/api/session/box');
+    box.textContent = j.reports.length === 0 ? '（暂无）'
+      : j.reports.map((r) => `${r.at || ''}  ${r.command?.op || '?'} → ${r.ok ? 'OK' : 'FAIL'}  ${r.detail || ''}`).join('\n');
+  } catch { box.textContent = '（读取失败）'; }
+}
+
+// ── 全部配置项（高级） ──────────────────────────────────────────────────────
+function renderFields(root) {
+  const groups = {};
+  for (const f of S.data?.fields ?? []) (groups[f.group] ||= []).push(f);
+  root.innerHTML = `
+    <h2>全部配置项</h2>
+    <p class="lead">桥能读到的每一个键。带「已改」的项会在保存时写进 profile patch；留空 = 从配置里删掉该键（回到默认值）。密码类字段显示为掩码，点"显示"才读取明文。</p>
+    ${Object.entries(groups).map(([g, fields]) => `<div class="card">
+      <div class="head"><strong>${esc(g)}</strong><span class="hint">${fields.length} 项</span></div>
+      ${fields.map((f) => field(f.key)).join('')}
+    </div>`).join('')}`;
+  bindFields(root);
+}
+
+// ── 诊断 ────────────────────────────────────────────────────────────────────
+function renderDiag(root) {
+  const p = S.problems ?? { lines:[], file:'', exists:false, rotated:false };
+  const e = S.data?.environment ?? {};
+  const backups = S.backups?.backups ?? [];
+  const lines = p.lines ?? [];
+  root.innerHTML = `
+    <h2>${isAdvanced() ? '诊断与备份' : '出问题了'}</h2>
+    <p class="lead">${isAdvanced()
+      ? '桥把每一次被吞掉的失败都写进了问题日志（它是"有痕迹"的落点）。这里能看原文、能回滚配置。'
+      : '它出问题时不会装作没事——都会记在这个文件里。想让它修好，先把这里的报错发给我。'}</p>
+
+    <div class="card">
+      <div class="head"><strong>问题记录</strong><span class="hint">${lines.length} 行 · 日志会自动轮转，不会撑爆磁盘</span>
+        <span class="spacer"></span><button class="mini" id="reloadProblems">刷新</button></div>
+      ${lines.length === 0 ? '<div class="ok">最近没有记录到问题。</div>' : `<pre>${esc(lines.slice(-120).join('\n'))}</pre>`}
+      <div class="hint">文件：<span class="mono">${esc(p.file || '')}</span>${p.rotated ? '（上一份在 .1）' : ''}</div>
+    </div>
+
+    <div class="card">
+      <div class="head"><strong>宿主状态</strong><span class="hint">桥下次启动时会看到的</span></div>
+      <table><tbody>
+        <tr><td>DSH home</td><td class="mono">${esc(e.dshHome || '')}</td></tr>
+        <tr><td>profile</td><td class="mono">${esc(e.profile || '')}</td></tr>
+        <tr><td>patch 文件</td><td class="mono">${esc(e.patchFile || '')} <span class="tag">${e.patchExists ? '存在' : '不存在'}</span></td></tr>
+        <tr><td>preset</td><td class="mono">${esc(e.preset || '')} <span class="${e.presetExists ? 'ok' : 'err'}">${e.presetExists ? '已就位' : '缺失'}</span></td></tr>
+        <tr><td>白名单</td><td>${(e.allowFrom ?? []).map(esc).join('、') || '<span class="warn">空</span>'}</td></tr>
+        <tr><td>微信凭据</td><td>${e.weixinCredentials ? '<span class="ok">已配置</span>' : '<span class="warn">未找到</span>'}</td></tr>
+      </tbody></table>
+    </div>
+
+    ${isAdvanced() ? `<div class="card">
+      <div class="head"><strong>配置备份与回滚</strong><span class="hint">每次保存自动保留最近 5 份，下面按时间倒序列出（回滚前会再存一份当前配置）</span>
+        <span class="spacer"></span><button class="mini" id="reloadBackups">刷新</button></div>
+      <table><thead><tr><th>备份</th><th>时间</th><th>大小</th><th></th></tr></thead><tbody>
+        ${backups.length === 0 ? '<tr><td colspan="4" class="dim">还没有备份（保存一次就会出现）</td></tr>' : backups.map((b) => `<tr>
+          <td class="mono">${esc(b.name)}</td><td class="dim">${esc(new Date(b.at).toLocaleString())}</td>
+          <td class="mono">${(b.bytes/1024).toFixed(1)}K</td>
+          <td><button class="mini" data-restore="${esc(b.name)}">回滚到这个版本</button></td></tr>`).join('')}
+      </tbody></table>
+      <div class="hint">回滚会先把当前配置另存为一份新备份，所以回滚本身也可以再回滚。</div>
+    </div>` : ''}`;
+
+  $('#reloadProblems').addEventListener('click', async () => { await loadProblems(); renderDiag(root); });
+  const rb = $('#reloadBackups');
+  if (rb) rb.addEventListener('click', async () => { await loadBackups(); renderDiag(root); });
+  root.querySelectorAll('[data-restore]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm(`回滚到 ${b.dataset.restore}？\n\n当前配置会先自动备份一份。`)) return;
+    try {
+      const j = await api('/api/rollback', { method: 'POST', body: JSON.stringify({ name: b.dataset.restore }) });
+      toast(`已回滚到 ${esc(j.restored)}（当前状态存为 ${esc(j.safety)}）`);
+      await loadAll(); go('diag');
+    } catch (e) { toast('<span class="err">' + esc(e.message) + '</span>'); }
   }));
 }
 
-async function load() {
-  STATE = await api('/api/state');
-  renderEnv(); renderFields(); renderSchemes();
+// ── loaders ─────────────────────────────────────────────────────────────────
+async function loadState() { S.data = await api('/api/state'); renderHeaderPills(); }
+async function loadHealth() { S.health = await api('/api/health'); renderHeaderPills(); }
+async function loadProblems() { try { S.problems = await api('/api/problems?limit=300'); } catch { S.problems = { lines:[], file:'' }; } }
+async function loadMemory() { try { S.memory = await api('/api/memory'); } catch { S.memory = null; } }
+async function loadModels() { try { S.models = await api('/api/models'); } catch { S.models = null; } }
+async function loadBackups() { try { S.backups = await api('/api/backups'); } catch { S.backups = null; } }
+function renderHeaderPills() {
+  const h = S.health;
+  $('#healthDot').className = 'dot ' + (h ? (h.ok ? 'ok' : 'bad') : '');
+  $('#healthText').textContent = h ? h.summary : '体检中…';
+  const e = S.data?.environment;
+  $('#patchPill').innerHTML = e ? `patch <span class="mono">${esc(String(e.patchFile || '').split(/[\\/]/).pop())}</span>` : '';
 }
-load().catch((e) => toast('<span class="err">加载失败：' + esc(e.message) + '</span>'));
+
+async function loadAll() {
+  // Individually guarded: one failing endpoint must not blank the whole console,
+  // because the endpoint most likely to fail is the one that explains why.
+  const results = await Promise.allSettled([loadState(), loadHealth(), loadProblems(), loadMemory(), loadModels(), loadBackups()]);
+  const failed = results.filter((r) => r.status === 'rejected');
+  if (!S.data) {
+    const first = failed[0];
+    $('#main').innerHTML = `<div class="banner">读不到配置：${esc(first?.reason?.message ?? '管理台服务没有响应')}<br>
+      确认管理台进程还在跑（<span class="mono">node admin/server.ts</span>），然后刷新本页。</div>`;
+    return;
+  }
+  if (failed.length > 0) toast(`<span class="warn">有 ${failed.length} 个面板没能加载</span>（其余照常可用）`);
+  renderHeaderPills();
+  const s = SECTIONS.find((x) => x.id === S.section);
+  if (s) s.render($('#main'));
+  else go('overview');
+}
+
+// ── mode + boot ─────────────────────────────────────────────────────────────
+S.mode = localStorage.getItem('wechat-admin-mode') === 'advanced' ? 'advanced' : 'simple';
+
+function renderModes() {
+  $('#modes').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === S.mode));
+}
+$('#modes').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+  S.mode = b.dataset.mode;
+  localStorage.setItem('wechat-admin-mode', S.mode);
+  renderModes();
+  if (!isAdvanced() && ['context','chat','fields'].includes(S.section)) S.section = 'overview';
+  renderNav();
+  go(S.section);
+}));
+$('#saveBtn').addEventListener('click', save);
+$('#revertBtn').addEventListener('click', async () => { S.dirty = {}; await loadAll(); updateSaveBar(); toast('已放弃未保存的修改'); });
+window.addEventListener('beforeunload', (e) => { if (Object.keys(S.dirty).length > 0) { e.preventDefault(); e.returnValue = ''; } });
+
+renderModes();
+renderNav();
+loadAll().catch((e) => {
+  const hint = /forbidden/i.test(e.message)
+    ? '令牌不对：请用管理台启动时打印的那个带 token 的地址打开，或直接访问 http://127.0.0.1:8790/（只允许本机打开）。'
+    : '确认管理台进程还在跑，然后刷新本页。';
+  $('#main').innerHTML = `<div class="banner">加载失败：${esc(e.message)}<br>${esc(hint)}</div>`;
+});
 </script>
 </body>
 </html>

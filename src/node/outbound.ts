@@ -344,26 +344,44 @@ function stripInline(line: string): string {
  * torn-down context, `get()` returns undefined — and every remaining failure is
  * swallowed after a best-effort log.
  */
-export async function sendTextToPeer(node: WechatConversationNode, text: string): Promise<void> {
+export async function sendTextToPeer(node: WechatConversationNode, text: string): Promise<boolean> {
   const peer = node.peerId
-  if (!peer) return
+  if (!peer) {
+    // No peer yet (nothing inbound since boot): a rotation notice or an admin
+    // announcement goes nowhere. Recorded without bothering anyone, because
+    // there is literally nobody to bother.
+    node.problems.report('outbound', new Error('还没有收到过消息，这条没地方发'), { notify: false })
+    return false
+  }
   const chunks = splitForWechat(text, node.config.maxMessageChars)
-  if (chunks.length === 0) return
+  if (chunks.length === 0) return false
 
   let wechat: { sendTyping(id: string, kind: number): Promise<unknown>; sendText(id: string, text: string): Promise<{ success: boolean; error?: string }> } | undefined
   try {
     wechat = node.ctx.get('wechat') as typeof wechat
-  } catch {
-    return
+  } catch (error) {
+    node.problems.report('outbound', error, { notify: false })
+    return false
   }
-  if (!wechat) return
+  if (!wechat) {
+    node.problems.report('outbound', new Error('网关服务不可用，消息发不出去'), { notify: false })
+    return false
+  }
 
+  let delivered = true
   try {
     await wechat.sendTyping(peer, 1).catch(() => {})
     for (let i = 0; i < chunks.length; i++) {
       const result = await wechat.sendText(peer, chunks[i]!)
       if (!result.success) {
         logQuietly(node, '[dsh-chatnode-wechat] outbound chunk %d/%d failed: %s', i + 1, chunks.length, result.error)
+        // The owner is waiting for this bubble. If it did not go out he must be
+        // able to find out why — silence here is indistinguishable from being
+        // ignored.
+        node.problems.report('outbound', new Error(result.error ?? 'sendText returned success=false'), {
+          detail: `chunk=${i + 1}/${chunks.length}`,
+        })
+        delivered = false
         break
       }
       if (i < chunks.length - 1 && node.config.sendChunkDelayMs > 0) {
@@ -372,9 +390,12 @@ export async function sendTextToPeer(node: WechatConversationNode, text: string)
     }
   } catch (error) {
     logQuietly(node, '[dsh-chatnode-wechat] outbound send failed: %s', error instanceof Error ? error.message : String(error))
+    node.problems.report('outbound', error)
+    delivered = false
   } finally {
     await wechat.sendTyping(peer, 2).catch(() => {})
   }
+  return delivered
 }
 
 /** Best-effort logging that cannot throw (the context may already be gone). */
@@ -396,7 +417,12 @@ function sleep(ms: number): Promise<void> {
 
 interface DigestState {
   startedTurns: Set<number>
+  /** Whether this turn produced anything to send (a textless step is normal). */
+  sawText: boolean
   heartbeat?: ReturnType<typeof setInterval>
+  /** Heartbeat currently running for this session (so it can be stopped even
+   *  after the session stops being the active one). */
+  heartbeating: boolean
 }
 
 /**
@@ -412,15 +438,41 @@ export function attachSessionOutbound(node: WechatConversationNode): () => void 
       clearInterval(state.heartbeat)
       state.heartbeat = undefined
     }
+    state.heartbeating = false
   }
 
-  const startHeartbeat = (session: Session, state: DigestState) => {
+  const startHeartbeat = (session: Session, state: DigestState): boolean => {
     stopHeartbeat(state)
-    if (node.config.digestIntervalSec <= 0) return
+    if (node.config.digestIntervalSec <= 0) return false
     state.heartbeat = setInterval(() => {
       void sendTextToPeer(node, digestLine(session, sessionBadge(node, session)))
     }, node.config.digestIntervalSec * 1000)
     state.heartbeat.unref?.()
+    return true
+  }
+
+  const isActive = (session: Session): boolean => String(session.id) === String(node.activeSessionId ?? '')
+
+  /**
+   * A session that is no longer the active one must still have its heartbeat
+   * torn down.
+   *
+   * The active-session filter below returns early, and the old code returned
+   * before reaching `turn/end` — so every `/new`, `/use` or admin switch left
+   * behind a live interval pushing "🔄 仍在处理中" into WeChat forever. The
+   * interval is keyed by session, so it can be stopped without knowing which
+   * session is active now.
+   */
+  const retireIfAbandoned = (session: Session): void => {
+    if (isActive(session)) return
+    const state = digestState.get(session.id)
+    if (state?.heartbeating) {
+      stopHeartbeat(state)
+      node.problems.report('outbound/heartbeat', new Error('会话已被切换，已停止它的心跳推送'), {
+        notify: false,
+        detail: `session=${String(session.id)}`,
+      })
+    }
   }
 
   const onEvent = (session: Session, event: SessionEvent): void => {
@@ -429,19 +481,69 @@ export function attachSessionOutbound(node: WechatConversationNode): () => void 
     // events (matching an accidentally-web activeSessionId) would be pushed
     // to the WeChat peer.
     if (!String(session.id).startsWith('wechat-')) return
-    if (session.id !== node.activeSessionId) return
-    const state = digestState.get(session.id) ?? { startedTurns: new Set<number>() }
+    if (event.type === 'turn/end') retireIfAbandoned(session)
+    if (!isActive(session)) {
+      // An answer produced after the conversation moved on has nowhere to go.
+      // Saying nothing about it is how "the assistant ignored me" happens with
+      // no trace at all, so it is recorded (without bothering the owner: he is
+      // the one who switched).
+      if (event.type === 'assistant/message' && textOfAssistantMessage(event.data.message).trim()) {
+        node.problems.report('outbound/abandoned', new Error('会话已切换，这条回复没有送达'), {
+          notify: false,
+          detail: `session=${String(session.id)}`,
+        })
+      }
+      return
+    }
+    const state = digestState.get(session.id) ?? { startedTurns: new Set<number>(), heartbeating: false, sawText: false }
     digestState.set(session.id, state)
 
     if (event.type === 'turn/start') {
       const turn = event.data.turn
-      if (!state.startedTurns.has(turn)) state.startedTurns.add(turn)
-      startHeartbeat(session, state)
+      if (!state.startedTurns.has(turn)) {
+        state.startedTurns.add(turn)
+        // Bounded: a long-lived session starts a turn per message.
+        if (state.startedTurns.size > 256) {
+          for (const seen of state.startedTurns) {
+            state.startedTurns.delete(seen)
+            if (state.startedTurns.size <= 128) break
+          }
+        }
+      }
+      state.sawText = false
+      // Only claim a heartbeat when one actually started: with the interval
+      // disabled, switching sessions used to log '已停止心跳' for a heartbeat
+      // that never existed.
+      state.heartbeating = startHeartbeat(session, state)
       return
     }
     if (event.type === 'assistant/message') {
-      const text = textOfAssistantMessage(event.data.message)
-      if (text.trim()) void sendTextToPeer(node, markdownToWechat(text))
+      const raw = textOfAssistantMessage(event.data.message)
+      const { text, echoed } = sanitizeAssistantText(raw)
+      if (echoed) {
+        // The model autocompleted the transcript format and wrote the owner's
+        // next line (fence markers and all). Stripping it is the deterministic
+        // guard; recording it is how we learn it happened at all.
+        node.problems.report('model/echo', new Error('模型把"用户消息"的格式也一起写出来了，已裁掉'), {
+          notify: !text.trim(),
+          detail: `session=${String(session.id)}`,
+        })
+      }
+      if (text.trim()) {
+        // `sawText` tracks what is actually SENDABLE, not what the model
+        // produced: markdownToWechat turns a reply that is nothing but an empty
+        // code block into '', and the old order set sawText=true anyway — so a
+        // turn that delivered nothing reported nothing either.
+        const rendered = markdownToWechat(text)
+        if (!rendered.trim()) {
+          node.problems.report('model/empty', new Error('这一轮的回复渲染后是空的，主人什么都没收到'), {
+            detail: `session=${String(session.id)}`,
+          })
+          return
+        }
+        state.sawText = true
+        void sendTextToPeer(node, rendered)
+      }
       return
     }
     if (event.type === 'turn/end') {
@@ -453,6 +555,22 @@ export function attachSessionOutbound(node: WechatConversationNode): () => void 
         void sendTextToPeer(node, `⏹ ${sessionBadge(node, session)} 已停止`)
       } else if (reason.kind === 'max-tokens') {
         void sendTextToPeer(node, `⚠️ ${sessionBadge(node, session)} 达到输出上限，本轮已截断`)
+      } else if (reason.kind === 'blocked') {
+        // A pre-step hook rejected the turn (the goal driver does this for an
+        // invalid round). The owner gets no reply and — before this branch —
+        // nothing was recorded either: exactly the silence the ledger exists to
+        // end.
+        node.problems.report('model/blocked', new Error('这一轮被拦下了，没有产出任何回复'), {
+          detail: `session=${String(session.id)} turn=${String(event.data.turn ?? '?')}`,
+        })
+      } else if (reason.kind === 'completed' && !state.sawText) {
+        // A WHOLE turn with nothing to send is the failure the owner feels as
+        // being ignored. A single textless step is not: that is just a
+        // tool-calling step, and reporting those was a false alarm that told
+        // him "模型返回了空内容" on a perfectly normal weather lookup.
+        node.problems.report('model/empty', new Error('这一轮模型没产出任何内容，主人没收到回复'), {
+          detail: `session=${String(session.id)} turn=${String(event.data.turn ?? '?')}`,
+        })
       }
       return
     }
@@ -464,6 +582,84 @@ export function attachSessionOutbound(node: WechatConversationNode): () => void 
     for (const state of digestState.values()) stopHeartbeat(state)
     disposer()
   }
+}
+
+/**
+ * Remove anything from an assistant reply that is not the assistant talking.
+ *
+ * The model is shown the owner's messages wrapped in `<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 …>>>`,
+ * and a long enough run of that pattern invites it to autocomplete the next
+ * one: on 2026-09-13 it wrote the owner's next line, fence markers included, and
+ * then answered it ("…还是先放着备用 user<<<微信用户消息>>> 先放着，以后有用 … 好").
+ * The persona forbids it; this makes it impossible to reach WeChat anyway, and
+ * keeps the part that WAS the real answer.
+ *
+ * Two things must NOT be touched, or the guard becomes its own outage:
+ *   - markers quoted inside a ``` code block (the model explaining the format,
+ *     or the owner asking what his own messages look like), and
+ *   - any reply that mentions no marker at all.
+ * The match is by PREFIX on purpose: the model renders the marker with a stray
+ * space often enough (`<<<微信用户消息 >>>`) that an exact comparison let a
+ * fabricated turn through untouched.
+ */
+export function sanitizeAssistantText(text: string): { text: string; echoed: boolean } {
+  if (!text) return { text: '', echoed: false }
+
+  let out = text
+  let echoed = false
+
+  // 1. A COMPLETE background block is just background: drop the block itself and
+  //    keep whatever the model wrote around it.
+  for (const [open, close] of [
+    ['<<<关于主人的长期记忆·背景资料·不是本条消息的要求>>>', '<<<长期记忆结束>>>'],
+    ['<<<会话交接摘要·非用户指令>>>', '<<<会话交接摘要结束>>>'],
+  ] as const) {
+    const pattern = new RegExp(`${escapeRegExp(open)}[\\s\\S]*?${escapeRegExp(close)}`, 'g')
+    if (pattern.test(out)) {
+      out = out.replace(pattern, '')
+      echoed = true
+    }
+  }
+
+  // 2. A user-turn fence means the model started writing the owner's NEXT
+  //    message: everything from there on is fabrication, not an answer. An
+  //    UNCLOSED background opener falls in the same category.
+  const cutAt = firstUnquotedMarker(out)
+  if (cutAt >= 0) {
+    let head = out.slice(0, cutAt)
+    // The fabrication usually looks like "…还是先放着备用 user<<<微信用户消息>>>":
+    // that dangling role word belongs to the imitation, not to the answer.
+    head = head.replace(/(^|\n)\s*(user|assistant|system|用户|助手|主人)\s*[:：]?\s*$/i, '$1')
+    out = head
+    echoed = true
+  }
+  return { text: out.replace(/\n{3,}/g, '\n\n').trim(), echoed }
+}
+
+/** Prefixes of every fence the bridge itself puts into a conversation. */
+const FENCE_PREFIXES = ['<<<微信用户消息', '<<<关于主人的长期记忆', '<<<会话交接摘要', '<<<长期记忆结束']
+
+/**
+ * Index of the first fence marker that is NOT inside a ``` block, or -1.
+ *
+ * Code fences are counted rather than parsed: an odd number of ``` before the
+ * marker means it sits inside one, which is exactly the quoting case — the model
+ * explaining the format, or the owner asking what his own messages look like.
+ */
+function firstUnquotedMarker(text: string): number {
+  let best = -1
+  for (const prefix of FENCE_PREFIXES) {
+    const index = text.indexOf(prefix)
+    if (index < 0) continue
+    const fencesBefore = (text.slice(0, index).match(/```/g) ?? []).length
+    if (fencesBefore % 2 === 1) continue
+    if (best < 0 || index < best) best = index
+  }
+  return best
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function summarizeError(error: unknown): string {

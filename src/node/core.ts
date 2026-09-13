@@ -35,6 +35,9 @@ import {
 import { listSessions, newSessionId } from './commands.ts'
 import { sessionBadge } from './labels.ts'
 import type { MorningService } from './morning.ts'
+import { ProblemReporter } from './problems.ts'
+import { readContextUsage } from './context-report.ts'
+import type { MemoryService } from './memory.ts'
 import type { InboundMessage } from '../gateway/types.ts'
 
 /**
@@ -123,7 +126,15 @@ export interface NodeConfig {
   reminderFile?: string
   /** JSON file the morning-greeting config persists to (defaults under $DSH_HOME). */
   morningFile?: string
-  /** ESP32 PWM light base url (defaults to http://192.168.1.11:80). */
+  /** Markdown file holding long-term facts about the owner (defaults under $DSH_HOME). */
+  memoryFile?: string
+  /** Append-only problem log (defaults under $DSH_HOME). */
+  problemFile?: string
+  /** Inject the memory briefing on the first message and every N messages. */
+  memoryInjectEvery?: number
+  /** Wall-clock "HH:MM" for the daily memory consolidation (empty disables). */
+  memoryConsolidateTime?: string
+  /** ESP32 PWM light base url (defaults to http://<esp32-ip>:80). */
   esp32BaseUrl?: string
   /** SiliconFlow API key for image generation (defaults to ocrApiKey when absent). */
   imageGenApiKey?: string
@@ -167,6 +178,23 @@ export class WechatConversationNode {
    */
   runtimeImageInput: 'auto' | 'native' | 'ocr' | null = null
 
+  /**
+   * The long-term memory briefing for one inbound message, or '' when this
+   * message should not carry one. Injection cadence lives in the service.
+   */
+  memoryPreamble(): string {
+    try {
+      const sessionId = this.activeSessionId === null ? '(none)' : String(this.activeSessionId)
+      return this.memoryService?.briefing(sessionId) ?? ''
+    } catch (error) {
+      // A memory failure must never block a message from being handled — but it
+      // must not vanish either: a silent '' means the owner's identity facts are
+      // simply absent from that message with nothing to explain it.
+      this.problems.report('memory/briefing', error, { notify: false })
+      return ''
+    }
+  }
+
   /** Effective image-delivery policy (runtime override, else config). */
   imageInputMode(): 'auto' | 'native' | 'ocr' {
     return this.runtimeImageInput ?? this.config.imageInput ?? 'auto'
@@ -184,6 +212,22 @@ export class WechatConversationNode {
 
   /** Morning-greeting scheduler, when the plugin mounted one. */
   morningService?: MorningService
+
+  /** Long-term memory (facts about the owner), when the plugin mounted one. */
+  memoryService?: MemoryService
+
+  /**
+   * The problem ledger. Always present — a swallowed failure must have somewhere
+   * to go even before any service is wired, and `/problems` reads it.
+   */
+  readonly problems: ProblemReporter
+
+  /**
+   * Last gateway status seen (`wechat/status`), and when. `/status` reports it:
+   * a bridge whose poller died otherwise looks identical to a quiet day.
+   */
+  gatewayStatus = 'unknown'
+  gatewayStatusAt = ''
 
   readonly ctx: Context
   readonly config: NodeConfig
@@ -217,27 +261,27 @@ export class WechatConversationNode {
         'An agent that accepts instructions from any WeChat contact is a prompt-injection front door.',
       )
     }
-    this.contextPolicy = parseContextPolicy(config.contextPolicy)
+    this.problems = new ProblemReporter({ file: config.problemFile })
+    this.contextPolicy = parseContextPolicy(config.contextPolicy, (kind, error, detail) => {
+      this.problems.report(kind, error, detail === undefined ? { notify: false } : { notify: false, detail })
+    })
     this.disposers.push(attachSessionOutbound(this))
     this.disposers.push(attachApprovalBridge(this))
     this.disposers.push(attachContextRotation(this))
+    this.disposers.push(attachGatewayObservability(this))
     this.disposers.push(attachAdminControl(this))
-    this.ctx.on('wechat/message', (message: InboundMessage) => {
+    const disposer = this.ctx.on('wechat/message', (message: InboundMessage) => {
       // Same fatal-rejection rule as the credentials boot in src/index.ts: a
       // throw escaping an event handler becomes an unhandled rejection, and the
       // host treats that as a fatal load failure. Handling one chat message must
-      // never be able to take the whole harness down — log it and stay alive.
+      // never be able to take the whole harness down — record it and stay alive.
       handleInbound(this, message).catch((error) => {
-        try {
-          this.ctx.get('logger')?.warn?.(
-            '[dsh-chatnode-wechat] inbound handling failed: %s',
-            error instanceof Error ? error.message : String(error),
-          )
-        } catch {
-          // The context itself is gone (live patch reload); nothing to log to.
-        }
+        this.problems.report('inbound', error, { detail: `message=${message.message_id ?? '?'}` })
       })
     })
+    // Keep the disposer: relying on the fiber alone means the listener survives
+    // an explicit dispose() and keeps handling messages for a torn-down node.
+    this.disposers.push(disposer)
     this.pickDefaultSession()
   }
 
@@ -387,8 +431,11 @@ export class WechatConversationNode {
       let models: Array<{ id: string; name?: string }> = []
       try {
         models = await llm.listModels(provider.id)
-      } catch {
-        continue // unreachable route today; skip
+      } catch (error) {
+        // A provider whose listing fails just disappears from the picker, which
+        // looks exactly like "that vendor has no models".
+        this.problems.report('model/list', error, { notify: false, detail: `provider=${provider.id}` })
+        continue
       }
       for (const model of models) {
         const label = `${provider.name ?? provider.id} · ${model.name ?? model.id} (${provider.id}/${model.id})`
@@ -558,7 +605,7 @@ export class WechatConversationNode {
    * verbatim — automatic rotation passes its own reason there, and honours the
    * policy's `announce: false` by passing `null`.
    */
-  async createSession(prompt: string, notice: string | null = ''): Promise<void> {
+  async createSession(prompt: string, notice: string | null = ''): Promise<{ ok: boolean; detail: string }> {
     const sessionId = newSessionId(this)
     try {
       const meta: Record<string, string> = {}
@@ -601,8 +648,13 @@ export class WechatConversationNode {
           notice || `✅ 已创建新会话 ${sessionBadge(this, handle.agent.session)}${prompt ? '，开始处理…' : '（无初始提示词）'}`,
         )
       }
+      return { ok: true, detail: `已创建会话 ${String(handle.agent.session.id)}` }
     } catch (error) {
       await sendTextToPeer(this, `❌ 创建会话失败: ${error instanceof Error ? error.message : String(error)}`)
+      // The failure is reported as a value too: callers that are not the chat
+      // (the admin console, the rotation path) must not record a success.
+      this.problems.report('session/create', error)
+      return { ok: false, detail: error instanceof Error ? error.message : String(error) }
     }
   }
 
@@ -739,7 +791,18 @@ export class WechatConversationNode {
     this.disposers = []
     if (this.picker) clearTimeout(this.picker.timer)
     this.picker = null
+    // Clear AND settle: a pending approval whose promise is never resolved
+    // leaves the host's approval waterfall hanging forever on a request that
+    // can no longer be answered by anyone. Denying is the safe default.
+    const abandoned = [...this.pending.entries()]
     for (const number of [...this.pending.keys()]) this.clearApproval(number)
+    for (const [number, entry] of abandoned) {
+      try {
+        entry.resolve('rejected')
+      } catch (error) {
+        this.problems.report('approvals/dispose', error, { notify: false, detail: `#${number}` })
+      }
+    }
   }
 }
 
@@ -767,39 +830,21 @@ export class WechatConversationNode {
  *
  * The token scheme wants a token budget, and the honest source is what the host
  * already measured. `$DSH_HOME/storages/session_projcache/sessions/<id>.json`
- * carries it: `contextPressure.surfaceTokens` (the live context surface) with
- * `contextBreakdown` and the cumulative `tokenUsage` as fallbacks. Returns
- * undefined when nothing usable is there — the policy module then falls back to
- * its character proxy and says so in the rotation reason.
+ * carries it: `contextPressure.pressureTokens` (everything the next request
+ * sends), with the `contextBreakdown` parts and the live message surface as
+ * fallbacks. Returns undefined when nothing usable is there — the policy module
+ * then falls back to its character proxy and says so in the rotation reason.
  *
  * Read-only, best effort, and it must never throw: this runs on the turn/end path.
  */
 export function readContextTokens(sessionId: string): number | undefined {
-  try {
-    const home = process.env.DSH_HOME || join(homedir(), '.dsh')
-    const file = join(home, 'storages', 'session_projcache', 'sessions', `${sessionId}.json`)
-    const doc = JSON.parse(readFileSync(file, 'utf8')) as { record?: { rows?: Record<string, { val?: unknown }> } }
-    const rows = doc.record?.rows
-    if (!rows) return undefined
-
-    const pressure = (rows.contextPressure?.val as { surfaceTokens?: number } | undefined)?.surfaceTokens
-    if (typeof pressure === 'number' && pressure > 0) return pressure
-
-    const breakdown = rows.contextBreakdown?.val as { systemTokens?: number; toolsTokens?: number; messageTokens?: number } | undefined
-    if (breakdown) {
-      const sum = (breakdown.systemTokens ?? 0) + (breakdown.toolsTokens ?? 0) + (breakdown.messageTokens ?? 0)
-      if (sum > 0) return sum
-    }
-
-    const totals = (rows.tokenUsage?.val as { totals?: { uncachedInputTokens?: number; cacheReadTokens?: number; outputTokens?: number } } | undefined)?.totals
-    if (totals) {
-      const sum = (totals.uncachedInputTokens ?? 0) + (totals.cacheReadTokens ?? 0) + (totals.outputTokens ?? 0)
-      if (sum > 0) return sum
-    }
-    return undefined
-  } catch {
-    return undefined
-  }
+  const usage = readContextUsage(sessionId)
+  if (!usage) return undefined
+  if (typeof usage.pressureTokens === 'number' && usage.pressureTokens > 0) return usage.pressureTokens
+  const sum = (usage.systemTokens ?? 0) + (usage.toolsTokens ?? 0) + (usage.messageTokens ?? 0)
+  if (sum > 0) return sum
+  if (typeof usage.surfaceTokens === 'number' && usage.surfaceTokens > 0) return usage.surfaceTokens
+  return undefined
 }
 
 export function attachContextRotation(node: WechatConversationNode): () => void {
@@ -846,6 +891,87 @@ export function attachContextRotation(node: WechatConversationNode): () => void 
     if (String(session.id) !== String(node.activeSessionId ?? '')) return
     if (event?.type !== 'turn/end') return
     evaluate(session)
+  }
+  const disposer = node.ctx.on('session/event', listener as never)
+  return () => disposer()
+}
+
+/**
+ * Watch the gateway's own health events.
+ *
+ * The gateway emits `wechat/status`, `wechat/error` and `wechat/fatal`, and
+ * nothing in the bridge used to subscribe: a revoked credential, a 403 from a
+ * competing poller, a DNS outage or a paused session all ended up in the host
+ * log at best, while from the owner's side the bridge simply stopped answering.
+ * From here each of them lands in the problem ledger (so `/problems` can show
+ * it), a fatal one is announced once, and the last known status is kept for
+ * `/status` so a silent dead gateway is visible on demand.
+ */
+export function attachGatewayObservability(node: WechatConversationNode): () => void {
+  const disposers: Array<() => void> = []
+
+  disposers.push(
+    node.ctx.on('wechat/status' as never, ((status: string) => {
+      const previous = node.gatewayStatus
+      node.gatewayStatus = status
+      node.gatewayStatusAt = new Date().toISOString()
+      if (status === 'error' || status === 'paused') {
+        node.problems.report('gateway/status', new Error(`网关状态变为 ${status}（之前 ${previous}）`), {
+          notify: status === 'error',
+        })
+      }
+    }) as never),
+  )
+
+  disposers.push(
+    node.ctx.on('wechat/error' as never, ((error: unknown) => {
+      // Poll failures repeat every few seconds while the network is down; the
+      // ledger collapses them by signature and the notifier rate limits.
+      node.problems.report('gateway', error)
+    }) as never),
+  )
+
+  disposers.push(
+    node.ctx.on('wechat/fatal' as never, ((error: unknown) => {
+      node.gatewayStatus = 'error'
+      node.gatewayStatusAt = new Date().toISOString()
+      node.problems.report('gateway/fatal', error, { detail: '桥已停止轮询，需要人工处理' })
+    }) as never),
+  )
+
+  return () => {
+    for (const dispose of disposers) {
+      try {
+        dispose()
+      } catch {
+        // A disposer that fails must not stop the others.
+      }
+    }
+  }
+}
+
+/**
+ * Re-anchor long-term memory after the host compacts a session.
+ *
+ * Compaction swaps older messages for a summary, and it runs before a step —
+ * mid-turn, not between messages — so a session can lose its history while the
+ * agent keeps working. Marking the session here makes the owner's next message
+ * carry the full memory briefing again instead of waiting out the usual cadence.
+ *
+ * Observing events is the only route: the preset mounts compaction inside its
+ * own realm, so this (host-plane) bridge cannot resolve `ctx.compaction`.
+ */
+export function attachMemoryCompactionWatch(node: WechatConversationNode): () => void {
+  const listener = (session: Session, event: { type?: string }): void => {
+    if (event?.type !== 'compaction/summary' && event?.type !== 'compaction/prune') return
+    if (String(session.id) !== String(node.activeSessionId ?? '')) return
+    try {
+      node.memoryService?.noteCompaction(String(session.id))
+    } catch (error) {
+      // A memory bookkeeping failure must never disturb the session itself, but
+      // it does mean the post-compaction re-anchor will not happen.
+      node.problems.report('memory/compaction', error, { notify: false })
+    }
   }
   const disposer = node.ctx.on('session/event', listener as never)
   return () => disposer()

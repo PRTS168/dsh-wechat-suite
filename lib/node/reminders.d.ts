@@ -32,7 +32,17 @@ export declare class ReminderStore {
     private reminders;
     private timer;
     private loaded;
-    constructor(ctx: Context, file?: string);
+    private stopped;
+    /**
+     * True when the file exists but could not be read. Saving in that state would
+     * write the in-memory (empty) list over reminders that are still on disk.
+     */
+    private unreadable;
+    /** Whether the last persist reached the disk. */
+    private lastSaveOk;
+    constructor(ctx: Context, file?: string, onProblem?: (kind: string, error: unknown, detail?: string) => void);
+    /** Where a swallowed failure goes; optional so the store works standalone. */
+    private readonly onProblem?;
     /** Load persisted reminders and arm the scheduler. */
     start(): Promise<void>;
     /** Stop the scheduler (called on plugin dispose). */
@@ -51,9 +61,18 @@ export declare class ReminderStore {
     }): Promise<Reminder>;
     /** Remove a reminder by id. Returns true when it existed. */
     remove(id: string): Promise<boolean>;
+    /**
+     * Whether the most recent persist actually reached the disk.
+     *
+     * A reminder that only exists in memory still fires while the process runs and
+     * is gone after a restart, so `/提醒` reporting a plain "✅ 已设置" would be
+     * promising more than the bridge can keep.
+     */
+    lastSaveSucceeded(): boolean;
     /** Format one reminder for display. */
     static describe(reminder: Reminder): string;
     private load;
+    /** Persist the list. Returns false (and says why) when it could not be saved. */
     private save;
     /** (Re)arm a timer for the nearest future reminder; deliver anything due. */
     private arm;

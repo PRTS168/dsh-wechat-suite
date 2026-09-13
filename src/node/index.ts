@@ -18,9 +18,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { MAX_MESSAGE_CHARS } from '../gateway/types.ts'
-import { WechatConversationNode, type NodeConfig } from './core.ts'
+import { WechatConversationNode, attachMemoryCompactionWatch, type NodeConfig } from './core.ts'
+import { sendTextToPeer } from './outbound.ts'
 import { ReminderStore } from './reminders.ts'
 import { MorningService } from './morning.ts'
+import { MEMORY_SECTIONS, MemoryService, applyPatch, factCount } from './memory.ts'
 import { generateImage } from './image-gen.ts'
 import { synthesizeSpeech } from './tts.ts'
 import { sendEmail } from './email.ts'
@@ -52,7 +54,15 @@ export interface Config {
   reminderFile?: string
   /** JSON file the morning-greeting config persists to (defaults under $DSH_HOME). */
   morningFile?: string
-  /** ESP32 PWM light base url (defaults to http://192.168.1.11:80). */
+  /** Append-only problem log: every swallowed failure lands here (defaults under $DSH_HOME). */
+  problemFile?: string
+  /** Markdown file holding long-term facts about the owner (defaults under $DSH_HOME). */
+  memoryFile?: string
+  /** Inject the memory briefing on the first message and every N messages. */
+  memoryInjectEvery?: number
+  /** Wall-clock "HH:MM" for the daily memory consolidation (empty disables). */
+  memoryConsolidateTime?: string
+  /** ESP32 PWM light base url (defaults to http://<esp32-ip>:80). */
   esp32BaseUrl?: string
   /** SMTP host for the `send_email` tool; absent disables that tool. */
   smtpHost?: string
@@ -116,6 +126,10 @@ export const Config = z.object({
   ocrBaseUrl: z.string(),
   reminderFile: z.string(),
   morningFile: z.string(),
+  memoryFile: z.string(),
+  problemFile: z.string(),
+  memoryInjectEvery: z.number(),
+  memoryConsolidateTime: z.string(),
   esp32BaseUrl: z.string(),
   smtpHost: z.string(),
   smtpPort: z.number(),
@@ -159,6 +173,25 @@ export const inject = ['wechat', 'sessions', 'agents', 'approval', 'tools']
 /** Mount the conversation node on a context that already provides `wechat`. */
 export function apply(ctx: Context, config: Config): void {
   const node = new WechatConversationNode(ctx, config as NodeConfig)
+  /** One call shape for every swallowed failure in the bridge. */
+  const report = (kind: string, error: unknown, detail?: string): void => {
+    node.problems.report(kind, error, detail === undefined ? {} : { detail })
+  }
+  // Every swallowed failure goes to the ledger: the host log, the problem file,
+  // and — rate limited — the owner's WeChat. A silent failure is a bug in a
+  // bridge whose whole job is to answer.
+  node.problems.setLogger((level, text) => {
+    try {
+      ctx.get('logger')?.[level]?.(text)
+    } catch {
+      // The context is gone (live patch reload); the file sink still works.
+    }
+  })
+  node.problems.setNotifier((text) => {
+    void sendTextToPeer(node, text).catch(() => {
+      // No peer to tell yet (nothing inbound since boot). The log already has it.
+    })
+  })
   ctx.effect(() => {
     return () => node.dispose()
   })
@@ -167,21 +200,144 @@ export function apply(ctx: Context, config: Config): void {
   // Registered as tools so the agent can answer natural-language requests
   // ("30 分钟后提醒我喝水") with real tool calls. Persisted to a JSON file so
   // reminders survive restarts; the store pushes due alerts to their peer.
-  const reminderStore = new ReminderStore(ctx, config.reminderFile)
-  void reminderStore.start()
+  const reminderStore = new ReminderStore(ctx, config.reminderFile, report)
+  void reminderStore.start().catch((error) => report('reminders/start', error))
   ctx.effect(() => {
     return () => reminderStore.stop()
   })
 
   // ---- morning greeting: daily weather push, toggled via /早安 ------------
   const morningService = new MorningService(ctx, {
+    onProblem: (kind, error) => report(kind, error),
     file: config.morningFile,
     targets: () => [...(config.allowFrom ?? [])],
   })
   node.morningService = morningService
-  void morningService.start()
+  void morningService.start().catch((error) => report('morning/start', error))
   ctx.effect(() => {
     return () => morningService.stop()
+  })
+
+  // ---- long-term memory: facts about the owner, injected as background -----
+  // The briefing rides OUTSIDE the user fence (see inbound.ts), and the daily
+  // consolidation asks for the reasoning the bridge already knows how to do:
+  // active session + its routed model.
+  const memoryService = new MemoryService(ctx, {
+    file: config.memoryFile,
+    onProblem: report,
+    injectEvery: config.memoryInjectEvery,
+    consolidateAt: config.memoryConsolidateTime,
+  })
+  node.memoryService = memoryService
+  memoryService.sessionProvider = () => node.activeSession()
+  memoryService.routeProvider = () => node.currentModelRoute()
+  void memoryService.start()
+  ctx.effect(() => {
+    return () => memoryService.stop()
+  })
+  // A compaction folds the history away mid-turn; the owner's next message then
+  // carries the memory again (see attachMemoryCompactionWatch).
+  const detachCompactionWatch = attachMemoryCompactionWatch(node)
+  ctx.effect(() => {
+    return () => detachCompactionWatch()
+  })
+
+  // remember_fact — the owner says "记一下", and it is really written down.
+  //
+  // Without this the only path into MEMORY.md was the nightly consolidation, so
+  // "你先记一下我的邮箱" produced a cheerful "记下了" from the model and an empty
+  // file on disk. The tool writes through the same applyPatch() path as the
+  // consolidator: backup, 4000-character cap, audit line in memory-log.md.
+  const unregisterRemember = ctx.tools.register(
+    defineTool({
+      name: 'remember_fact',
+      description:
+        'Write one long-lived fact about the owner into the cross-session memory file. ' +
+        'Use it when the owner says 记一下 / 记住 / 别忘了, or states something durable about himself ' +
+        '(name, city, schedule, habits, devices, promises, decisions). ' +
+        'Only say 记下了 to the owner AFTER this tool returns success — saying it without calling this ' +
+        'tool is a promise the bridge cannot keep. ' +
+        `Pick section from exactly: ${MEMORY_SECTIONS.join(' / ')} (use 关于主人 when unsure). ` +
+        'Never record passwords, tokens, API keys, one-off arrangements or small talk. ' +
+        'One fact per call; write it as a plain third-person statement about the owner.',
+      parameters: {
+        text: {
+          type: 'string',
+          required: true,
+          description: 'The fact itself, third person, at most 300 characters, e.g. "主人有两个邮箱：主 a@x.com、副 b@y.com"',
+        },
+        section: {
+          type: 'string',
+          description: `Optional. One of: ${MEMORY_SECTIONS.join(' / ')}. Defaults to 关于主人.`,
+        },
+        replaces: {
+          type: 'string',
+          description:
+            'Optional. Exact text of an older fact this one supersedes ("我搬到 B 市了" replacing "主人在 A 市"). ' +
+            'The old entry is retired, so the two never sit in the file contradicting each other.',
+        },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value: string) => [{ type: 'text', text: value }],
+      },
+      execute: async (args) => {
+        const raw = typeof args.text === 'string' ? args.text.trim() : ''
+        if (!raw) return '❌ 没给要记的内容（text 必填）。'
+        // Every fence the bridge itself uses is off limits. A fact carrying one
+        // is injected into every future turn, gets the model's own replies cut
+        // by the outbound guard, and would close the briefing's fence early so
+        // the rest stops being marked as background.
+        if (raw.includes('<<<')) {
+          return '❌ 这条里含桥用的围栏标记（<<<），不能写进记忆。去掉标记再记一次。'
+        }
+        const LIMIT = 300
+        const stored = raw.slice(0, LIMIT)
+        const truncated = stored !== raw
+        const known = MEMORY_SECTIONS.includes(args.section as never)
+        const section = known ? String(args.section) : MEMORY_SECTIONS[0]
+        // Say it in the receipt: the model repeats this to the owner, so an
+        // unmentioned fallback becomes a fact filed in the wrong drawer.
+        const sectionNote = known ? '' : `（section「${String(args.section ?? '')}」不认识，已放进「${section}」）`
+        const cutNote = truncated ? `（超过 ${LIMIT} 字，只记了前半段）` : ''
+        const file = memoryService.filePath
+        const replaces = typeof args.replaces === 'string' ? args.replaces.trim() : ''
+
+        if (replaces) {
+          const updated = applyPatch(file, { update: [{ from: replaces, to: stored }] }, 'tool:remember_fact')
+          if (updated.updated > 0) return `✅ 已更新长期记忆：把「${replaces}」换成「${stored}」${cutNote}`
+          // The old entry was not found verbatim: still record the new fact, but
+          // say so rather than reporting a replacement that did not happen.
+          const added = applyPatch(file, { add: [{ section, text: stored }] }, 'tool:remember_fact')
+          if (added.added > 0) {
+            return `✅ 已记下「${stored}」${cutNote}；但没找到要替换的旧那条「${replaces}」，它仍在文件里，每天整理时会再收拢。`
+          }
+          const why = added.skipped.join('；')
+          return why ? `❌ 没能记下来：${why}` : `ℹ️ 这条已经记过了（共 ${factCount(file)} 条）`
+        }
+
+        const before = factCount(file)
+        const result = applyPatch(file, { add: [{ section, text: stored }] }, 'tool:remember_fact')
+        if (result.added > 0) {
+          const facts = factCount(file)
+          return `✅ 已写进长期记忆（${section}）：${stored}${cutNote}${sectionNote}（现在共 ${facts} 条，换会话也带着）`
+        }
+        // Every refusal has to reach the model as a refusal: the one thing this
+        // tool exists for is not to let "记下了" be said about nothing.
+        const skipped = result.skipped.join('；')
+        if (skipped) return `❌ 没能记下来：${skipped}`
+        // added=0 with nothing skipped can also mean the text normalizes to
+        // nothing ("-", "*", a bare date): check before claiming a duplicate.
+        if (!stored.replace(/[\s\-*（()）\d年月日\-/.、:：]/g, '')) {
+          return '❌ 没能记下来：这条里没有可记录的文字。'
+        }
+        return `ℹ️ 这条已经记过了，没有重复添加（共 ${before} 条）`
+      },
+      timeoutMs: 15_000,
+    }),
+  )
+  ctx.effect(() => {
+    return () => unregisterRemember()
   })
 
   const nowStamp = () => {
@@ -349,7 +505,7 @@ export function apply(ctx: Context, config: Config): void {
         await node.ctx.wechat.sendText(peer, `🎨 正在画图：${prompt.slice(0, 120)}`).catch(() => {})
         const outDir = config.imageGenDir ?? (config.mediaDir ? `${config.mediaDir}/generated` : undefined)
         const result = await generateImage(
-          { apiKey, model: config.imageGenModel, outDir },
+          { apiKey, model: config.imageGenModel, outDir, baseUrl: config.ocrBaseUrl },
           prompt,
         )
         const sendResult = await node.ctx.wechat.sendImage(peer, result.path)
@@ -391,7 +547,7 @@ export function apply(ctx: Context, config: Config): void {
         await node.ctx.wechat.sendTyping(peer, 1).catch(() => {})
         await node.ctx.wechat.sendText(peer, '🎙 正在说话…').catch(() => {})
         // 1) mp3 via SiliconFlow TTS.
-        const mp3 = await synthesizeSpeech({ apiKey, model: config.ttsModel, voice }, text)
+        const mp3 = await synthesizeSpeech({ apiKey, model: config.ttsModel, voice, baseUrl: config.ocrBaseUrl }, text)
         // 2) persist mp3 and send as a file attachment (plays on tap).
         const dir = config.imageGenDir ?? (config.mediaDir ? `${config.mediaDir}/generated` : undefined)
         const { writeFile, mkdir } = await import('node:fs/promises')
@@ -438,7 +594,12 @@ export function apply(ctx: Context, config: Config): void {
         if (!peer) throw new Error('set_reminder: no WeChat peer yet — the user must message the bot first')
         const at = resolveTarget(args)
         const reminder = await reminderStore.add({ at, text, peerId: peer })
-        return `✅ 提醒已设置：${ReminderStore.describe(reminder)}`
+        // A reminder that only lives in memory fires fine today and is gone
+        // after a restart; a plain "✅ 已设置" would promise more than the
+        // bridge can keep.
+        return reminderStore.lastSaveSucceeded()
+          ? `✅ 提醒已设置：${ReminderStore.describe(reminder)}`
+          : `⚠️ 提醒已设置，但没能写进磁盘（重启后会丢）：${ReminderStore.describe(reminder)}`
       },
       timeoutMs: 10_000,
     }),

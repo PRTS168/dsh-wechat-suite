@@ -86,14 +86,32 @@ export const CHARS_PER_TOKEN = 2
  */
 export const CONTEXT_WINDOW_CHARS = 400_000
 
-/** Parse the JSON policy out of config; anything unusable degrades to manual. */
-export function parseContextPolicy(raw: string | undefined | null): ContextPolicy {
+/**
+ * Parse the JSON policy out of config; anything unusable degrades to manual.
+ *
+ * The degradation is deliberate (a broken policy must not stop the bridge from
+ * mounting) but it is not silent any more: a typo in the admin console used to
+ * switch automatic rotation off for good, with nothing anywhere saying so.
+ * Callers holding a problem ledger pass `onProblem`; the returned policy is
+ * always usable either way.
+ */
+export function parseContextPolicy(
+  raw: string | undefined | null,
+  onProblem?: (kind: string, error: unknown, detail?: string) => void,
+): ContextPolicy {
   if (!raw || !raw.trim()) return { ...DEFAULT_POLICY }
   try {
     const parsed = JSON.parse(raw) as Partial<ContextPolicy>
     const scheme = (POLICY_SCHEMES as readonly string[]).includes(String(parsed.scheme))
       ? (parsed.scheme as PolicyScheme)
       : DEFAULT_POLICY.scheme
+    if (parsed.scheme !== undefined && String(parsed.scheme) !== scheme) {
+      onProblem?.(
+        'context/policy',
+        new Error(`未知的上下文方案「${String(parsed.scheme)}」，已按 ${scheme} 处理`),
+        `raw=${raw.slice(0, 200)}`,
+      )
+    }
     const policy: ContextPolicy = { ...DEFAULT_POLICY, ...parsed, scheme }
     // A "rotate" scheme that cannot ever fire is a misconfiguration, not a
     // request for silence: keep the defaults for its trigger knob.
@@ -106,7 +124,8 @@ export function parseContextPolicy(raw: string | undefined | null): ContextPolic
       policy.tokenBudget = DEFAULT_POLICY.tokenBudget
     }
     return policy
-  } catch {
+  } catch (error) {
+    onProblem?.('context/policy', error, `raw=${raw.slice(0, 200)}`)
     return { ...DEFAULT_POLICY }
   }
 }

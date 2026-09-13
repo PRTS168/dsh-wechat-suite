@@ -85,9 +85,9 @@ export declare function parseRoute(value: string | undefined): {
     model: string;
 } | undefined;
 /** Whether a model's declared modalities include image input. */
-export declare function declaresImageInput(llm: LlmModelCatalog | undefined, provider: string, model: string): Promise<boolean>;
+export declare function declaresImageInput(llm: LlmModelCatalog | undefined, provider: string, model: string, onProblem?: (kind: string, error: unknown, detail?: string) => void): Promise<boolean>;
 /** First model on any route that declares image input (for `auto`). */
-export declare function findImageCapableRoute(llm: LlmModelCatalog | undefined): Promise<{
+export declare function findImageCapableRoute(llm: LlmModelCatalog | undefined, onProblem?: (kind: string, error: unknown, detail?: string) => void): Promise<{
     provider: string;
     model: string;
 } | undefined>;
@@ -108,6 +108,7 @@ export declare function resolveImageDelivery(options: {
         provider: string;
         model: string;
     };
+    onProblem?: (kind: string, error: unknown, detail?: string) => void;
 }): Promise<ImageDeliveryDecision>;
 /** Build the durable image content block for a native delivery. */
 export declare function buildImageBlock(attachments: ImageAttachmentSaver | undefined, image: {

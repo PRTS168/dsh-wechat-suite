@@ -32,6 +32,8 @@ export interface PendingApproval {
 }
 /** `$DSH_HOME/wechat-approval.log` — one line per approval decision. */
 export declare const APPROVAL_TRACE_FILE = "wechat-approval.log";
+/** Rotate the trace past this size, keeping one previous file. */
+export declare const TRACE_LIMIT_BYTES: number;
 /** Attach the `approval/request` answerer. Returns a disposer. */
 export declare function attachApprovalBridge(node: WechatConversationNode): () => void;
 //# sourceMappingURL=approvals.d.ts.map

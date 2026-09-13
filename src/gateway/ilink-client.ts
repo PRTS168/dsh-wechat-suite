@@ -52,6 +52,8 @@ export interface UpdatesBatch {
   syncBuf: string
   /** Server-suggested long-poll timeout, when the server sent one. */
   suggestedTimeoutMs?: number
+  /** True when the call ended because the caller aborted (gateway disposed). */
+  cancelled?: boolean
   /** Raw envelope for error inspection. */
   raw: GetUpdatesResponse
 }
@@ -96,6 +98,14 @@ interface PostOptions {
   token?: string
   timeoutMs?: number
   fetchImpl?: typeof fetch
+  /**
+   * Caller-owned cancellation. Disposing the gateway must be able to end an
+   * in-flight long poll immediately: otherwise the request keeps flying for its
+   * full timeout (~35s) after the plugin was torn down, overlapping the next
+   * instance's poller on the same token — which iLink answers with HTTP 403 (it
+   * allows exactly one authenticated poller), leaving the fresh bridge stopped.
+   */
+  signal?: AbortSignal
 }
 
 /** POST one JSON envelope and parse the response object. */
@@ -107,10 +117,16 @@ export async function postJson<T = Record<string, unknown>>(opts: PostOptions): 
     token,
     timeoutMs = API_TIMEOUT_MS,
     fetchImpl = fetch,
+    signal,
   } = opts
   const body = JSON.stringify({ ...payload, base_info: baseInfo() })
   const url = `${baseUrl.replace(/\/+$/, '')}/${endpoint}`
   const controller = new AbortController()
+  const onOuterAbort = (): void => controller.abort()
+  if (signal) {
+    if (signal.aborted) controller.abort()
+    else signal.addEventListener('abort', onOuterAbort, { once: true })
+  }
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const response = await fetchImpl(url, {
@@ -128,6 +144,7 @@ export async function postJson<T = Record<string, unknown>>(opts: PostOptions): 
     return JSON.parse(raw) as T
   } finally {
     clearTimeout(timer)
+    signal?.removeEventListener('abort', onOuterAbort)
   }
 }
 
@@ -173,8 +190,10 @@ export async function getUpdates(opts: {
   syncBuf: string
   timeoutMs?: number
   fetchImpl?: typeof fetch
+  /** Caller-owned cancellation; see {@link PostOptions.signal}. */
+  signal?: AbortSignal
 }): Promise<UpdatesBatch> {
-  const { baseUrl, token, syncBuf, timeoutMs = LONG_POLL_TIMEOUT_MS, fetchImpl } = opts
+  const { baseUrl, token, syncBuf, timeoutMs = LONG_POLL_TIMEOUT_MS, fetchImpl, signal } = opts
   try {
     const raw = await postJson<GetUpdatesResponse>({
       baseUrl,
@@ -183,6 +202,7 @@ export async function getUpdates(opts: {
       token,
       timeoutMs,
       fetchImpl,
+      signal,
     })
     return {
       messages: Array.isArray(raw.msgs) ? (raw.msgs as InboundMessage[]) : [],
@@ -192,6 +212,9 @@ export async function getUpdates(opts: {
     }
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
+      // A shutdown abort is not a timeout: say which one it was, so a disposed
+      // gateway cannot be mistaken for a quiet long poll in the log.
+      if (signal?.aborted) return { messages: [], syncBuf, raw: { ret: 0, msgs: [] }, cancelled: true }
       return { messages: [], syncBuf, raw: { ret: 0, msgs: [] } }
     }
     throw error

@@ -57,8 +57,12 @@ async function run(node: WechatConversationNode, command: ControlCommand): Promi
   switch (command.op) {
     case 'new-session': {
       const prompt = typeof command.prompt === 'string' ? command.prompt.trim() : ''
-      await node.createSession(prompt, command.announce === false ? null : '')
-      return { ok: true, detail: `已新建会话${prompt ? '（带初始提示词）' : ''}` }
+      // The result is taken from createSession rather than assumed: the console
+      // used to log "已新建会话" for a session that was never created.
+      const created = await node.createSession(prompt, command.announce === false ? null : '')
+      return created.ok
+        ? { ok: true, detail: `已新建会话${prompt ? '（带初始提示词）' : ''}` }
+        : { ok: false, detail: `新建会话失败：${created.detail}` }
     }
     case 'switch-session': {
       const id = String(command.sessionId ?? '')
@@ -108,13 +112,17 @@ export function attachAdminControl(node: WechatConversationNode, options: { inte
       try {
         mkdirSync(queueDir, { recursive: true })
         mkdirSync(doneDir, { recursive: true })
-      } catch {
-        return // unwritable home: nothing to do, and definitely nothing to throw
+      } catch (error) {
+        // Unwritable home: every admin command would sit in the queue forever
+        // with nothing to explain why. Say it once per failure instead.
+        node.problems.report('admin/queue', error, { notify: false, detail: `dir=${queueDir}` })
+        return
       }
       let names: string[] = []
       try {
         names = readdirSync(queueDir).filter((name) => name.endsWith('.json')).sort()
-      } catch {
+      } catch (error) {
+        node.problems.report('admin/queue', error, { notify: false, detail: `dir=${queueDir}` })
         return
       }
       for (const name of names.slice(0, 5)) {
@@ -128,6 +136,7 @@ export function attachAdminControl(node: WechatConversationNode, options: { inte
             renameSync(file, join(doneDir, `${name}.bad`))
           } catch { /* leave it */ }
           note(node, `丢弃无法解析的指令 ${name}: ${error instanceof Error ? error.message : String(error)}`)
+          node.problems.report('admin/command', error, { notify: false, detail: `file=${name}` })
           continue
         }
         let result: { ok: boolean; detail: string }
@@ -141,10 +150,18 @@ export function attachAdminControl(node: WechatConversationNode, options: { inte
             join(doneDir, `${name}.result.json`),
             JSON.stringify({ at: new Date().toISOString(), command, ...result }, null, 2),
           )
-        } catch { /* report is best effort */ }
+        } catch (error) {
+          // Without this file the admin console waits forever for a result that
+          // will never arrive.
+          node.problems.report('admin/result', error, { notify: false, detail: `file=${name}` })
+        }
         try {
           rmSync(file, { force: true })
-        } catch { /* the next poll will retry it */ }
+        } catch (error) {
+          // A queue file that cannot be removed is executed again two seconds
+          // later — `/new` would create a second session.
+          node.problems.report('admin/queue', error, { notify: false, detail: `file=${name}` })
+        }
         note(node, `${command.op} → ${result.ok ? 'ok' : 'failed'}: ${result.detail}`)
       }
     } finally {
@@ -155,7 +172,9 @@ export function attachAdminControl(node: WechatConversationNode, options: { inte
   const timer = setInterval(() => {
     // `.catch` even though `tick` swallows its own errors: this is a fire-and-
     // forget call, and one escaping rejection here is fatal to the host.
-    tick().catch(() => {})
+    tick().catch((error) => {
+      node.problems.report('admin/queue', error, { notify: false })
+    })
   }, options.intervalMs ?? 2000)
   ;(timer as { unref?: () => void }).unref?.()
   return () => clearInterval(timer)

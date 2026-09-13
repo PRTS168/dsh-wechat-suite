@@ -66,7 +66,15 @@ export interface Config {
     reminderFile?: string;
     /** JSON file the morning-greeting config persists to (defaults under $DSH_HOME). */
     morningFile?: string;
-    /** ESP32 PWM light base url (defaults to http://192.168.1.11:80). */
+    /** Append-only problem log: every swallowed failure lands here (defaults under $DSH_HOME). */
+    problemFile?: string;
+    /** Markdown file holding long-term facts about the owner (defaults under $DSH_HOME). */
+    memoryFile?: string;
+    /** Inject the memory briefing on the first message and every N messages (0 = first + on change). */
+    memoryInjectEvery?: number;
+    /** Wall-clock "HH:MM" for the daily memory consolidation (empty disables it). */
+    memoryConsolidateTime?: string;
+    /** ESP32 PWM light base url (defaults to http://<esp32-ip>:80). */
     esp32BaseUrl?: string;
     /** SiliconFlow API key for image generation (defaults to ocrApiKey when absent). */
     imageGenApiKey?: string;
@@ -90,6 +98,24 @@ export interface Config {
     ttsModel?: string;
     /** Cloned voice uri used for speech replies (e.g. speech:my-clone:…). */
     ttsVoice?: string;
+    /** How one inbound image reaches the model: auto / native / ocr. */
+    imageInput?: 'auto' | 'native' | 'ocr';
+    /** Route used for images only, e.g. "deepseek-official/deepseek-v4-flash". */
+    imageInputModel?: string;
+    /**
+     * SMTP account for the `send_email` tool (implicit TLS).
+     *
+     * These live here as well as on the conversation node on purpose: the host
+     * validates the patch against THIS schema, so a key the node reads but the
+     * bundle does not declare is stripped before `apply()` ever sees it — which is
+     * exactly how `send_email` came to answer "SMTP 没配" on a profile whose patch
+     * had the SMTP block filled in.
+     */
+    smtpHost?: string;
+    smtpPort?: number;
+    smtpUsername?: string;
+    smtpPassword?: string;
+    smtpFromName?: string;
     /** Agent preset name for `/new` sessions. */
     agentPreset?: string;
     /** Provider route for `/new` agents. */
@@ -104,6 +130,34 @@ export interface Config {
     token?: string;
     /** Bot account id override (prefer credentials). */
     accountId?: string;
+    /** Long-poll timeout for getUpdates. */
+    longPollTimeoutMs?: number;
+    /** Per-request API timeout. */
+    apiTimeoutMs?: number;
+    /** Idle pause between poll iterations (0 = rely on the server's long poll). */
+    pollIdleDelayMs?: number;
+    /** Poll interval while waiting for a QR scan. */
+    qrPollIntervalMs?: number;
+    /** Delay before retrying a failed poll. */
+    retryDelayMs?: number;
+    /** Delay after `maxConsecutiveFailures` consecutive failures. */
+    backoffDelayMs?: number;
+    /** Failures before the gateway reports itself as reconnecting. */
+    maxConsecutiveFailures?: number;
+    /** Pause after iLink reports the session expired. */
+    sessionExpiredPauseMs?: number;
+    /** Send retries per chunk. */
+    sendChunkRetries?: number;
+    /** Base delay between send retries. */
+    sendChunkRetryDelayMs?: number;
+    /** Rate-limit circuit: how long it stays open. */
+    rateLimitCircuitOpenMs?: number;
+    /** Rate-limit circuit: the counting window. */
+    rateLimitCircuitWindowMs?: number;
+    /** Rate-limit circuit: hits within the window before it opens. */
+    rateLimitCircuitThreshold?: number;
+    /** Hosts allowed for CDN media download (SSRF fence). */
+    allowCdnHosts?: string[];
 }
 export declare const Config: z<Schemastery.ObjectS<{
     allowFrom: z<string[], string[]>;
@@ -118,6 +172,10 @@ export declare const Config: z<Schemastery.ObjectS<{
     ocrBaseUrl: z<string, string>;
     reminderFile: z<string, string>;
     morningFile: z<string, string>;
+    memoryFile: z<string, string>;
+    problemFile: z<string, string>;
+    memoryInjectEvery: z<number, number>;
+    memoryConsolidateTime: z<string, string>;
     esp32BaseUrl: z<string, string>;
     imageGenApiKey: z<string, string>;
     imageGenModel: z<string, string>;
@@ -127,6 +185,13 @@ export declare const Config: z<Schemastery.ObjectS<{
     ttsApiKey: z<string, string>;
     ttsModel: z<string, string>;
     ttsVoice: z<string, string>;
+    imageInput: z<string, string>;
+    imageInputModel: z<string, string>;
+    smtpHost: z<string, string>;
+    smtpPort: z<number, number>;
+    smtpUsername: z<string, string>;
+    smtpPassword: z<string, string>;
+    smtpFromName: z<string, string>;
     agentPreset: z<string, string>;
     agentProvider: z<string, string>;
     agentModel: z<string, string>;
@@ -137,6 +202,8 @@ export declare const Config: z<Schemastery.ObjectS<{
     accountId: z<string, string>;
     longPollTimeoutMs: z<number, number>;
     apiTimeoutMs: z<number, number>;
+    pollIdleDelayMs: z<number, number>;
+    qrPollIntervalMs: z<number, number>;
     retryDelayMs: z<number, number>;
     backoffDelayMs: z<number, number>;
     maxConsecutiveFailures: z<number, number>;
@@ -160,6 +227,10 @@ export declare const Config: z<Schemastery.ObjectS<{
     ocrBaseUrl: z<string, string>;
     reminderFile: z<string, string>;
     morningFile: z<string, string>;
+    memoryFile: z<string, string>;
+    problemFile: z<string, string>;
+    memoryInjectEvery: z<number, number>;
+    memoryConsolidateTime: z<string, string>;
     esp32BaseUrl: z<string, string>;
     imageGenApiKey: z<string, string>;
     imageGenModel: z<string, string>;
@@ -169,6 +240,13 @@ export declare const Config: z<Schemastery.ObjectS<{
     ttsApiKey: z<string, string>;
     ttsModel: z<string, string>;
     ttsVoice: z<string, string>;
+    imageInput: z<string, string>;
+    imageInputModel: z<string, string>;
+    smtpHost: z<string, string>;
+    smtpPort: z<number, number>;
+    smtpUsername: z<string, string>;
+    smtpPassword: z<string, string>;
+    smtpFromName: z<string, string>;
     agentPreset: z<string, string>;
     agentProvider: z<string, string>;
     agentModel: z<string, string>;
@@ -179,6 +257,8 @@ export declare const Config: z<Schemastery.ObjectS<{
     accountId: z<string, string>;
     longPollTimeoutMs: z<number, number>;
     apiTimeoutMs: z<number, number>;
+    pollIdleDelayMs: z<number, number>;
+    qrPollIntervalMs: z<number, number>;
     retryDelayMs: z<number, number>;
     backoffDelayMs: z<number, number>;
     maxConsecutiveFailures: z<number, number>;
@@ -216,6 +296,10 @@ declare const _default: {
         ocrBaseUrl: z<string, string>;
         reminderFile: z<string, string>;
         morningFile: z<string, string>;
+        memoryFile: z<string, string>;
+        problemFile: z<string, string>;
+        memoryInjectEvery: z<number, number>;
+        memoryConsolidateTime: z<string, string>;
         esp32BaseUrl: z<string, string>;
         imageGenApiKey: z<string, string>;
         imageGenModel: z<string, string>;
@@ -225,6 +309,13 @@ declare const _default: {
         ttsApiKey: z<string, string>;
         ttsModel: z<string, string>;
         ttsVoice: z<string, string>;
+        imageInput: z<string, string>;
+        imageInputModel: z<string, string>;
+        smtpHost: z<string, string>;
+        smtpPort: z<number, number>;
+        smtpUsername: z<string, string>;
+        smtpPassword: z<string, string>;
+        smtpFromName: z<string, string>;
         agentPreset: z<string, string>;
         agentProvider: z<string, string>;
         agentModel: z<string, string>;
@@ -235,6 +326,8 @@ declare const _default: {
         accountId: z<string, string>;
         longPollTimeoutMs: z<number, number>;
         apiTimeoutMs: z<number, number>;
+        pollIdleDelayMs: z<number, number>;
+        qrPollIntervalMs: z<number, number>;
         retryDelayMs: z<number, number>;
         backoffDelayMs: z<number, number>;
         maxConsecutiveFailures: z<number, number>;
@@ -258,6 +351,10 @@ declare const _default: {
         ocrBaseUrl: z<string, string>;
         reminderFile: z<string, string>;
         morningFile: z<string, string>;
+        memoryFile: z<string, string>;
+        problemFile: z<string, string>;
+        memoryInjectEvery: z<number, number>;
+        memoryConsolidateTime: z<string, string>;
         esp32BaseUrl: z<string, string>;
         imageGenApiKey: z<string, string>;
         imageGenModel: z<string, string>;
@@ -267,6 +364,13 @@ declare const _default: {
         ttsApiKey: z<string, string>;
         ttsModel: z<string, string>;
         ttsVoice: z<string, string>;
+        imageInput: z<string, string>;
+        imageInputModel: z<string, string>;
+        smtpHost: z<string, string>;
+        smtpPort: z<number, number>;
+        smtpUsername: z<string, string>;
+        smtpPassword: z<string, string>;
+        smtpFromName: z<string, string>;
         agentPreset: z<string, string>;
         agentProvider: z<string, string>;
         agentModel: z<string, string>;
@@ -277,6 +381,8 @@ declare const _default: {
         accountId: z<string, string>;
         longPollTimeoutMs: z<number, number>;
         apiTimeoutMs: z<number, number>;
+        pollIdleDelayMs: z<number, number>;
+        qrPollIntervalMs: z<number, number>;
         retryDelayMs: z<number, number>;
         backoffDelayMs: z<number, number>;
         maxConsecutiveFailures: z<number, number>;

@@ -41,7 +41,15 @@ export interface Config {
     reminderFile?: string;
     /** JSON file the morning-greeting config persists to (defaults under $DSH_HOME). */
     morningFile?: string;
-    /** ESP32 PWM light base url (defaults to http://192.168.1.11:80). */
+    /** Append-only problem log: every swallowed failure lands here (defaults under $DSH_HOME). */
+    problemFile?: string;
+    /** Markdown file holding long-term facts about the owner (defaults under $DSH_HOME). */
+    memoryFile?: string;
+    /** Inject the memory briefing on the first message and every N messages. */
+    memoryInjectEvery?: number;
+    /** Wall-clock "HH:MM" for the daily memory consolidation (empty disables). */
+    memoryConsolidateTime?: string;
+    /** ESP32 PWM light base url (defaults to http://<esp32-ip>:80). */
     esp32BaseUrl?: string;
     /** SMTP host for the `send_email` tool; absent disables that tool. */
     smtpHost?: string;
@@ -97,6 +105,10 @@ export declare const Config: z<Schemastery.ObjectS<{
     ocrBaseUrl: z<string, string>;
     reminderFile: z<string, string>;
     morningFile: z<string, string>;
+    memoryFile: z<string, string>;
+    problemFile: z<string, string>;
+    memoryInjectEvery: z<number, number>;
+    memoryConsolidateTime: z<string, string>;
     esp32BaseUrl: z<string, string>;
     smtpHost: z<string, string>;
     smtpPort: z<number, number>;
@@ -130,6 +142,10 @@ export declare const Config: z<Schemastery.ObjectS<{
     ocrBaseUrl: z<string, string>;
     reminderFile: z<string, string>;
     morningFile: z<string, string>;
+    memoryFile: z<string, string>;
+    problemFile: z<string, string>;
+    memoryInjectEvery: z<number, number>;
+    memoryConsolidateTime: z<string, string>;
     esp32BaseUrl: z<string, string>;
     smtpHost: z<string, string>;
     smtpPort: z<number, number>;
@@ -188,6 +204,10 @@ export declare const wechatConversationNode: {
         ocrBaseUrl: z<string, string>;
         reminderFile: z<string, string>;
         morningFile: z<string, string>;
+        memoryFile: z<string, string>;
+        problemFile: z<string, string>;
+        memoryInjectEvery: z<number, number>;
+        memoryConsolidateTime: z<string, string>;
         esp32BaseUrl: z<string, string>;
         smtpHost: z<string, string>;
         smtpPort: z<number, number>;
@@ -221,6 +241,10 @@ export declare const wechatConversationNode: {
         ocrBaseUrl: z<string, string>;
         reminderFile: z<string, string>;
         morningFile: z<string, string>;
+        memoryFile: z<string, string>;
+        problemFile: z<string, string>;
+        memoryInjectEvery: z<number, number>;
+        memoryConsolidateTime: z<string, string>;
         esp32BaseUrl: z<string, string>;
         smtpHost: z<string, string>;
         smtpPort: z<number, number>;

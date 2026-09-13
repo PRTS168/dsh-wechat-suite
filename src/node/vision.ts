@@ -111,14 +111,18 @@ export async function declaresImageInput(
   llm: LlmModelCatalog | undefined,
   provider: string,
   model: string,
+  onProblem?: (kind: string, error: unknown, detail?: string) => void,
 ): Promise<boolean> {
   if (!llm) return false
   try {
     const models = await llm.listModels(provider)
     const entry = models.find((m) => m.id === model)
     return entry?.inputModalities?.includes('image') === true
-  } catch {
-    // An unreachable route cannot accept anything: treat as no image support.
+  } catch (error) {
+    // "Cannot ask" and "not supported" are different answers: reporting the
+    // first as the second silently downgrades every picture to OCR (or, with no
+    // OCR configured, to a bare file path) and nobody learns why.
+    onProblem?.('vision/list', error, `route=${provider}/${model}`)
     return false
   }
 }
@@ -126,19 +130,22 @@ export async function declaresImageInput(
 /** First model on any route that declares image input (for `auto`). */
 export async function findImageCapableRoute(
   llm: LlmModelCatalog | undefined,
+  onProblem?: (kind: string, error: unknown, detail?: string) => void,
 ): Promise<{ provider: string; model: string } | undefined> {
   if (!llm) return undefined
   let providers: Array<{ id: string }> = []
   try {
     providers = llm.listProviders()
-  } catch {
+  } catch (error) {
+    onProblem?.('vision/list', error, 'listProviders failed')
     return undefined
   }
   for (const provider of providers) {
     let models: Array<{ id: string; inputModalities?: readonly string[] }> = []
     try {
       models = await llm.listModels(provider.id)
-    } catch {
+    } catch (error) {
+      onProblem?.('vision/list', error, `provider=${provider.id}`)
       continue
     }
     for (const model of models) {
@@ -161,8 +168,9 @@ export async function resolveImageDelivery(options: {
   llm?: LlmModelCatalog
   chatRoute?: { provider: string; model: string }
   configuredRoute?: { provider: string; model: string }
+  onProblem?: (kind: string, error: unknown, detail?: string) => void
 }): Promise<ImageDeliveryDecision> {
-  const { mode, llm } = options
+  const { mode, llm, onProblem } = options
   if (mode === 'ocr') return { mode: 'ocr', reason: 'imageInput=ocr (forced text path)' }
 
   const target = options.configuredRoute ?? options.chatRoute
@@ -172,7 +180,7 @@ export async function resolveImageDelivery(options: {
     if (isImageRefused(target.provider, target.model)) {
       return { mode: 'ocr', reason: `${routeKey(target.provider, target.model)} refused an image recently` }
     }
-    if (await declaresImageInput(llm, target.provider, target.model)) {
+    if (await declaresImageInput(llm, target.provider, target.model, onProblem)) {
       return { mode: 'native', route: target, reason: `${source} ${routeKey(target.provider, target.model)} declares image input` }
     }
     if (mode === 'native') {
@@ -184,7 +192,7 @@ export async function resolveImageDelivery(options: {
   }
 
   if (mode === 'auto') {
-    const found = await findImageCapableRoute(llm)
+    const found = await findImageCapableRoute(llm, onProblem)
     if (found) {
       return { mode: 'native', route: found, reason: `auto-discovered image-capable route ${routeKey(found.provider, found.model)}` }
     }

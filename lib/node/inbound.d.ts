@@ -40,6 +40,8 @@ export declare function wrapUserMessage(content: string, date?: Date): string;
 export declare function isGroupMessage(message: InboundMessage, accountId: string): boolean;
 /** Extract the visible text of an inbound message (text + voice transcription). */
 export declare function extractText(message: InboundMessage): string;
+/** Rotate the OCR diagnostics past this size, keeping one previous file. */
+export declare const OCR_LOG_LIMIT_BYTES: number;
 /** Handle one inbound iLink message. */
 export declare function handleInbound(node: WechatConversationNode, message: InboundMessage): Promise<void>;
 //# sourceMappingURL=inbound.d.ts.map

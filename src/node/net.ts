@@ -67,6 +67,11 @@ export function directRequest(
     const send = url.startsWith('https:') ? httpsGet : httpGet
     const request = send(url, { agent: false, headers: { accept: '*/*', ...options.headers } }, (response) => {
       const chunks: Buffer[] = []
+      // A body that dies half-way emits 'error' on the RESPONSE, not on the
+      // request: without this listener that becomes an uncaught exception, which
+      // in this host is fatal (the LAN light and the direct weather retry both
+      // come through here).
+      response.on('error', reject)
       response.on('data', (chunk: Buffer) => chunks.push(chunk))
       response.on('end', () => {
         resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') })

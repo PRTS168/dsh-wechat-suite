@@ -43,31 +43,40 @@ test('lightBaseUrl falls back to the default and strips trailing slashes', () =>
 })
 
 test('a switch mode reports the label together with the device body', async () => {
-  assert.equal(await controlLight('http://192.168.1.11', 'high', { fetchImpl: answering('3') }), `✅ ${LIGHT_LABELS.high}：3`)
-  assert.equal(await controlLight(undefined, 'low', { fetchImpl: answering('1') }), `✅ ${LIGHT_LABELS.low}：1`)
+  assert.equal(await controlLight('http://192.0.2.10', 'high', { fetchImpl: answering('3') }), `✅ ${LIGHT_LABELS.high}：3`)
+  assert.equal(await controlLight('http://192.0.2.10', 'low', { fetchImpl: answering('1') }), `✅ ${LIGHT_LABELS.low}：1`)
+})
+
+test('an unconfigured device is named as such, not guessed at', async () => {
+  // There used to be a hard-coded LAN address here: with no config the tool
+  // silently poked a stranger's device. Now it says what is missing.
+  const line = await controlLight(undefined, 'high', { fetchImpl: answering('3') })
+  assert.match(line, /^❌ 灯控还没配置/)
+  assert.match(line, /esp32BaseUrl/)
+  assert.equal(await controlLight('   ', 'high', { fetchImpl: answering('3') }), line)
 })
 
 test('a switch mode with an empty body still reports success', async () => {
-  assert.equal(await controlLight(undefined, 'off', { fetchImpl: answering('') }), `✅ ${LIGHT_LABELS.off}`)
+  assert.equal(await controlLight('http://192.0.2.10', 'off', { fetchImpl: answering('') }), `✅ ${LIGHT_LABELS.off}`)
 })
 
 test('query reports the current gear, and empty means no answer', async () => {
-  assert.equal(await controlLight(undefined, 'query', { fetchImpl: answering('2') }), '当前灯光档位：2（0=关闭，1=低，2=中，3=高）')
-  assert.equal(await controlLight(undefined, 'query', { fetchImpl: answering('') }), 'ESP32 无响应')
+  assert.equal(await controlLight('http://192.0.2.10', 'query', { fetchImpl: answering('2') }), '当前灯光档位：2（0=关闭，1=低，2=中，3=高）')
+  assert.equal(await controlLight('http://192.0.2.10', 'query', { fetchImpl: answering('') }), 'ESP32 无响应')
 })
 
 test('an HTTP error is reported as text, never thrown', async () => {
-  assert.equal(await controlLight(undefined, 'low', { fetchImpl: answering('nope', 500) }), '❌ ESP32 响应异常（HTTP 500）')
+  assert.equal(await controlLight('http://192.0.2.10', 'low', { fetchImpl: answering('nope', 500) }), '❌ ESP32 响应异常（HTTP 500）')
 })
 
 test('an unreachable device is reported as text, never thrown', async () => {
   const failing = (async () => {
-    throw new Error('connect ECONNREFUSED 192.168.1.11:80')
+    throw new Error('connect ECONNREFUSED 192.0.2.10:80')
   }) as unknown as typeof fetch
   const directFailing = async () => {
-    throw new Error('connect ECONNREFUSED 192.168.1.11:80')
+    throw new Error('connect ECONNREFUSED 192.0.2.10:80')
   }
-  const line = await controlLight(undefined, 'mid', { fetchImpl: failing, directImpl: directFailing })
+  const line = await controlLight('http://192.0.2.10', 'mid', { fetchImpl: failing, directImpl: directFailing })
   assert.match(line, /^❌ 无法连接 ESP32 灯光设备（/)
   assert.match(line, /ECONNREFUSED/)
   assert.match(line, /直连重试失败/)
@@ -121,7 +130,7 @@ test('the tool advertises the five modes as an enum, with mode required', () => 
 })
 
 test('calling the tool drives the device and returns one line', async () => {
-  const tool = lightToolDefinition('http://192.168.1.11', { fetchImpl: answering('3') })
+  const tool = lightToolDefinition('http://192.0.2.10', { fetchImpl: answering('3') })
   assert.equal(await tool.execute({ mode: 'high' }, {} as never), `✅ ${LIGHT_LABELS.high}：3`)
 })
 

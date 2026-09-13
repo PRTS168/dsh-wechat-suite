@@ -44,8 +44,15 @@ export const LIGHT_LABELS: Record<Exclude<LightMode, 'query'>, string> = {
   high: '开灯（3 档·高）',
 }
 
-/** Device address used when the profile config leaves `esp32BaseUrl` unset. */
-export const DEFAULT_LIGHT_BASE_URL = 'http://192.168.1.11:80'
+/**
+ * Fallback device address — deliberately EMPTY.
+ *
+ * There used to be a hard-coded `http://192.168.1.x:80` here, which shipped one
+ * operator's real device address to everyone and silently pointed the tool at a
+ * stranger's LAN. With no configured address the tool now says so instead of
+ * guessing.
+ */
+export const DEFAULT_LIGHT_BASE_URL = ''
 
 /** Narrow an untrusted value (tool argument) to a known mode. */
 export function isLightMode(value: unknown): value is LightMode {
@@ -84,6 +91,9 @@ export async function controlLight(
   options: LightOptions = {},
 ): Promise<string> {
   const base = lightBaseUrl(baseUrl)
+  if (!base) {
+    return '❌ 灯控还没配置：在 profile 的 `esp32BaseUrl`（或管理台 → 高级模式 → 可选）填上设备的地址，例如 http://<esp32-ip>:80'
+  }
   const url = base + LIGHT_ROUTES[mode]
   const timeoutMs = options.timeoutMs ?? 5000
   const doFetch = options.fetchImpl ?? fetch

@@ -24,6 +24,8 @@ import z from '@deepseek-ai/schemastery';
 import { type InboundMessage, type WechatCredentials, type WireItem } from './types.ts';
 import { type RasterImageMediaType } from './media.ts';
 /** Gateway connection lifecycle, surfaced as `wechat/status` events. */
+/** Pause after an empty poll when the idle delay is disabled (busy-loop guard). */
+export declare const EMPTY_POLL_PAUSE_MS = 200;
 export type GatewayStatus = 'idle' | 'starting' | 'connected' | 'reconnecting' | 'paused' | 'error';
 /** Outcome of one outbound text delivery. */
 export interface SendResult {
@@ -192,6 +194,18 @@ export declare class WechatGateway extends Service {
     private readonly typingTickets;
     private rateLimitHits;
     private rateLimitUntil;
+    /**
+     * Aborts the in-flight long poll on shutdown.
+     *
+     * This profile runs with `patchReload: live`, so saving anything in the admin
+     * console tears this plugin down and mounts a fresh one. Without an abort the
+     * old poller keeps its request open for up to its full timeout, overlapping
+     * the new one on the same token — and iLink allows exactly one poller, so it
+     * answers 403 and the FRESH gateway stops for good until a manual restart.
+     */
+    private readonly pollAbort;
+    /** Serialises restarts so two poll loops can never run at once. */
+    private restartChain;
     constructor(ctx: Context, config: Config);
     /** Diagnostic logger (surfaced on the gateway's host context). */
     private log;
@@ -300,6 +314,7 @@ export declare class WechatGateway extends Service {
     /** Fetch (or refresh) the 600s-TTL typing ticket for a peer. */
     private typingTicket;
     private restart;
+    private restartOnce;
     private setStatus;
     private runPollLoop;
     private dispatchInbound;

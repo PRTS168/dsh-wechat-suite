@@ -32,7 +32,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { createHash, randomBytes } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, renameSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, renameSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname, basename } from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
@@ -42,9 +42,11 @@ import {
   CONFIG_FIELDS,
   KNOWN_KEYS,
   maskSecret,
+  parsePatch,
   readPatchFile,
   applyPatchConfig,
 } from '../src/node/patch-config.ts'
+import { pruneBackups } from '../src/node/memory.ts'
 
 // ---------------------------------------------------------------------------
 // Paths and token
@@ -225,14 +227,26 @@ function listConversations(): Conversation[] {
         const first = readZstdFrames(file).split('\n')[0]
         cwd = String((JSON.parse(first!) as { cwd?: string }).cwd ?? '')
       } catch { /* header unreadable */ }
+      // The bridge rotates and deletes sessions while this runs: a file that
+      // vanished between the exists check and statSync used to throw out of
+      // `/api/state` entirely, leaving a blank first screen.
+      let bytes = 0
+      let lastActivity = new Date().toISOString()
+      try {
+        const stat = statSync(file)
+        bytes = stat.size
+        lastActivity = stat.mtime.toISOString()
+      } catch {
+        continue
+      }
       out.push({
         id,
         cwd,
         title: typeof title === 'string' ? title : null,
         turns: Number(stats?.turns ?? 0),
         outputTokens: Number(tokens?.totals?.outputTokens ?? 0),
-        bytes: statSync(file).size,
-        lastActivity: statSync(file).mtime.toISOString(),
+        bytes,
+        lastActivity,
         transcriptPath: file,
       })
     }
@@ -412,10 +426,14 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 }
 
 function authorized(req: IncomingMessage, url: URL, mutating: boolean): boolean {
-  if (url.searchParams.get('token') === TOKEN) return true
-  if (req.headers['x-admin-token'] === TOKEN) return true
+  const tokenOk = url.searchParams.get('token') === TOKEN || req.headers['x-admin-token'] === TOKEN
+  if (!tokenOk) return false
+  // Every mutation additionally carries this header. It used to be unreachable
+  // (both token branches returned first), so the second factor the page relies
+  // on — a header a cross-origin form cannot set without a CORS preflight —
+  // was decorative.
   if (mutating && req.headers[GUARD] !== '1') return false
-  return false
+  return true
 }
 
 const PAGE = readFileSync(join(HERE, 'index.html'), 'utf8')
@@ -438,6 +456,311 @@ function loopbackHost(req: IncomingMessage): boolean {
   const host = String(req.headers.host ?? '')
   return /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(host)
 }
+
+// ---------------------------------------------------------------------------
+// Diagnostics: what the bridge recorded, shown where a human can see it
+// ---------------------------------------------------------------------------
+
+/** `$DSH_HOME/wechat-problems.log` — every failure the bridge swallowed. */
+function problemLogFile(): string {
+  // The bridge reads problemFile from config, so a configured path must win over
+  // the default here too: otherwise the console reports an empty log forever.
+  return configuredPath('problemFile', join(dshHome(), 'wechat-problems.log'))
+}
+
+/** `$DSH_HOME/wechat-memory/MEMORY.md` — the long-term facts file. */
+function memoryFile(): string {
+  return configuredPath('memoryFile', join(dshHome(), 'wechat-memory', 'MEMORY.md'))
+}
+
+/**
+ * One configured path, falling back to the bridge's default.
+ *
+ * `memoryFile` and `problemFile` are ordinary editable keys, and the bridge
+ * reads them from config. Hard-coding the defaults here meant that the moment
+ * an operator set either one, the console pointed at an empty file and
+ * cheerfully reported "no problems" / "no memories yet".
+ */
+function configuredPath(key: string, fallback: string): string {
+  try {
+    const parsed = parsePatch(readFileSync(PATCH, 'utf8'))
+    const value = parsed.current[key]?.value
+    if (typeof value !== 'string' || !value.trim()) return fallback
+    // `$DSH_HOME/...` is the documented placeholder form; expand it.
+    return value.trim().replace(/^\$DSH_HOME[\\/]/, `${dshHome()}/`).replace(/\\/g, '/')
+  } catch {
+    return fallback
+  }
+}
+
+/** Last `limit` non-empty lines of a text file (best effort, never throws). */
+function tailLines(file: string, limit: number): string[] {
+  try {
+    return readFileSync(file, 'utf8').split('\n').filter((line) => line.trim()).slice(-limit)
+  } catch {
+    return []
+  }
+}
+
+/** How many facts a MEMORY.md holds (headings and comments do not count). */
+function memoryFactCount(text: string): number {
+  let count = 0
+  let section = ''
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (line.startsWith('## ')) {
+      section = line.slice(3).trim()
+      continue
+    }
+    if (section && section !== '已过期' && /^[-*]\s+\S/.test(line)) count += 1
+  }
+  return count
+}
+
+/**
+ * Models the host actually offers, read from `$DSH_HOME/settings.yaml`.
+ *
+ * Declaring `models` in that file REPLACES the adapter's built-in catalog, so
+ * this list is the complete set of routes on the native DeepSeek provider — the
+ * one the bridge is configured against by default. Third-party relay providers
+ * are exported too, but only as names: their route ids are the adapter's
+ * business, and offering a guessed id would let a beginner save a route that
+ * cannot resolve.
+ */
+function readModelCatalog(): { provider: string; models: string[]; relays: string[]; note: string } {
+  let text = ''
+  try {
+    text = readFileSync(join(dshHome(), 'settings.yaml'), 'utf8')
+  } catch {
+    // No settings file: an empty catalog is the truth.
+  }
+  const lines = text.split('\n').map((l) => l.replace(/\r$/, ''))
+  const indentOf = (line: string): number => (/^(\s*)/.exec(line)?.[1] ?? '').length
+
+  /** Index of the first line matching `re`, or -1. */
+  const findLine = (re: RegExp, from = 0): number => {
+    for (let i = from; i < lines.length; i += 1) if (re.test(lines[i]!)) return i
+    return -1
+  }
+
+  /**
+   * The `models:` list inside one top-level block, at exact nesting depth.
+   *
+   * A naive "collect every `- id:` after a `models:` line" run mixes the
+   * relay providers' catalogs into the native route, and picking one of those
+   * from the dropdown would save a route that cannot resolve.
+   */
+  const modelsIn = (blockName: string): string[] => {
+    const start = findLine(new RegExp(`^${blockName}:\\s*$`))
+    if (start < 0) return []
+    const blockIndent = indentOf(lines[start]!)
+    let end = lines.length
+    for (let i = start + 1; i < lines.length; i += 1) {
+      if (lines[i]!.trim() === '') continue
+      if (indentOf(lines[i]!) <= blockIndent) { end = i; break }
+    }
+    const modelsAt = findLine(/^\s+models:\s*$/, start)
+    if (modelsAt < 0 || modelsAt >= end) return []
+    const listIndent = indentOf(lines[modelsAt]!)
+    const found: string[] = []
+    for (let i = modelsAt + 1; i < end; i += 1) {
+      const line = lines[i]!
+      if (line.trim() === '') continue
+      if (indentOf(line) <= listIndent) break
+      const m = /^\s*-\s*id:\s*(\S+)\s*$/.exec(line)
+      if (m?.[1]) found.push(m[1])
+    }
+    return found
+  }
+
+  const models = modelsIn('llm-deepseek')
+
+  // Relay names are informational: their route ids are the adapter's business.
+  const relays: string[] = []
+  const relaysAt = findLine(/^llm-pi-ai:\s*$/)
+  if (relaysAt >= 0) {
+    const providersAt = findLine(/^\s+providers:\s*$/, relaysAt)
+    if (providersAt >= 0) {
+      const pIndent = indentOf(lines[providersAt]!)
+      // Only the provider KEYS themselves: each relay repeats a nested
+      // `models:` key, and a looser match collects those as provider names.
+      let keyIndent = -1
+      for (let i = providersAt + 1; i < lines.length; i += 1) {
+        const line = lines[i]!
+        if (line.trim() === '') continue
+        const indent = indentOf(line)
+        if (indent <= pIndent) break
+        const m = /^\s*([A-Za-z0-9_.-]+):\s*$/.exec(line)
+        if (!m?.[1]) continue
+        if (keyIndent < 0) keyIndent = indent
+        if (indent !== keyIndent) continue
+        if (m[1] === 'models') continue
+        relays.push(m[1])
+      }
+    }
+  }
+
+  return {
+    provider: 'deepseek-official',
+    models,
+    relays,
+    note: models.length > 0 ? '来自 settings.yaml 的 llm-deepseek.models（它替换内置目录，所以这就是全部可用路由）' : '',
+  }
+}
+
+function readCorpusSafe(ids: readonly string[]): { found: string[]; text: string } {
+  let text = ''
+  try {
+    text = readFileSync(join(dshHome(), '.credentials.yaml'), 'utf8')
+  } catch {
+    // No credential file: nothing found is the truth.
+    return { found: [], text: '' }
+  }
+  return { found: ids.filter((id) => text.includes(id)), text }
+}
+
+interface HealthCheck {
+  id: string
+  label: string
+  state: 'ok' | 'warn' | 'bad'
+  detail: string
+  fix?: string
+}
+
+/**
+ * A one-glance answer to "is this thing actually working?".
+ *
+ * The checks are ordered by what stops the bridge from working at all, and each
+ * failure carries the plain-language fix, because knowing that `allowFrom` is
+ * empty is useless without knowing where to type the WeChat id.
+ */
+async function health(): Promise<{ ok: boolean; summary: string; checks: HealthCheck[] }> {
+  const { exists, patch, unreadable } = await readPatchFile(PATCH)
+  const allowFrom = patch.allowFrom
+  const preset = patch.values.agentPreset || 'wechat'
+  const presetFile = join(dshHome(), '.agent-presets', preset, 'agent.cordis.yml')
+  const credentials = readCorpusSafe(['WEIXIN_BOT_TOKEN', 'WEIXIN_BOT_ID', 'WEIXIN_ACCOUNT_ID'])
+  const problems = tailLines(problemLogFile(), 400)
+  // The ledger writes a second line when it told the owner about a problem
+  // ("已告知主人：…"). Counting those doubles every number and can surface a
+  // notice as if it were the failure itself.
+  const failures = problems.filter((line) => !line.includes('已告知主人'))
+  const recent = failures.filter((line) => {
+    const at = Date.parse(line.slice(0, 24))
+    return Number.isFinite(at) && Date.now() - at < 24 * 60 * 60 * 1000
+  })
+  const memory = readMemoryText()
+
+  const checks: HealthCheck[] = []
+  checks.push({
+    id: 'patch',
+    label: '配置文件',
+    state: unreadable ? 'bad' : exists ? 'ok' : 'warn',
+    detail: unreadable ? `读不出来：${unreadable}` : exists ? PATCH : '还没有这个文件（第一次保存时会创建）',
+    ...(unreadable ? { fix: '检查文件权限；读不出来时保存会被拒绝，以免覆盖其它配置' } : {}),
+  })
+  checks.push({
+    id: 'allowFrom',
+    label: '谁能让它说话',
+    state: allowFrom.length > 0 ? 'ok' : 'bad',
+    detail: allowFrom.length > 0 ? allowFrom.join('、') : '白名单是空的',
+    ...(allowFrom.length > 0 ? {} : { fix: '填上你自己的微信 ID（在下面的“谁能让它说话”里）' }),
+  })
+  checks.push({
+    id: 'preset',
+    label: '它的人设',
+    state: existsSync(presetFile) ? 'ok' : 'bad',
+    detail: existsSync(presetFile) ? `${preset} · 已就位` : `${preset} · 找不到这个 preset`,
+    ...(existsSync(presetFile) ? {} : { fix: `确认 $DSH_HOME/.agent-presets/${preset}/agent.cordis.yml 存在` }),
+  })
+  checks.push({
+    id: 'weixin',
+    label: '微信登录凭据',
+    state: credentials.found.includes('WEIXIN_BOT_TOKEN') ? 'ok' : 'warn',
+    detail: credentials.found.length > 0 ? `找到了 ${credentials.found.join('、')}` : '凭据库里没找到 WEIXIN_*',
+    ...(credentials.found.includes('WEIXIN_BOT_TOKEN') ? {} : { fix: '桥首次登录后会把 token 写进 .credentials.yaml；没有它桥不会开始收消息' }),
+  })
+  const hasMediaKey = /siliconflow/i.test(credentials.text) || /\bsk-[A-Za-z0-9_-]{16,}/.test(credentials.text)
+  checks.push({
+    id: 'siliconflow',
+    label: '图片/语音的模型 Key',
+    state: hasMediaKey ? 'ok' : 'warn',
+    // One boolean drives both the state and the sentence: computing them from
+    // different tests produced a green check whose text said "not configured".
+    detail: hasMediaKey ? '已找到可用的媒体模型 Key' : '没配——只发文字聊天可以不管',
+    ...(hasMediaKey ? {} : { fix: '要它看图/听语音/画图，就在下面的「媒体模型」里填一个 Key' }),
+  })
+  checks.push({
+    id: 'memory',
+    label: '长期记忆',
+    state: memory.exists ? 'ok' : 'warn',
+    detail: memory.exists ? `已记录 ${memory.facts} 条事实` : '还没有记忆文件（聊几天就有了）',
+  })
+  checks.push({
+    id: 'problems',
+    label: '最近 24 小时的问题',
+    state: recent.length === 0 ? 'ok' : 'warn',
+    detail: recent.length === 0
+      ? (problems.length === 0 ? '没有问题日志，也没有记录到问题' : '日志里没有最近 24 小时的条目')
+      : `${recent.length} 条，最新一条：${recent[recent.length - 1]!.slice(11, 60)}`,
+    ...(recent.length > 0 ? { fix: '在“诊断”页看完整日志' } : {}),
+  })
+  // A model that cannot resolve is the one failure the owner experiences as
+  // "it stopped answering", and nothing above would have caught it.
+  const model = patch.values.agentModel ?? ''
+  const catalog = readModelCatalog()
+  const modelKnown = !model || catalog.models.length === 0 || catalog.models.includes(model)
+  checks.push({
+    id: 'model',
+    label: '聊天模型',
+    state: modelKnown ? 'ok' : 'bad',
+    detail: model
+      ? `${model}${modelKnown ? '' : ' · settings.yaml 的模型列表里没有它'}`
+      : '没有配置模型（会用 DSH 的默认路由）',
+    ...(modelKnown ? {} : { fix: `改成列表里的一个：${catalog.models.join('、')}` }),
+  })
+
+  const bad = checks.filter((c) => c.state === 'bad')
+  const summary = bad.length === 0 ? '一切就绪' : `还有 ${bad.length} 项必须先处理：${bad.map((c) => c.label).join('、')}`
+  return { ok: bad.length === 0, summary, checks }
+}
+
+function readMemoryText(): { exists: boolean; text: string; facts: number; file: string } {
+  const file = memoryFile()
+  let text = ''
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch {
+    return { exists: false, text: '', facts: 0, file }
+  }
+  return { exists: true, text, facts: memoryFactCount(text), file }
+}
+
+/** Patch backups, newest first (the admin page keeps only the last few). */
+function listBackups(): Array<{ name: string; path: string; at: string; bytes: number }> {
+  const dir = dirname(PATCH)
+  const prefix = `${basename(PATCH)}.bak-`
+  try {
+    const rows: Array<{ name: string; path: string; at: string; bytes: number }> = []
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith(prefix)) continue
+      try {
+        const path = join(dir, name)
+        const stat = statSync(path)
+        if (!stat.isFile()) continue
+        rows.push({ name, path, at: stat.mtime.toISOString(), bytes: stat.size })
+      } catch {
+        // One unreadable entry must not hide every other backup.
+      }
+    }
+    // Newest first by TIME: backup names mix several schemes (epoch, date,
+    // "before-*"), so name order is not time order.
+    return rows.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
+  } catch {
+    return []
+  }
+}
+
 
 const server = createServer((req, res) => {
   void (async () => {
@@ -466,14 +789,91 @@ const server = createServer((req, res) => {
     }
 
     try {
-      if (url.pathname === '/api/state' && !mutating) {
+      if (url.pathname === '/api/health' && !mutating) {
+        json(res, 200, { ok: true, ...(await health()) })
+        return
+      }
+
+      if (url.pathname === '/api/problems' && !mutating) {
+        const limit = Math.min(Number(url.searchParams.get('limit') ?? 200) || 200, 1000)
+        const lines = tailLines(problemLogFile(), limit)
+        json(res, 200, {
+          ok: true,
+          file: problemLogFile(),
+          exists: lines.length > 0 || existsSync(problemLogFile()),
+          lines,
+          rotated: existsSync(`${problemLogFile()}.1`),
+        })
+        return
+      }
+
+      if (url.pathname === '/api/memory' && !mutating) {
+        const memory = readMemoryText()
+        json(res, 200, { ok: true, ...memory })
+        return
+      }
+
+      if (url.pathname === '/api/models' && !mutating) {
+        const catalog = readModelCatalog()
         const { patch } = await readPatchFile(PATCH)
+        json(res, 200, {
+          ok: true,
+          ...catalog,
+          current: { provider: patch.values.agentProvider || catalog.provider, model: patch.values.agentModel || '' },
+        })
+        return
+      }
+
+      if (url.pathname === '/api/backups' && !mutating) {
+        json(res, 200, { ok: true, file: PATCH, backups: listBackups().slice(0, 20) })
+        return
+      }
+
+      if (url.pathname === '/api/rollback' && mutating) {
+        const body = (await readBody(req)) as { name?: string }
+        const name = String(body.name ?? '')
+        const target = listBackups().find((entry) => entry.name === name)
+        if (!target) {
+          json(res, 400, { ok: false, error: `找不到这个备份：${name}` })
+          return
+        }
+        const content = readFileSync(target.path, 'utf8')
+        const parsedBackup = parsePatch(content)
+        if (parsedBackup.found && (parsedBackup.current.allowFrom?.list ?? []).length === 0) {
+          // Restoring this would leave a bridge that refuses to mount.
+          json(res, 400, { ok: false, error: '拒绝：这个备份里的白名单是空的（恢复后桥起不来）' })
+          return
+        }        // Keep the current state recoverable before overwriting it.
+        const safety = `${PATCH}.bak-${Date.now()}`
+        try {
+          copyFileSync(PATCH, safety)
+        } catch (error) {
+          json(res, 500, { ok: false, error: `回滚前没能备份当前配置：${error instanceof Error ? error.message : String(error)}` })
+          return
+        }
+        writeFileSync(PATCH, content, 'utf8')
+        pruneBackups(PATCH, 5)
+        json(res, 200, { ok: true, restored: name, safety: basename(safety) })
+        return
+      }
+
+      if (url.pathname === '/api/state' && !mutating) {
+        const { patch, unreadable } = await readPatchFile(PATCH)
         json(res, 200, {
           ok: true,
           environment: await environment(),
           fields: CONFIG_FIELDS,
           values: Object.fromEntries(CONFIG_FIELDS.filter((f) => f.secret).map((f) => [f.key, maskSecret(patch.values[f.key] ?? '')])),
-          plainValues: Object.fromEntries(CONFIG_FIELDS.filter((f) => !f.secret).map((f) => [f.key, patch.values[f.key] ?? ''])),
+          plainValues: {
+            ...Object.fromEntries(CONFIG_FIELDS.filter((f) => !f.secret).map((f) => [f.key, patch.values[f.key] ?? ''])),
+            // allowFrom lives in its own list, not in `values`: without this the
+            // console rendered an EMPTY whitelist for a bridge that has one, and
+            // reading it as "not configured" is exactly the wrong conclusion.
+            allowFrom: patch.allowFrom.join('\n'),
+          },
+          // Present when the patch exists but could not be read: the page must
+          // say so instead of showing an empty config that is not the truth.
+          ...(unreadable ? { unreadable } : {}),
           schemes: SCHEMES,
           activeScheme: await currentScheme(),
           conversations: listConversations().slice(0, 50),
@@ -498,16 +898,30 @@ const server = createServer((req, res) => {
           }
         }
         const before = await readPatchFile(PATCH)
-        const result = await applyPatchConfig(PATCH, updates)
+        let result
+        try {
+          result = await applyPatchConfig(PATCH, updates)
+        } catch (error) {
+          // A rejected value is the caller's mistake, not a server fault. This
+          // guard exists because a bad number written into the patch makes the
+          // plugin's schema reject the whole profile at load.
+          json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
+          return
+        }
         const after = await readPatchFile(PATCH)
         // Refuse a state the bridge cannot boot from: the node throws on an
         // empty allowlist, and the profile then fails to load entirely.
         if (after.patch.allowFrom.length === 0) {
-          writeFileSync(PATCH, readFileSync(result.backup, 'utf8'))
-          json(res, 400, { ok: false, error: 'refused: allowFrom would end up empty (the bridge would not mount); rolled back' })
+          // If the file did not exist before this call there is no backup to go
+          // back to, so undoing means removing what we just created — reading
+          // `result.backup` blindly threw a TypeError instead and left the
+          // profile sitting at `allowFrom: []`.
+          if (result.backup) writeFileSync(PATCH, readFileSync(result.backup, 'utf8'))
+          else if (!before.exists) rmSync(PATCH, { force: true })
+          json(res, 400, { ok: false, error: '已拒绝：白名单会变空（桥将无法启动），已撤销本次写入' })
           return
         }
-        json(res, 200, { ok: true, changed: result.changed, backup: result.backup, allowFrom: after.patch.allowFrom, before: before.patch.values })
+        json(res, 200, { ok: true, changed: result.changed, backup: result.backup, allowFrom: after.patch.allowFrom })
         return
       }
 
@@ -529,7 +943,17 @@ const server = createServer((req, res) => {
           json(res, 400, { ok: false, error: `unknown scheme: ${String(body.scheme)}` })
           return
         }
-        const policy = { scheme: scheme.id, ...scheme.knobs, ...(body.overrides ?? {}) }
+        // Only the knob keys this scheme actually declares, and only with the
+        // right type: overrides arrived straight from the request body, so a
+        // hand-made POST could previously write any contextPolicy it liked.
+        const overrides: Record<string, number | boolean> = {}
+        for (const [key, value] of Object.entries(body.overrides ?? {})) {
+          const expected = (scheme.knobs as Record<string, unknown>)[key]
+          if (expected === undefined) continue
+          if (typeof expected === 'boolean' && typeof value === 'boolean') overrides[key] = value
+          else if (typeof expected === 'number' && typeof value === 'number' && Number.isFinite(value)) overrides[key] = value
+        }
+        const policy = { scheme: scheme.id, ...scheme.knobs, ...overrides }
         const result = await applyPatchConfig(PATCH, { contextPolicy: JSON.stringify(policy) })
         json(res, 200, { ok: true, policy, backup: result.backup })
         return

@@ -14,6 +14,8 @@ import { SessionId, type Session } from '@deepseek-ai/dsh-session';
 import type { PendingApproval } from './approvals.ts';
 import { type ContextPolicy } from './context-policy.ts';
 import type { MorningService } from './morning.ts';
+import { ProblemReporter } from './problems.ts';
+import type { MemoryService } from './memory.ts';
 /**
  * One entry from `sessionPersistence.list()`.
  *
@@ -97,7 +99,15 @@ export interface NodeConfig {
     reminderFile?: string;
     /** JSON file the morning-greeting config persists to (defaults under $DSH_HOME). */
     morningFile?: string;
-    /** ESP32 PWM light base url (defaults to http://192.168.1.11:80). */
+    /** Markdown file holding long-term facts about the owner (defaults under $DSH_HOME). */
+    memoryFile?: string;
+    /** Append-only problem log (defaults under $DSH_HOME). */
+    problemFile?: string;
+    /** Inject the memory briefing on the first message and every N messages. */
+    memoryInjectEvery?: number;
+    /** Wall-clock "HH:MM" for the daily memory consolidation (empty disables). */
+    memoryConsolidateTime?: string;
+    /** ESP32 PWM light base url (defaults to http://<esp32-ip>:80). */
     esp32BaseUrl?: string;
     /** SiliconFlow API key for image generation (defaults to ocrApiKey when absent). */
     imageGenApiKey?: string;
@@ -138,6 +148,11 @@ export declare class WechatConversationNode {
      * source of truth for the next boot.
      */
     runtimeImageInput: 'auto' | 'native' | 'ocr' | null;
+    /**
+     * The long-term memory briefing for one inbound message, or '' when this
+     * message should not carry one. Injection cadence lives in the service.
+     */
+    memoryPreamble(): string;
     /** Effective image-delivery policy (runtime override, else config). */
     imageInputMode(): 'auto' | 'native' | 'ocr';
     private readonly pending;
@@ -149,6 +164,19 @@ export declare class WechatConversationNode {
     private readonly agentSelections;
     /** Morning-greeting scheduler, when the plugin mounted one. */
     morningService?: MorningService;
+    /** Long-term memory (facts about the owner), when the plugin mounted one. */
+    memoryService?: MemoryService;
+    /**
+     * The problem ledger. Always present — a swallowed failure must have somewhere
+     * to go even before any service is wired, and `/problems` reads it.
+     */
+    readonly problems: ProblemReporter;
+    /**
+     * Last gateway status seen (`wechat/status`), and when. `/status` reports it:
+     * a bridge whose poller died otherwise looks identical to a quiet day.
+     */
+    gatewayStatus: string;
+    gatewayStatusAt: string;
     readonly ctx: Context;
     readonly config: NodeConfig;
     /**
@@ -265,7 +293,10 @@ export declare class WechatConversationNode {
      * verbatim — automatic rotation passes its own reason there, and honours the
      * policy's `announce: false` by passing `null`.
      */
-    createSession(prompt: string, notice?: string | null): Promise<void>;
+    createSession(prompt: string, notice?: string | null): Promise<{
+        ok: boolean;
+        detail: string;
+    }>;
     /**
      * Ensure the bridge targets a live WeChat agent before routing inbound
      * traffic. Correction order:
@@ -317,13 +348,37 @@ export declare class WechatConversationNode {
  *
  * The token scheme wants a token budget, and the honest source is what the host
  * already measured. `$DSH_HOME/storages/session_projcache/sessions/<id>.json`
- * carries it: `contextPressure.surfaceTokens` (the live context surface) with
- * `contextBreakdown` and the cumulative `tokenUsage` as fallbacks. Returns
- * undefined when nothing usable is there — the policy module then falls back to
- * its character proxy and says so in the rotation reason.
+ * carries it: `contextPressure.pressureTokens` (everything the next request
+ * sends), with the `contextBreakdown` parts and the live message surface as
+ * fallbacks. Returns undefined when nothing usable is there — the policy module
+ * then falls back to its character proxy and says so in the rotation reason.
  *
  * Read-only, best effort, and it must never throw: this runs on the turn/end path.
  */
 export declare function readContextTokens(sessionId: string): number | undefined;
 export declare function attachContextRotation(node: WechatConversationNode): () => void;
+/**
+ * Watch the gateway's own health events.
+ *
+ * The gateway emits `wechat/status`, `wechat/error` and `wechat/fatal`, and
+ * nothing in the bridge used to subscribe: a revoked credential, a 403 from a
+ * competing poller, a DNS outage or a paused session all ended up in the host
+ * log at best, while from the owner's side the bridge simply stopped answering.
+ * From here each of them lands in the problem ledger (so `/problems` can show
+ * it), a fatal one is announced once, and the last known status is kept for
+ * `/status` so a silent dead gateway is visible on demand.
+ */
+export declare function attachGatewayObservability(node: WechatConversationNode): () => void;
+/**
+ * Re-anchor long-term memory after the host compacts a session.
+ *
+ * Compaction swaps older messages for a summary, and it runs before a step —
+ * mid-turn, not between messages — so a session can lose its history while the
+ * agent keeps working. Marking the session here makes the owner's next message
+ * carry the full memory briefing again instead of waiting out the usual cadence.
+ *
+ * Observing events is the only route: the preset mounts compaction inside its
+ * own realm, so this (host-plane) bridge cannot resolve `ctx.compaction`.
+ */
+export declare function attachMemoryCompactionWatch(node: WechatConversationNode): () => void;
 //# sourceMappingURL=core.d.ts.map

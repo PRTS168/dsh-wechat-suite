@@ -63,8 +63,16 @@ export declare const CHARS_PER_TOKEN = 2;
  * is roughly a 100k-token mixed Chinese/English conversation.
  */
 export declare const CONTEXT_WINDOW_CHARS = 400000;
-/** Parse the JSON policy out of config; anything unusable degrades to manual. */
-export declare function parseContextPolicy(raw: string | undefined | null): ContextPolicy;
+/**
+ * Parse the JSON policy out of config; anything unusable degrades to manual.
+ *
+ * The degradation is deliberate (a broken policy must not stop the bridge from
+ * mounting) but it is not silent any more: a typo in the admin console used to
+ * switch automatic rotation off for good, with nothing anywhere saying so.
+ * Callers holding a problem ledger pass `onProblem`; the returned policy is
+ * always usable either way.
+ */
+export declare function parseContextPolicy(raw: string | undefined | null, onProblem?: (kind: string, error: unknown, detail?: string) => void): ContextPolicy;
 export interface RotationSignals {
     /** Completed turns in the active session. */
     turns: number;

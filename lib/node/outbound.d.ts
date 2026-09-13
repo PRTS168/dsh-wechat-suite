@@ -49,11 +49,33 @@ export declare function markdownToWechat(content: string): string;
  * torn-down context, `get()` returns undefined — and every remaining failure is
  * swallowed after a best-effort log.
  */
-export declare function sendTextToPeer(node: WechatConversationNode, text: string): Promise<void>;
+export declare function sendTextToPeer(node: WechatConversationNode, text: string): Promise<boolean>;
 /**
  * Attach the outbound digest pipeline. Listens on `session/event` once and
  * filters to the node's active session, so switching sessions mid-flight is
  * safe (per-session digest state is keyed by session id).
  */
 export declare function attachSessionOutbound(node: WechatConversationNode): () => void;
+/**
+ * Remove anything from an assistant reply that is not the assistant talking.
+ *
+ * The model is shown the owner's messages wrapped in `<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 …>>>`,
+ * and a long enough run of that pattern invites it to autocomplete the next
+ * one: on 2026-09-13 it wrote the owner's next line, fence markers included, and
+ * then answered it ("…还是先放着备用 user<<<微信用户消息>>> 先放着，以后有用 … 好").
+ * The persona forbids it; this makes it impossible to reach WeChat anyway, and
+ * keeps the part that WAS the real answer.
+ *
+ * Two things must NOT be touched, or the guard becomes its own outage:
+ *   - markers quoted inside a ``` code block (the model explaining the format,
+ *     or the owner asking what his own messages look like), and
+ *   - any reply that mentions no marker at all.
+ * The match is by PREFIX on purpose: the model renders the marker with a stray
+ * space often enough (`<<<微信用户消息 >>>`) that an exact comparison let a
+ * fabricated turn through untouched.
+ */
+export declare function sanitizeAssistantText(text: string): {
+    text: string;
+    echoed: boolean;
+};
 //# sourceMappingURL=outbound.d.ts.map

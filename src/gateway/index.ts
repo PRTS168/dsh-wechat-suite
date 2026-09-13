@@ -67,6 +67,9 @@ import {
 } from './media.ts'
 
 /** Gateway connection lifecycle, surfaced as `wechat/status` events. */
+/** Pause after an empty poll when the idle delay is disabled (busy-loop guard). */
+export const EMPTY_POLL_PAUSE_MS = 200
+
 export type GatewayStatus =
   | 'idle'        // no credentials configured; not polling
   | 'starting'    // poll loop starting
@@ -189,6 +192,18 @@ export class WechatGateway extends Service {
   private readonly typingTickets = new Map<string, { ticket: string; at: number }>()
   private rateLimitHits: number[] = []
   private rateLimitUntil = 0
+  /**
+   * Aborts the in-flight long poll on shutdown.
+   *
+   * This profile runs with `patchReload: live`, so saving anything in the admin
+   * console tears this plugin down and mounts a fresh one. Without an abort the
+   * old poller keeps its request open for up to its full timeout, overlapping
+   * the new one on the same token — and iLink allows exactly one poller, so it
+   * answers 403 and the FRESH gateway stops for good until a manual restart.
+   */
+  private readonly pollAbort = new AbortController()
+  /** Serialises restarts so two poll loops can never run at once. */
+  private restartChain: Promise<void> = Promise.resolve()
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'wechat')
@@ -196,7 +211,15 @@ export class WechatGateway extends Service {
     ctx.effect(() => {
       return () => {
         this.stopPolling = true
-        void this.stop()
+        // Order matters: cancel the request first, then let the loop unwind.
+        try {
+          this.pollAbort.abort()
+        } catch {
+          // Nothing to cancel.
+        }
+        void this.stop().catch((error) => {
+          this.log(`stop during dispose failed: ${error instanceof Error ? error.message : String(error)}`)
+        })
       }
     })
   }
@@ -488,6 +511,7 @@ export class WechatGateway extends Service {
     let retriedWithoutToken = false
     for (let attempt = 0; attempt <= this.c.sendChunkRetries; attempt++) {
       if (this.rateLimitUntil > Date.now()) {
+        this.ctx.emit('wechat/error', new Error('iLink 发送限流冷却中，这条消息被丢弃（未排队重发）'))
         return { success: false, error: 'iLink sendmessage rate limited; cooldown active' }
       }
       try {
@@ -631,6 +655,7 @@ export class WechatGateway extends Service {
     let retriedWithoutToken = false
     for (let attempt = 0; attempt <= this.c.sendChunkRetries; attempt++) {
       if (this.rateLimitUntil > Date.now()) {
+        this.ctx.emit('wechat/error', new Error('iLink 发送限流冷却中，这条消息被丢弃（未排队重发）'))
         return { success: false, error: 'iLink sendmessage rate limited; cooldown active' }
       }
       try {
@@ -700,8 +725,11 @@ export class WechatGateway extends Service {
         typingTicket: ticket,
         status,
       })
-    } catch {
-      // typing is cosmetic; never fatal
+    } catch (error) {
+      // Typing is cosmetic, but "the indicator never appears" is a symptom the
+      // owner notices, so it goes into the ledger at a quiet level rather than
+      // nowhere.
+      this.ctx.emit('wechat/error', new Error(`typing indicator failed: ${error instanceof Error ? error.message : String(error)}`))
     }
   }
 
@@ -720,8 +748,8 @@ export class WechatGateway extends Service {
         this.typingTickets.set(peerId, { ticket: typingTicket, at: Date.now() })
         return typingTicket
       }
-    } catch {
-      // non-fatal
+    } catch (error) {
+      this.ctx.emit('wechat/error', new Error(`typing ticket fetch failed: ${error instanceof Error ? error.message : String(error)}`))
     }
     return undefined
   }
@@ -731,6 +759,22 @@ export class WechatGateway extends Service {
   // -------------------------------------------------------------------------
 
   private async restart(): Promise<void> {
+    // Serialise restarts. Boot already calls this twice (setCredentials then
+    // start), and without a guard the two loops can share `syncBuf` and
+    // `stopPolling`: two pollers on one token is exactly what iLink answers
+    // with 403, and both would fetch the same batch and answer it twice.
+    const pending = this.restartChain.then(
+      () => this.restartOnce(),
+      () => this.restartOnce(),
+    )
+    this.restartChain = pending.then(
+      () => undefined,
+      () => undefined,
+    )
+    return pending
+  }
+
+  private async restartOnce(): Promise<void> {
     this.stopPolling = true
     const previous = this.pollTask
     this.pollTask = undefined
@@ -766,6 +810,7 @@ export class WechatGateway extends Service {
           token: this.c.token,
           syncBuf: this.syncBuf,
           timeoutMs,
+          signal: this.pollAbort.signal,
         })
         if (this.stopPolling) break
 
@@ -804,6 +849,14 @@ export class WechatGateway extends Service {
           this.dispatchInbound(message)
         }
         if (this.c.pollIdleDelayMs > 0) await sleep(this.c.pollIdleDelayMs)
+        else if (batch.messages.length === 0 && !batch.cancelled) {
+          // The idle delay defaults to 0 (the server is expected to hold the
+          // long poll). A server that answers empty batches instantly would spin
+          // this loop at full speed — burning CPU and getting the account rate
+          // limited, with nothing in the log to explain it. One short pause per
+          // empty round costs nothing and removes the failure mode.
+          await sleep(EMPTY_POLL_PAUSE_MS)
+        }
       } catch (error) {
         if (this.stopPolling) break
         // HTTP 403 = the iLink exclusive lock: another poller owns this token.

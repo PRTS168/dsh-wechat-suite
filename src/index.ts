@@ -85,7 +85,15 @@ export interface Config {
   reminderFile?: string
   /** JSON file the morning-greeting config persists to (defaults under $DSH_HOME). */
   morningFile?: string
-  /** ESP32 PWM light base url (defaults to http://192.168.1.11:80). */
+  /** Append-only problem log: every swallowed failure lands here (defaults under $DSH_HOME). */
+  problemFile?: string
+  /** Markdown file holding long-term facts about the owner (defaults under $DSH_HOME). */
+  memoryFile?: string
+  /** Inject the memory briefing on the first message and every N messages (0 = first + on change). */
+  memoryInjectEvery?: number
+  /** Wall-clock "HH:MM" for the daily memory consolidation (empty disables it). */
+  memoryConsolidateTime?: string
+  /** ESP32 PWM light base url (defaults to http://<esp32-ip>:80). */
   esp32BaseUrl?: string
   /** SiliconFlow API key for image generation (defaults to ocrApiKey when absent). */
   imageGenApiKey?: string
@@ -109,6 +117,24 @@ export interface Config {
   ttsModel?: string
   /** Cloned voice uri used for speech replies (e.g. speech:my-clone:…). */
   ttsVoice?: string
+  /** How one inbound image reaches the model: auto / native / ocr. */
+  imageInput?: 'auto' | 'native' | 'ocr'
+  /** Route used for images only, e.g. "deepseek-official/deepseek-v4-flash". */
+  imageInputModel?: string
+  /**
+   * SMTP account for the `send_email` tool (implicit TLS).
+   *
+   * These live here as well as on the conversation node on purpose: the host
+   * validates the patch against THIS schema, so a key the node reads but the
+   * bundle does not declare is stripped before `apply()` ever sees it — which is
+   * exactly how `send_email` came to answer "SMTP 没配" on a profile whose patch
+   * had the SMTP block filled in.
+   */
+  smtpHost?: string
+  smtpPort?: number
+  smtpUsername?: string
+  smtpPassword?: string
+  smtpFromName?: string
   /** Agent preset name for `/new` sessions. */
   agentPreset?: string
   /** Provider route for `/new` agents. */
@@ -123,6 +149,34 @@ export interface Config {
   token?: string
   /** Bot account id override (prefer credentials). */
   accountId?: string
+  /** Long-poll timeout for getUpdates. */
+  longPollTimeoutMs?: number
+  /** Per-request API timeout. */
+  apiTimeoutMs?: number
+  /** Idle pause between poll iterations (0 = rely on the server's long poll). */
+  pollIdleDelayMs?: number
+  /** Poll interval while waiting for a QR scan. */
+  qrPollIntervalMs?: number
+  /** Delay before retrying a failed poll. */
+  retryDelayMs?: number
+  /** Delay after `maxConsecutiveFailures` consecutive failures. */
+  backoffDelayMs?: number
+  /** Failures before the gateway reports itself as reconnecting. */
+  maxConsecutiveFailures?: number
+  /** Pause after iLink reports the session expired. */
+  sessionExpiredPauseMs?: number
+  /** Send retries per chunk. */
+  sendChunkRetries?: number
+  /** Base delay between send retries. */
+  sendChunkRetryDelayMs?: number
+  /** Rate-limit circuit: how long it stays open. */
+  rateLimitCircuitOpenMs?: number
+  /** Rate-limit circuit: the counting window. */
+  rateLimitCircuitWindowMs?: number
+  /** Rate-limit circuit: hits within the window before it opens. */
+  rateLimitCircuitThreshold?: number
+  /** Hosts allowed for CDN media download (SSRF fence). */
+  allowCdnHosts?: string[]
 }
 
 export const Config = z.object({
@@ -138,6 +192,10 @@ export const Config = z.object({
   ocrBaseUrl: z.string(),
   reminderFile: z.string(),
   morningFile: z.string(),
+  memoryFile: z.string(),
+  problemFile: z.string(),
+  memoryInjectEvery: z.number(),
+  memoryConsolidateTime: z.string(),
   esp32BaseUrl: z.string(),
   imageGenApiKey: z.string(),
   imageGenModel: z.string(),
@@ -147,6 +205,13 @@ export const Config = z.object({
   ttsApiKey: z.string(),
   ttsModel: z.string(),
   ttsVoice: z.string(),
+  imageInput: z.string(),
+  imageInputModel: z.string(),
+  smtpHost: z.string(),
+  smtpPort: z.number(),
+  smtpUsername: z.string(),
+  smtpPassword: z.string(),
+  smtpFromName: z.string(),
   agentPreset: z.string(),
   agentProvider: z.string(),
   agentModel: z.string(),
@@ -159,6 +224,11 @@ export const Config = z.object({
   accountId: z.string().default(''),
   longPollTimeoutMs: z.number().default(LONG_POLL_TIMEOUT_MS),
   apiTimeoutMs: z.number().default(API_TIMEOUT_MS),
+  // Declared here because GATEWAY_KEYS forwards them: a key the gateway reads
+  // but this schema omits is stripped by the host before apply() runs, so the
+  // setting would look accepted and change nothing.
+  pollIdleDelayMs: z.number().default(0),
+  qrPollIntervalMs: z.number().default(1_000),
   retryDelayMs: z.number().default(2_000),
   backoffDelayMs: z.number().default(30_000),
   maxConsecutiveFailures: z.number().default(3),
@@ -196,6 +266,10 @@ export function apply(ctx: Context, config: Config): void {
     ocrBaseUrl: config.ocrBaseUrl,
     reminderFile: config.reminderFile,
     morningFile: config.morningFile,
+    memoryFile: config.memoryFile,
+    problemFile: config.problemFile,
+    memoryInjectEvery: config.memoryInjectEvery,
+    memoryConsolidateTime: config.memoryConsolidateTime,
     esp32BaseUrl: config.esp32BaseUrl,
     imageGenApiKey: config.imageGenApiKey,
     imageGenModel: config.imageGenModel,
@@ -205,6 +279,13 @@ export function apply(ctx: Context, config: Config): void {
     ttsApiKey: config.ttsApiKey,
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
+    imageInput: config.imageInput,
+    imageInputModel: config.imageInputModel,
+    smtpHost: config.smtpHost,
+    smtpPort: config.smtpPort,
+    smtpUsername: config.smtpUsername,
+    smtpPassword: config.smtpPassword,
+    smtpFromName: config.smtpFromName,
     agentPreset: config.agentPreset,
     agentProvider: config.agentProvider,
     agentModel: config.agentModel,
@@ -296,12 +377,30 @@ async function bootWithCredentials(ctx: Context, config: Config): Promise<void> 
   }
 }
 
+/**
+ * Everything the gateway takes from config.
+ *
+ * This used to hand over four keys and silently drop the rest: the schema
+ * accepted `sendChunkRetries`, `allowCdnHosts`, `longPollTimeoutMs` and eight
+ * more, `apply()` never passed them on, and the gateway fell back to its own
+ * defaults — so editing any of them looked accepted and did nothing. The list
+ * below is derived from the gateway's own schema, and the config-surface test
+ * asserts the two stay in step.
+ */
+const GATEWAY_KEYS = [
+  'baseUrl', 'cdnBaseUrl', 'token', 'accountId',
+  'longPollTimeoutMs', 'apiTimeoutMs', 'pollIdleDelayMs', 'qrPollIntervalMs',
+  'retryDelayMs', 'backoffDelayMs', 'maxConsecutiveFailures', 'sessionExpiredPauseMs',
+  'sendChunkRetries', 'sendChunkRetryDelayMs', 'rateLimitCircuitOpenMs',
+  'rateLimitCircuitWindowMs', 'rateLimitCircuitThreshold', 'allowCdnHosts',
+] as const
+
 function extractGatewayConfig(config: Config): Record<string, unknown> {
+  const source = config as unknown as Record<string, unknown>
   const out: Record<string, unknown> = {}
-  if (config.baseUrl !== undefined) out.baseUrl = config.baseUrl
-  if (config.cdnBaseUrl !== undefined) out.cdnBaseUrl = config.cdnBaseUrl
-  if (config.token !== undefined) out.token = config.token
-  if (config.accountId !== undefined) out.accountId = config.accountId
+  for (const key of GATEWAY_KEYS) {
+    if (source[key] !== undefined) out[key] = source[key]
+  }
   return out
 }
 

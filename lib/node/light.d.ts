@@ -26,8 +26,15 @@ export type LightMode = (typeof LIGHT_MODES)[number];
 export declare const LIGHT_ROUTES: Record<LightMode, string>;
 /** Chinese label per switching mode, matching the command replies. */
 export declare const LIGHT_LABELS: Record<Exclude<LightMode, 'query'>, string>;
-/** Device address used when the profile config leaves `esp32BaseUrl` unset. */
-export declare const DEFAULT_LIGHT_BASE_URL = "http://192.168.1.11:80";
+/**
+ * Fallback device address — deliberately EMPTY.
+ *
+ * There used to be a hard-coded `http://192.168.1.x:80` here, which shipped one
+ * operator's real device address to everyone and silently pointed the tool at a
+ * stranger's LAN. With no configured address the tool now says so instead of
+ * guessing.
+ */
+export declare const DEFAULT_LIGHT_BASE_URL = "";
 /** Narrow an untrusted value (tool argument) to a known mode. */
 export declare function isLightMode(value: unknown): value is LightMode;
 /**

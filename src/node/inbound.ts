@@ -15,6 +15,7 @@
  */
 
 import { writeFile, mkdir, appendFile } from 'node:fs/promises'
+import { existsSync, renameSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -71,9 +72,18 @@ export function wrapUserMessage(content: string, date = new Date()): string {
   return `${USER_MESSAGE_OPEN}\n${content}\n<<<${USER_MESSAGE_CLOSE}｜发送于 ${sendStamp(date)}>>>`
 }
 
-/** Wrap content handed to the model with the message send/receive time. */
-function stampLine(content: string): string {
-  return wrapUserMessage(content)
+/**
+ * Build the model-facing text for one inbound message: the long-term memory
+ * briefing (when one is due) OUTSIDE the user fence, then the envelope itself.
+ *
+ * The briefing stays outside deliberately — the persona's hard rule is that only
+ * fenced content counts as a user message, so background facts must not ride
+ * inside it.
+ */
+function wrapForModel(node: WechatConversationNode, content: string): string {
+  const brief = node.memoryPreamble()
+  const wrapped = wrapUserMessage(content)
+  return brief ? `${brief}\n\n${wrapped}` : wrapped
 }
 
 /**
@@ -152,6 +162,20 @@ function extractAttachment(message: InboundMessage): { item: WireItem; kind: 'fi
 function inboundMediaDir(node: WechatConversationNode): string {
   return node.config.mediaDir
     ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'attachments', 'wechat')
+}
+
+/** Rotate the OCR diagnostics past this size, keeping one previous file. */
+export const OCR_LOG_LIMIT_BYTES = 256 * 1024
+
+/** Rename a log aside once it passes the cap, keeping one previous file. */
+function rotateIfLarge(path: string, limit: number): void {
+  try {
+    if (!existsSync(path)) return
+    if (statSync(path).size < limit) return
+    renameSync(path, `${path}.1`)
+  } catch {
+    // A failed rotation must not stop the write that follows.
+  }
 }
 
 /**
@@ -244,6 +268,9 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
     llm: node.ctx.get('llm') as LlmModelCatalog | undefined,
     chatRoute: node.currentModelRoute(),
     configuredRoute: parseRoute(node.config.imageInputModel),
+    // A vision route that cannot be listed must not look like one that has no
+    // image support.
+    onProblem: (kind, error, detail) => node.problems.report(kind, error, detail === undefined ? { notify: false } : { notify: false, detail }),
   })
 
   // An image-only message carries no text of its own, so give the model a line
@@ -282,8 +309,11 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       node.ctx.logger?.warn?.('[dsh-chatnode-wechat] DeepSeek-OCR failed: %s', reason)
+      node.problems.report('inbound/ocr', error, { notify: false, detail: `image=${absPath}` })
       try {
-        await appendFile(join(inboundMediaDir(node), 'ocr-error.log'), `${new Date().toISOString()} ${absPath}: ${reason}\n`)
+        const log = join(inboundMediaDir(node), 'ocr-error.log')
+        rotateIfLarge(log, OCR_LOG_LIMIT_BYTES)
+        await appendFile(log, `${new Date().toISOString()} ${absPath}: ${reason}\n`)
       } catch {
         // best-effort
       }
@@ -301,7 +331,7 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
   const layoutNote = imageBlock
     ? ''
     : '\n\n【图片交付】当前模型未接收原生图片，以上为其磁盘路径（可用读图工具查看）。'
-  const text = stampLine(withHandoff(node, `[微信图片] ${absPath}\n${lead}${ocrSection}${layoutNote}`))
+  const text = wrapForModel(node, withHandoff(node, `[微信图片] ${absPath}\n${lead}${ocrSection}${layoutNote}`))
 
   const content: ContentBlock[] = imageBlock
     ? [{ type: 'text', text }, imageBlock]
@@ -348,11 +378,15 @@ async function handleInboundVoice(node: WechatConversationNode, sender: string, 
   let transcribed = ''
   try {
     transcribed = await transcribeSpeech(
-      { apiKey, model: node.config.sttModel },
+      // One SiliconFlow-compatible base url for every media service, instead of
+      // a hard-coded host per module: a self-hosted or mirrored endpoint that
+      // OCR can reach should be reachable for ASR too.
+      { apiKey, model: node.config.sttModel, baseUrl: node.config.ocrBaseUrl },
       bytes,
     )
   } catch (error) {
     node.ctx.logger?.warn?.('[dsh-chatnode-wechat] ASR failed: %s', error instanceof Error ? error.message : String(error))
+    node.problems.report('inbound/voice', error, { detail: `sender=${sender}` })
     await sendTextToPeer(node, `❌ 语音转写失败：${error instanceof Error ? error.message.slice(0, 150) : String(error)}`)
     return
   }
@@ -368,7 +402,7 @@ async function handleInboundVoice(node: WechatConversationNode, sender: string, 
     return
   }
   const messageValue = createUserMessage({
-    content: [{ type: 'text', text: stampLine(withHandoff(node, `[语音转写]\n${transcribed.trim()}`)) }],
+    content: [{ type: 'text', text: wrapForModel(node, withHandoff(node, `[语音转写]\n${transcribed.trim()}`)) }],
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
@@ -455,7 +489,7 @@ async function handleInboundFile(
   const label = kind === 'video' ? '[微信视频]' : '[微信文件]'
   const nameNote = wireName ? `（${wireName}）` : ''
   const messageValue = createUserMessage({
-    content: [{ type: 'text', text: stampLine(withHandoff(node, `${label} ${absPath}${nameNote}`)) }],
+    content: [{ type: 'text', text: wrapForModel(node, withHandoff(node, `${label} ${absPath}${nameNote}`)) }],
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
@@ -537,7 +571,7 @@ export async function handleInbound(node: WechatConversationNode, message: Inbou
   }
 
   const messageValue = createUserMessage({
-    content: [{ type: 'text', text: stampLine(withHandoff(node, text)) }],
+    content: [{ type: 'text', text: wrapForModel(node, withHandoff(node, text)) }],
     source: { kind: 'user' },
   })
   agent.followup(messageValue)

@@ -22,7 +22,7 @@
  * @module @dsh-cowork/chatnode-wechat/node/approvals
  */
 
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, existsSync, renameSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -30,6 +30,17 @@ import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-app
 import type { WechatConversationNode } from './core.ts'
 import { sendTextToPeer } from './outbound.ts'
 import { sessionBadge } from './labels.ts'
+
+/** Rename a log aside once it passes the cap, keeping one previous file. */
+function rotateIfLarge(path: string, limit: number): void {
+  try {
+    if (!existsSync(path)) return
+    if (statSync(path).size < limit) return
+    renameSync(path, `${path}.1`)
+  } catch {
+    // A failed rotation must not stop the write that follows.
+  }
+}
 
 /** One pending approval awaiting a WeChat reply. */
 export interface PendingApproval {
@@ -41,12 +52,17 @@ export interface PendingApproval {
 
 /** `$DSH_HOME/wechat-approval.log` — one line per approval decision. */
 export const APPROVAL_TRACE_FILE = 'wechat-approval.log'
+/** Rotate the trace past this size, keeping one previous file. */
+export const TRACE_LIMIT_BYTES = 256 * 1024
 
 /** Append one diagnostics line; never affects the decision. */
 function trace(line: string): void {
   try {
     const path = process.env.WECHAT_APPROVAL_TRACE
       ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), APPROVAL_TRACE_FILE)
+    // One line per decision, forever, is how a diagnostics file becomes a
+    // multi-megabyte one; rotate at the same cap the problem ledger uses.
+    rotateIfLarge(path, TRACE_LIMIT_BYTES)
     appendFileSync(path, `${new Date().toISOString()} ${line}\n`, 'utf8')
   } catch {
     // Diagnostics are best-effort by definition.
@@ -101,10 +117,17 @@ export function attachApprovalBridge(node: WechatConversationNode): () => void {
       ].join('\n')
 
       // Ask FIRST and await the send: the user cannot answer what they cannot
-      // see, and a failed send must show up in the trace rather than vanish.
+      // see. The trace must not claim "asked" when the prompt never left — that
+      // would make a timed-out "已拒绝" look like the owner ignored a question
+      // he was never shown.
       node.peerId = peer
-      await sendTextToPeer(node, prompt)
-      trace(`-> asked #${number} via ${peer}`)
+      const asked = await sendTextToPeer(node, prompt)
+      trace(asked ? `-> asked #${number} via ${peer}` : `-> prompt send FAILED for #${number} (will time out)`)
+      if (!asked) {
+        node.problems.report('approvals/prompt', new Error('审批提示没能发出去，主人看不到这条请求'), {
+          detail: `#${number} tool=${req.toolName}`,
+        })
+      }
 
       const outcome = await new Promise<ApprovalOutcome>((resolve) => {
         const timer = setTimeout(() => {

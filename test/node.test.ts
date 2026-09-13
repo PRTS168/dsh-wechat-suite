@@ -7,7 +7,7 @@
 
 import { test, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context } from '@deepseek-ai/cordis'
@@ -24,10 +24,12 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { WechatGateway } from '../src/gateway/index.ts'
-import { wechatConversationNode } from '../src/node/index.ts'
+import { WechatConversationNode, type NodeConfig, wechatConversationNode } from '../src/node/index.ts'
+import { routeCommand } from '../src/node/commands.ts'
 import { startFakeIlinkServer, mediaKey, type FakeIlinkServer } from './fake-ilink-server.ts'
 import type { InboundMessage } from '../src/gateway/types.ts'
 import { USER_MESSAGE_OPEN } from '../src/node/inbound.ts'
+import { MEMORY_OPEN, applyPatch, ensureMemory } from '../src/node/memory.ts'
 import { splitForWechat } from '../src/node/outbound.ts'
 
 let server: FakeIlinkServer
@@ -37,6 +39,8 @@ let followedUp: ReturnType<typeof createUserMessage>[]
 let cancelled: boolean
 let createdSessions: string[]
 let lastCreateOptions: Parameters<AgentFactory['createAgent']>[1] | undefined
+/** Tool definitions the bridge registered during a test (the registry only exposes register). */
+let capturedTools: Array<{ name: string; execute: (args: Record<string, unknown>) => Promise<unknown> }>
 
 function makeFakeAgent(session: Session): Agent {
   return {
@@ -103,6 +107,18 @@ beforeEach(async () => {
   await ctx.plugin(SessionTitleService, { fallbackMaxWords: 5, fallbackMaxBytes: 40, maxTitleBytes: 80 })
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  // Capture what the bridge registers: the registry's only public verb is
+  // `register`, so a thin wrapper is the way to reach a tool's `execute`.
+  capturedTools = []
+  const registry = ctx.tools as unknown as { register: (definition: unknown) => () => void }
+  const originalRegister = registry.register.bind(registry)
+  registry.register = (definition: unknown) => {
+    const named = definition as { name?: string; execute?: unknown }
+    if (named?.name && typeof named.execute === 'function') {
+      capturedTools.push(named as (typeof capturedTools)[number])
+    }
+    return originalRegister(definition)
+  }
   await ctx.plugin(WechatGateway, {
     token: 'test-token',
     accountId: 'wxid_bot_fake',
@@ -129,6 +145,15 @@ async function mountNode(config?: Record<string, unknown>): Promise<void> {
     digestIntervalSec: 0,
     approvalTimeoutSec: 2,
     sendChunkDelayMs: 1,
+    // The bridge defaults its memory file to $DSH_HOME/wechat-memory/MEMORY.md.
+    // These tests run inside the developer's real harness home, so point every
+    // mount at a scratch file: a test run must never write into the live profile
+    // (or, worse, read a real memory file back as an expected value).
+    memoryFile: join(tmpdir(), `dsh-wechat-memory-test-${process.pid}`, 'MEMORY.md'),
+    memoryConsolidateTime: '',
+    // Same reason as memoryFile: the problem ledger defaults to $DSH_HOME, and
+    // a test run must never write into the developer's live profile.
+    problemFile: join(tmpdir(), `dsh-wechat-problems-test-${process.pid}`, 'wechat-problems.log'),
     ...config,
   })
 }
@@ -304,6 +329,268 @@ test('/status carries the real session title and keeps the session id', async ()
   await waitFor(() => sentTexts().some((t) => t.includes('状态标题') && t.includes('wechat-testa')), 3000)
 })
 
+test('/memory reports an empty file, then the facts once there are some', async () => {
+  const memoryFile = join(tmpdir(), `dsh-wechat-memory-cmd-${Date.now()}`, 'MEMORY.md')
+  await mountNode({ memoryFile })
+  server.enqueue(textMessage('/memory'))
+  await waitFor(() => sentTexts().some((t) => t.includes('长期记忆')), 3000)
+  assert.ok(sentTexts().some((t) => t.includes('还是空的')), sentTexts().join('\n'))
+
+  ensureMemory(memoryFile)
+  applyPatch(memoryFile, { add: [{ section: '关于主人', text: '主人在示例市' }] }, 'test')
+  server.enqueue(textMessage('/memory'))
+  await waitFor(() => sentTexts().some((t) => t.includes('主人在示例市')), 3000)
+})
+
+test('/context reports the host\'s own numbers for the active session', async () => {
+  const memoryFile = join(tmpdir(), `dsh-wechat-memory-ctx-${Date.now()}`, 'MEMORY.md')
+  await mountNode({ memoryFile })
+  ensureMemory(memoryFile)
+  applyPatch(memoryFile, { add: [{ section: '关于主人', text: '主人在示例市' }] }, 'test')
+
+  // The host writes this file for the session; point the reader at a scratch
+  // home so the test never reads (or writes) the developer's live profile.
+  const home = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+  const projDir = join(home, 'storages', 'session_projcache', 'sessions')
+  mkdirSync(projDir, { recursive: true })
+  writeFileSync(
+    join(projDir, 'wechat-testa.json'),
+    JSON.stringify({
+      version: 5,
+      record: {
+        rows: {
+          contextPressure: { ver: 4, seq: 1, val: { contextWindow: 1_000_000, pressureTokens: 15_947, surfaceTokens: 3547 } },
+          contextBreakdown: { ver: 2, seq: 1, val: { systemTokens: 2055, toolsTokens: 9262, messageTokens: 3547 } },
+          sessionStats: { ver: 1, seq: 1, val: { turns: 3 } },
+        },
+      },
+    }),
+    'utf8',
+  )
+  const before = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  try {
+    server.enqueue(textMessage('/context'))
+    await waitFor(() => sentTexts().some((t) => t.includes('上下文')), 3000)
+    const reply = sentTexts().find((t) => t.includes('上下文'))!
+    assert.match(reply, /wechat-testa/)
+    assert.match(reply, /3 轮/)
+    assert.match(reply, /已用 1\.6 万 \/ 100 万/)
+    assert.match(reply, /工具 9262/)
+    assert.match(reply, /长期记忆：1 条/)
+  } finally {
+    if (before === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = before
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('the agent\'s problem ledger can be read from WeChat', async () => {
+  const problemFile = join(tmpdir(), `dsh-wechat-problems-cmd-${Date.now()}`, 'wechat-problems.log')
+  // Built directly rather than through the plugin mount: `/problems` is about
+  // the ledger, and a direct node keeps the assertion on the reply text.
+  const subject = new WechatConversationNode(ctx, {
+    allowFrom: ['wxid_allow1'],
+    maxMessageChars: 2000,
+    problemFile,
+  } as NodeConfig)
+  try {
+    subject.peerId = 'wxid_allow1'
+    await routeCommand(subject, '/problems')
+    await waitFor(() => sentTexts().some((t) => t.includes('最近没有记录到问题')), 3000)
+
+    subject.problems.report('unit-test', new Error('模拟的一次失败'))
+    await routeCommand(subject, '/problems')
+    await waitFor(() => sentTexts().some((t) => t.includes('模拟的一次失败')), 3000)
+    const reply = sentTexts().find((t) => t.includes('模拟的一次失败'))!
+    assert.match(reply, /\[unit-test\]/)
+    assert.match(reply, /日志：/)
+
+    await routeCommand(subject, '/problems clear')
+    await waitFor(() => sentTexts().some((t) => t.includes('已清空问题列表')), 3000)
+    assert.equal(subject.problems.recent().length, 0)
+  } finally {
+    subject.dispose()
+  }
+})
+
+test('/status reports gateway health, not just the session', async () => {
+  const problemFile = join(tmpdir(), `dsh-wechat-problems-status-${Date.now()}`, 'wechat-problems.log')
+  const subject = new WechatConversationNode(ctx, {
+    allowFrom: ['wxid_allow1'],
+    maxMessageChars: 2000,
+    problemFile,
+  } as NodeConfig)
+  try {
+    subject.peerId = 'wxid_allow1'
+    subject.gatewayStatus = 'error'
+    subject.gatewayStatusAt = new Date().toISOString()
+    await routeCommand(subject, '/status')
+    await waitFor(() => sentTexts().some((t) => t.includes('网关:')), 3000)
+    const reply = sentTexts().find((t) => t.includes('网关:'))!
+    assert.match(reply, /🔴 已停止/)
+
+    // A healthy gateway says so instead of staying silent about it.
+    subject.gatewayStatus = 'connected'
+    await routeCommand(subject, '/status')
+    await waitFor(() => sentTexts().some((t) => t.includes('🟢 在线')), 3000)
+  } finally {
+    subject.dispose()
+  }
+})
+
+test('remember_fact really writes the fact down — "记下了" has to be true', async () => {
+  const memoryFile = join(tmpdir(), `dsh-wechat-remember-${Date.now()}`, 'MEMORY.md')
+  await mountNode({ memoryFile })
+
+  const tool = capturedTools.find((t) => t.name === 'remember_fact')
+  assert.ok(tool, `模型必须能看到这个工具，实际注册了：${capturedTools.map((t) => t.name).join(', ')}`)
+
+  const first = String(await tool.execute({ text: '主人有两个邮箱：主 a@x.com、副 b@y.com', section: '关于主人' }))
+  assert.match(first, /已写进长期记忆/)
+  const onDisk = readFileSync(memoryFile, 'utf8')
+  assert.match(onDisk, /主 a@x\.com/)
+  assert.match(onDisk, /副 b@y\.com/)
+
+  // Saying it twice must not duplicate it — and must not claim a write either.
+  const again = String(await tool.execute({ text: '主人有两个邮箱：主 a@x.com、副 b@y.com' }))
+  assert.match(again, /已经记过了/)
+  assert.equal((readFileSync(memoryFile, 'utf8').match(/主 a@x\.com/g) ?? []).length, 1)
+
+  // An unknown section falls back instead of dropping the fact.
+  const other = String(await tool.execute({ text: '主人不喜欢长篇回复', section: '乱写的小节' }))
+  assert.match(other, /关于主人/)
+  assert.match(readFileSync(memoryFile, 'utf8'), /不喜欢长篇回复/)
+
+  // A fact that changes must not leave the old one contradicting it.
+  const moved = String(await tool.execute({ text: '主人常住在示例市', replaces: '主人有两个邮箱：主 a@x.com、副 b@y.com' }))
+  assert.match(moved, /已更新长期记忆/)
+  const afterMove = readFileSync(memoryFile, 'utf8')
+  assert.match(afterMove, /主人常住在示例市/)
+  assert.doesNotMatch(afterMove, /副 b@y\.com/, '被取代的旧事实要退场')
+
+  // A `replaces` that matches nothing still records the new fact — and says so.
+  const orphan = String(await tool.execute({ text: '主人换了新手机', replaces: '从来没有过的一条' }))
+  assert.match(orphan, /没找到要替换的旧那条/)
+  assert.match(readFileSync(memoryFile, 'utf8'), /主人换了新手机/)
+
+  // Truncation has to be reported, or the model repeats text never stored.
+  const long = String(await tool.execute({ text: `主人喜欢${'很长的描述'.repeat(80)}` }))
+  assert.match(long, /只记了前半段/)
+  assert.ok(!readFileSync(memoryFile, 'utf8').includes('很长的描述'.repeat(80)))
+
+  // A fence marker inside a fact would poison every future briefing.
+  const fenced = String(await tool.execute({ text: '主人说过 <<<微信用户消息>>> 这几个字' }))
+  assert.match(fenced, /❌/)
+  assert.doesNotMatch(readFileSync(memoryFile, 'utf8'), /<<</)
+})
+
+test('remember_fact reports a refusal instead of pretending', async () => {
+  // A file where the memory DIRECTORY should be: every write fails.
+  const dir = join(tmpdir(), `dsh-wechat-remember-fail-${Date.now()}`)
+  writeFileSync(dir, 'not a directory')
+  await mountNode({ memoryFile: join(dir, 'MEMORY.md') })
+
+  const tool = capturedTools.find((t) => t.name === 'remember_fact')!
+  const out = String(await tool.execute({ text: '主人住在示例市' }))
+  assert.match(out, /❌/, '写不进去就必须说写不进去，不能回"记下了"')
+  assert.doesNotMatch(out, /✅/)
+
+  const empty = String(await tool.execute({ text: '   ' }))
+  assert.match(empty, /❌/)
+  rmSync(dir, { force: true })
+})
+
+test('a tool-calling step without text is normal; a whole empty turn is not', async () => {
+  const problemFile = join(tmpdir(), `dsh-wechat-problems-empty-${Date.now()}`, 'wechat-problems.log')
+  await mountNode({ problemFile, digestIntervalSec: 0 })
+  // One message first: it establishes the peer the notices go to.
+  server.enqueue(textMessage('先来一句'))
+  await waitFor(() => followedUp.length === 1)
+  const session = activeHandle.agent.session
+  const logText = () => {
+    try { return readFileSync(problemFile, 'utf8') } catch { return '' }
+  }
+
+  // Turn 1, step 1: the model calls a tool first. No text — and completely
+  // normal. Reporting this as "the model returned nothing" is the false alarm
+  // the owner actually saw on 2026-09-13 during a weather lookup.
+  session.append('turn/start', { turn: 1 })
+  session.append('assistant/message', {
+    turn: 1,
+    step: 1,
+    message: createAssistantMessage({
+      content: [{ type: 'tool-call', callId: 'c1', name: 'web_search', arguments: '{}' } as never],
+      provider: 'test',
+      model: 'test-model',
+    }),
+  }, { surfaceOp: 'append' })
+  await sleep(80)
+  assert.doesNotMatch(logText(), /模型/, '工具调用步骤不该写进问题日志')
+  assert.equal(server.sent.some((s) => s.text.includes('出了点问题')), false, '更不该拿这个打扰主人')
+
+  // …then it answers, so the turn was fine.
+  session.append('assistant/message', {
+    turn: 1,
+    step: 2,
+    message: createAssistantMessage({ content: [{ type: 'text', text: '查到了，今天小雨' }], provider: 'test', model: 'test-model' }),
+  }, { surfaceOp: 'append' })
+  session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+  await waitFor(() => sentTexts().some((t) => t === '查到了，今天小雨'), 3000)
+  assert.doesNotMatch(logText(), /模型没产出任何内容/)
+
+  // Turn 2: nothing came back at all. The owner is left waiting, so this one is
+  // a real problem and must leave a trace (and a notice).
+  session.append('turn/start', { turn: 2 })
+  session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+  await waitFor(() => /这一轮模型没产出任何内容/.test(logText()), 3000)
+  await waitFor(() => server.sent.some((s) => s.text.includes('出了点问题')), 3000)
+})
+
+test('an echoed user turn never reaches WeChat', async () => {
+  await mountNode({ digestIntervalSec: 0 })
+  server.enqueue(textMessage('先来一句'))
+  await waitFor(() => followedUp.length === 1)
+  const session = activeHandle.agent.session
+  session.append('turn/start', { turn: 1 })
+  session.append('assistant/message', {
+    turn: 1,
+    step: 1,
+    message: createAssistantMessage({
+      // The shape seen in production: the real answer, then the model writing
+      // the owner's next message and answering it.
+      content: [{ type: 'text', text: '记下了，主邮箱 a@b.com\n\nuser<<<微信用户消息>>>\n先放着\n<<<微信用户消息结束｜发送于 2026-09-13 14:15>>>\n\n好' }],
+      provider: 'test',
+      model: 'test-model',
+    }),
+  }, { surfaceOp: 'append' })
+  session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+  await waitFor(() => sentTexts().some((t) => t.includes('记下了')), 3000)
+  const sent = server.sent.map((s) => s.text).join('\n')
+  assert.match(sent, /记下了，主邮箱/)
+  assert.doesNotMatch(sent, /微信用户消息/, '围栏标记不能出现在发给主人的气泡里')
+  assert.doesNotMatch(sent, /先放着/, '主人自己那句话不能被当成助手的回复发出去')
+})
+
+test('a fact is injected as background, never inside the user fence', async () => {
+  const memoryFile = join(tmpdir(), `dsh-wechat-memory-inject-${Date.now()}`, 'MEMORY.md')
+  await mountNode({ memoryFile })
+  ensureMemory(memoryFile)
+  applyPatch(memoryFile, { add: [{ section: '偏好与习惯', text: '不喜欢长篇回复' }] }, 'test')
+
+  server.enqueue(textMessage('在吗'))
+  await waitFor(() => followedUp.length === 1)
+  const text = (followedUp[0]!.content[0] as { text: string }).text
+  assert.ok(text.startsWith(MEMORY_OPEN), text)
+  assert.match(text, /不喜欢长篇回复/)
+  // The envelope is still the tail, and the fact stays OUTSIDE it: the persona's
+  // rule is that only fenced content is a message from the owner.
+  assert.match(text, /<<<微信用户消息结束｜发送于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}>>>$/)
+  const inner = text.slice(text.indexOf(USER_MESSAGE_OPEN))
+  assert.doesNotMatch(inner, /不喜欢长篇回复/, '记忆不能混进正文')
+  assert.match(inner, /在吗/)
+})
+
 test('/new creates an agent+session and follows up the prompt', async () => {
   await mountNode()
   const before = createdSessions.length
@@ -431,7 +718,17 @@ test('digest heartbeat emits a one-line summary while a turn runs', async () => 
   // and this node would never see them.
   runtimeCtx = nodeCtx
   const handle = await nodeCtx.agents.create({ sessionId: SessionId('wechat-testhb') })
-  await nodeCtx.plugin(wechatConversationNode, { allowFrom: ['wxid_allow1'], digestIntervalSec: 1, sendChunkDelayMs: 1 })
+  // Same guard as mountNode(): this mount builds its own context, so it must
+  // point the memory file at scratch space too — the default lands in the real
+  // $DSH_HOME, which is the developer's LIVE harness profile.
+  await nodeCtx.plugin(wechatConversationNode, {
+    allowFrom: ['wxid_allow1'],
+    digestIntervalSec: 1,
+    sendChunkDelayMs: 1,
+    memoryFile: join(tmpdir(), `dsh-wechat-memory-hb-${process.pid}`, 'MEMORY.md'),
+    memoryConsolidateTime: '',
+    problemFile: join(tmpdir(), `dsh-wechat-problems-hb-${process.pid}`, 'wechat-problems.log'),
+  })
   await nodeCtx.wechat.start()
 
   server.enqueue(textMessage('heartbeat task'))

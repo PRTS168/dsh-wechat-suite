@@ -21,6 +21,8 @@ export interface UpdatesBatch {
     syncBuf: string;
     /** Server-suggested long-poll timeout, when the server sent one. */
     suggestedTimeoutMs?: number;
+    /** True when the call ended because the caller aborted (gateway disposed). */
+    cancelled?: boolean;
     /** Raw envelope for error inspection. */
     raw: GetUpdatesResponse;
 }
@@ -42,6 +44,14 @@ interface PostOptions {
     token?: string;
     timeoutMs?: number;
     fetchImpl?: typeof fetch;
+    /**
+     * Caller-owned cancellation. Disposing the gateway must be able to end an
+     * in-flight long poll immediately: otherwise the request keeps flying for its
+     * full timeout (~35s) after the plugin was torn down, overlapping the next
+     * instance's poller on the same token — which iLink answers with HTTP 403 (it
+     * allows exactly one authenticated poller), leaving the fresh bridge stopped.
+     */
+    signal?: AbortSignal;
 }
 /** POST one JSON envelope and parse the response object. */
 export declare function postJson<T = Record<string, unknown>>(opts: PostOptions): Promise<T>;
@@ -60,6 +70,8 @@ export declare function getUpdates(opts: {
     syncBuf: string;
     timeoutMs?: number;
     fetchImpl?: typeof fetch;
+    /** Caller-owned cancellation; see {@link PostOptions.signal}. */
+    signal?: AbortSignal;
 }): Promise<UpdatesBatch>;
 /** Send one text message to a peer. */
 export declare function sendMessage(opts: {

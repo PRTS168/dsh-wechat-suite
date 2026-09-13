@@ -59,12 +59,34 @@ export declare function readPatchFile(file: string): Promise<{
     exists: boolean;
     parsed: ParsedPatch;
     patch: PatchValues;
+    unreadable?: string;
 }>;
+/** Raised instead of writing when the target exists but cannot be read. */
+export declare class PatchUnreadableError extends Error {
+    readonly file: string;
+    readonly reason: string;
+    constructor(file: string, reason: string);
+}
 export interface ApplyResult {
     changed: string[];
     backup?: string;
     file: string;
 }
+/** Raised instead of writing when a value cannot be stored as its field's type. */
+export declare class PatchValueError extends Error {
+    readonly key: string;
+    readonly value: string;
+    constructor(key: string, value: string, expected: string);
+}
+/**
+ * Validate one incoming value against its field's declared kind.
+ *
+ * The admin page checks this too, but the page is not the only caller: a hand
+ * written request, a future UI bug, or `curl` would otherwise write
+ * `memoryInjectEvery: "25 分钟"`, which the plugin's numeric schema rejects at
+ * load — taking the whole profile down with it.
+ */
+export declare function validateUpdate(key: string, value: string): void;
 /**
  * Apply updates to the managed entry. `null` clears an optional key (or the
  * allowlist entry); `undefined`/absent leaves it untouched.

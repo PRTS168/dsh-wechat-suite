@@ -78,18 +78,32 @@ export declare class MorningService {
     constructor(ctx: Context, opts: {
         file?: string;
         targets: () => string[];
+        onProblem?: (kind: string, error: unknown) => void;
     });
+    /**
+     * Where a swallowed failure goes so it leaves a trace the owner can read.
+     * Optional: the service must work (and stay silent-but-logged) without it.
+     */
+    private readonly onProblem?;
     /** Load persisted config and arm the scheduler. */
     start(): Promise<void>;
     /** Stop the scheduler (plugin dispose). */
     stop(): void;
     /** Current config (clone). */
     getConfig(): MorningConfig;
-    /** Update config fields and persist. */
-    update(patch: Partial<MorningConfig>): Promise<MorningConfig>;
+    /** Update config fields and persist. Returns whether the change was saved. */
+    update(patch: Partial<MorningConfig>): Promise<{
+        config: MorningConfig;
+        saved: boolean;
+    }>;
     /** Run one greeting push immediately (used for `/早安 test`). */
     pushNow(): Promise<string>;
     private load;
+    /**
+     * Persist the config. Returns false when it could not be written: the setting
+     * is live in memory but will be gone after a restart, and a command that says
+     * "✅ 已开启" while nothing was saved is a lie the owner only discovers later.
+     */
     private save;
     /** (Re)arm the daily timer for the configured time. */
     private arm;
