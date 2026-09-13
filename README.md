@@ -75,8 +75,8 @@ health report names what is missing.
 
 - **The gateway transport self-heals** — after a connection-level failure the next request takes a
   **brand-new connection** (no pool, no global proxy dispatcher), so recovery no longer needs a
-  process restart. This grew out of a real **18-minute outage** where nothing could be sent
-  (108 ledger entries, the same error 96 times, fixed only by restarting the process).
+  process restart. It targets a failure mode where every outbound request fails for minutes on end
+  and only a restart clears it (machines behind a system proxy or a TUN interface hit it most).
 - **Long-poll window capped** — the server's suggested window can no longer override
   `longPollTimeoutMs` without limit; the smaller of the two wins and both numbers are logged. If the
   server only answers when a window expires, that window *is* the delay between pressing send and the
