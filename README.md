@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/banner.svg" alt="dsh-chatnode-wechat — WeChat bridge for DeepSeek Harness" width="100%">
+  <img src="assets/banner.svg" alt="dsh-wechat-suite — WeChat bridge for DeepSeek Harness" width="100%">
   <h3>Chat with, monitor, and approve your DSH agents from WeChat.</h3>
   <p>Two-way <b>text · images · voice · files · video</b> over Tencent's <b>clawbot iLink</b> gateway — no public IP, no port forwarding, no browser.</p>
 
@@ -712,7 +712,7 @@ console — see [v0.3.0 — previous release](#-v030--previous-release) and
 - `/perm` two-step permission-preset switcher, plus `pnpm setup`.
 - Inbound files/videos download and decrypt to `mediaDir` with the original name preserved;
   `wechat_send_file` / `wechat_send_video` send local files and clips back.
-- Persona residue removed from the repo; upstream fork attribution added.
+- Persona residue removed from the repo.
 
 </details>
 
@@ -728,12 +728,6 @@ Full changelog: [`CHANGELOG.md`](CHANGELOG.md) · all announcements: [`releases/
 
 ## 🙏 Acknowledgements
 
-- **Upstream** — this repository is a personal, unofficial fork and continued development of
-  [Jesse-njx/dsh-chatnode-wechat](https://github.com/Jesse-njx/dsh-chatnode-wechat), forked from
-  the upstream snapshot at commit `2bd4c15` (2026-08). The original commit history and the credit
-  for the earliest work remain intact and are attributed to the upstream authors; upstream remains
-  the source of truth for the base protocol. This project is **not** an official release of, and is
-  not affiliated with, the upstream project or its authors.
 - **Protocol references** — the iLink wire details were reconstructed from existing WeChat bot
   clients (hermes-agent and OpenClaw); synthetic fixtures live in `test/fixtures/inbound.ndjson`
   (no real account data), so CI never needs a live account.
@@ -741,8 +735,7 @@ Full changelog: [`CHANGELOG.md`](CHANGELOG.md) · all announcements: [`releases/
   Cordis plugin model (`cordis`, `schemastery`) that this bundle extends.
 - **Services used by the optional media helpers** — SiliconFlow (DeepSeek-OCR, Kwai-Kolors,
   XingChenASR, CosyVoice2) and Open-Meteo (morning weather).
-- **Thanks** — to the upstream maintainers for the base protocol work, and to the DeepSeek Harness
-  and Cordis communities whose plugins this bundle builds on.
+- **Thanks** — to the DeepSeek Harness and Cordis communities whose plugins this bundle builds on.
 
 ## 📄 License
 

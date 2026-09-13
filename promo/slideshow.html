@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>dsh-chatnode-wechat — promo (←/→ to advance)</title>
+<title>dsh-wechat-suite — promo (←/→ to advance)</title>
 <style>
   /* ---------------------------------------------------------------
-   * dsh-chatnode-wechat — 1-minute promo slideshow
+   * dsh-wechat-suite — 1-minute promo slideshow
    * Self-contained, no external assets. Keyboard: ← → Space Home End,
    * number keys 1-8, or click to advance. 1280x720 stage, scales to fit.
    * Design: the slide IS a WeChat thread — headlines are message bubbles
@@ -155,7 +155,7 @@
 </style>
 </head>
 <body>
-<div class="stage" id="stage" tabindex="0" aria-label="dsh-chatnode-wechat promo slideshow">
+<div class="stage" id="stage" tabindex="0" aria-label="dsh-wechat-suite promo slideshow">
   <div class="progress"><i id="progress"></i></div>
   <div class="rail">
     <span class="dot"></span>
@@ -167,7 +167,7 @@
 
   <!-- 1 · title -->
   <section class="slide active" data-slide="1">
-    <div class="eyebrow" data-enter="1">dsh-chatnode-wechat · v0.1.0</div>
+    <div class="eyebrow" data-enter="1">dsh-wechat-suite · v4.0</div>
     <div class="headline-bubble" data-enter="2">
       <h1 class="headline">Your DSH agent,<br><span class="accent">now on WeChat.</span><span class="caret" aria-hidden="true"></span></h1>
     </div>
@@ -248,8 +248,8 @@
     <div class="term" data-enter="2">
       <div class="bar"><i></i><i></i><i></i><span>terminal</span></div>
       <div class="body">
-        <div><span class="cmd">$</span> git clone https://github.com/Jesse-njx/dsh-chatnode-wechat</div>
-        <div><span class="cmd">$</span> <span id="typing">dsh plugin --profile web add ./dsh-chatnode-wechat</span><span class="caret" aria-hidden="true"></span></div>
+        <div><span class="cmd">$</span> git clone https://github.com/PRTS168/dsh-wechat-suite</div>
+        <div><span class="cmd">$</span> <span id="typing">dsh plugin --profile web add ./dsh-wechat-suite</span><span class="caret" aria-hidden="true"></span></div>
       </div>
     </div>
     <p class="term-caption" data-enter="3">Then scan the QR once. Done.</p>
@@ -257,11 +257,11 @@
 
   <!-- 8 · outro -->
   <section class="slide" data-slide="8">
-    <div class="eyebrow" data-enter="1">dsh-chatnode-wechat</div>
+    <div class="eyebrow" data-enter="1">dsh-wechat-suite</div>
     <div class="headline-bubble" data-enter="2">
       <h2 class="headline" style="font-size:52px;">Chat with your agent.<br><span class="accent">From WeChat.</span></h2>
     </div>
-    <p class="outro-url" data-enter="3">github.com/<b>Jesse-njx</b>/dsh-chatnode-wechat &nbsp;·&nbsp; MIT</p>
+    <p class="outro-url" data-enter="3">github.com/<b>PRTS168</b>/dsh-wechat-suite &nbsp;·&nbsp; MIT</p>
   </section>
 </div>
 
@@ -288,7 +288,7 @@
   function typeCommand() {
     if (typed || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     typed = true;
-    var text = 'dsh plugin --profile web add ./dsh-chatnode-wechat';
+    var text = 'dsh plugin --profile web add ./dsh-wechat-suite';
     typing.textContent = '';
     var i = 0;
     (function tick() {

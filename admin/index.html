@@ -782,7 +782,12 @@ async function loadAll() {
 }
 
 // ── mode + boot ─────────────────────────────────────────────────────────────
-S.mode = localStorage.getItem('wechat-admin-mode') === 'advanced' ? 'advanced' : 'simple';
+// `?mode=advanced|simple` deep-links a mode (the README screenshots use it, and
+// it is handy for bookmarking); otherwise the remembered choice wins.
+const modeParam = new URLSearchParams(location.search).get('mode');
+S.mode = modeParam === 'advanced' || modeParam === 'simple'
+  ? modeParam
+  : (localStorage.getItem('wechat-admin-mode') === 'advanced' ? 'advanced' : 'simple');
 
 function renderModes() {
   $('#modes').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === S.mode));

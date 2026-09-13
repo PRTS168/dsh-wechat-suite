@@ -2,6 +2,10 @@ MIT License
 
 Copyright (c) 2025 DSH Cowork contributors
 
+This work descends from the MIT-licensed project dsh-chatnode-wechat
+(https://github.com/Jesse-njx/dsh-chatnode-wechat). The copyright notice above is
+that project's own notice, retained verbatim as its license requires.
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

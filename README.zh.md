@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/banner.svg" alt="dsh-chatnode-wechat — 把微信变成 DSH agent 的遥控器" width="100%">
+  <img src="assets/banner.svg" alt="dsh-wechat-suite — 把微信变成 DSH agent 的遥控器" width="100%">
   <h3>在微信里与你的 DSH agent 对话、监控、审批。</h3>
   <p>双向<b>文字 · 图片 · 语音 · 文件 · 视频</b>，走腾讯 <b>clawbot iLink</b> 网关 —— 不需要公网 IP、不需要端口映射、不需要打开浏览器。</p>
 
@@ -659,7 +659,7 @@ pnpm setup          # 交互式配置向导
 - `/perm` 两步权限预设切换器，以及 `pnpm setup` 配置向导。
 - 入站文件/视频解密落盘 `mediaDir` 并保留原文件名；`wechat_send_file` / `wechat_send_video`
   发回本地文件与视频。
-- 仓库内人设残留清除；补上上游 fork 归属声明。
+- 仓库内人设残留清除。
 
 </details>
 
@@ -675,19 +675,13 @@ pnpm setup          # 交互式配置向导
 
 ## 🙏 致谢
 
-- **上游** —— 本仓库是对
-  [Jesse-njx/dsh-chatnode-wechat](https://github.com/Jesse-njx/dsh-chatnode-wechat)
-  的个人、非官方 fork 与继续开发，fork 自上游快照 `2bd4c15`（2026-08）。原始提交历史与早期
-  贡献者署名完整保留并归属上游作者；基础协议以上游为准。本仓库**不是**上游项目或其作者的
-  官方发布，也与上游无隶属关系。
 - **协议参考** —— iLink 报文细节归纳自既有的微信机器人客户端（hermes-agent 与 OpenClaw）；
   合成样本在 `test/fixtures/inbound.ndjson`（不含真实账号数据），CI 因此无需真账号。
 - **平台** —— [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 及其
   Cordis 插件模型（`cordis`、`schemastery`）。
 - **可选媒体能力所用服务** —— SiliconFlow（DeepSeek-OCR、Kwai-Kolors、XingChenASR、
   CosyVoice2）与 Open-Meteo（早安天气）。
-- **感谢** —— 上游项目维护者打下的基础协议工作，以及本 bundle 所依赖的 DeepSeek Harness 与
-  Cordis 插件生态。
+- **感谢** —— 本 bundle 所依赖的 DeepSeek Harness 与 Cordis 插件生态。
 
 ## 📄 License
 

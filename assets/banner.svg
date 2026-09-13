@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="440" viewBox="0 0 1600 440" role="img" aria-label="dsh-chatnode-wechat v4.0 — WeChat bridge for DeepSeek Harness: context, memory, diagnostics">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="440" viewBox="0 0 1600 440" role="img" aria-label="dsh-wechat-suite v4.0 — WeChat bridge for DeepSeek Harness: context, memory, diagnostics">
   <!-- Typography is inline rather than a <style> block on purpose: this file is
        served through image proxies that may drop an embedded stylesheet. -->
 
@@ -6,8 +6,9 @@
   <rect x="0.5" y="0.5" width="1599" height="439" fill="none" stroke="#1b1f26" stroke-width="1"/>
   <rect x="64" y="104" width="2" height="252" fill="#6ea8fe" opacity="0.55"/>
 
-  <text x="88" y="140" fill="#6b7280" font-family="system-ui, -apple-system, Segoe UI, Arial, sans-serif" font-size="15" font-weight="500" letter-spacing="3.2">DEEPSEEK HARNESS · WECHAT BRIDGE</text>
-  <text x="86" y="214" fill="#e8eaed" font-family="system-ui, -apple-system, Segoe UI, Arial, sans-serif" font-size="66" font-weight="650" letter-spacing="-1.2">dsh-chatnode-wechat</text>
+  <text x="88" y="140" fill="#6b7280" font-family="system-ui, -apple-system, Segoe UI, Arial, sans-serif" font-size="15" font-weight="500" letter-spacing="3.2">DEEPSEEK HARNESS &#183; WECHAT SUITE</text>
+  <text x="544" y="140" fill="#5b6472" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="14">plugin  @dsh-cowork/chatnode-wechat</text>
+  <text x="86" y="214" fill="#e8eaed" font-family="system-ui, -apple-system, Segoe UI, Arial, sans-serif" font-size="66" font-weight="650" letter-spacing="-1.2">dsh-wechat-suite</text>
   <text x="88" y="256" fill="#8b93a1" font-family="system-ui, -apple-system, Segoe UI, Arial, sans-serif" font-size="22">Turn a WeChat account into a remote control for your DSH agent.</text>
   <text x="88" y="300" fill="#6b7280" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="17">WeChat  &#8644;  iLink  &#8644;  gateway  &#8644;  conversation-node  &#8644;  agent session</text>
 

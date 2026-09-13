@@ -16,8 +16,17 @@ const root = join(import.meta.dirname, '..')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
   files?: string[]
   version?: string
+  repository?: { url?: string }
 }
 const gitignore = readFileSync(join(root, '.gitignore'), 'utf8')
+
+/**
+ * The name a reader sees is the *repository* name, not the plugin id: the repo is
+ * `dsh-wechat-suite` while the installed plugin still carries its historical id.
+ * Deriving it from `repository.url` keeps the assertion honest — a doc that names
+ * some other project must fail here.
+ */
+const repoName = (pkg.repository?.url ?? '').replace(/\.git$/, '').split('/').pop() ?? ''
 
 /** Directories that exist in the repo and must never be swept in whole. */
 const NEVER_WHOLE = ['admin']
@@ -49,11 +58,16 @@ test('the files that would leak are ignored by git as well', () => {
 test('the released version matches the release notes that document it', () => {
   const version = pkg.version ?? ''
   assert.match(version, /^\d+\.\d+\.\d+$/, `package.json 的 version 不合法：${version}`)
+  assert.ok(repoName.length > 0, 'package.json 的 repository.url 读不出仓库名')
   const major = version.split('.')[0]
   // v4.0 ships as 4.0.0 with a tag of v4.0 (the tag drops the patch for x.0.0).
   const tag = version.endsWith('.0.0') ? `v${major}.0` : `v${version}`
   const notes = join(root, 'releases', `${tag}-release-notes.md`)
   assert.ok(existsSync(notes), `缺少发行说明：releases/${tag}-release-notes.md`)
   const body = readFileSync(notes, 'utf8')
-  assert.match(body.split('\n')[0]!, new RegExp(`dsh-chatnode-wechat ${tag.replace('.', '\\.')}`), '发行说明首行要写明版本')
+  assert.match(
+    body.split('\n')[0]!,
+    new RegExp(`${repoName} ${tag.replace('.', '\\.')}`),
+    `发行说明首行要以仓库名（${repoName}）+ 版本开头，让用户一眼对上他要装的仓库`,
+  )
 })
