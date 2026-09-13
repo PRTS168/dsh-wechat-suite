@@ -398,7 +398,7 @@ git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main
 > （列表接口可能命中缓存，用 `/releases/latest` 或加时间戳参数复验）。
 
 **约定**：先补 `CHANGELOG.md`（技术变更），再写一份对应的 `releases/vX.Y.Z-release-notes.md`
-（面向使用者的发行公告，正文原样用作 GitHub Release 内容，包含 `## dsh-chatnode-wechat vX.Y.Z`
+（面向使用者的发行公告，正文原样用作 GitHub Release 内容，标题行用**仓库名**加版本，如 `## dsh-wechat-suite vX.Y.Z`
 标题行），两者与代码在同一批提交里推上去。文档一律以**使用者**为读者：只写他们需要知道的
 行为、配置与升级动作，不写仓库维护过程。
 

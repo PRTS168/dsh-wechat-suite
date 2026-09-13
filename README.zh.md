@@ -11,34 +11,17 @@
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
 
   <p>
-    <a href="#-v40-重大更新">v4.0 重大更新</a> ·
-    <a href="#-快速开始">快速开始</a> ·
+    <a href="#-这是什么">这是什么</a> ·
+    <a href="#-60-秒上手">60 秒上手</a> ·
     <a href="#-功能">功能</a> ·
     <a href="#-配置">配置</a> ·
     <a href="#-命令与工具">命令</a> ·
     <a href="#-独立管理台">管理台</a> ·
     <a href="#-长期记忆">记忆</a> ·
-    <a href="#-开发">开发</a> ·
+    <a href="#-v40-重大更新">更新日志</a> ·
     <a href="README.md">English</a>
   </p>
 </div>
-
-> [!WARNING]
-> **一个账号一个轮询者。** iLink 每个 bot token 只允许一个鉴权轮询者。同一微信账号同时跑
-> 第二个本实例（或任何其他 iLink 客户端）会导致 HTTP 403 与消息丢失。请为桥准备一个
-> **专用微信号**，并把它当作可弃置账号：腾讯随时可能限制它。
-
-> [!IMPORTANT]
-> **有两样东西必须填。** `allowFrom` 白名单，以及 `WEIXIN_BOT_TOKEN` /
-> `WEIXIN_ACCOUNT_ID` / `WEIXIN_BASE_URL` 凭据。缺了它们，桥会安全地保持空闲 ——
-> 它绝不会把白名单外的消息喂给模型。
-
-> [!NOTE]
-> **仅供参考。** 已在一套特定环境实测（2026-09），不代表开箱即用。所有 `<...>` 都是需要
-> 你填入的占位符。协议细节逆向自既有客户端。人设 preset 需自备：把 `agentPreset` 指向你自己
-> 放在 `$DSH_HOME/.agent-presets/<名>/` 的 preset。
-
----
 
 ## 🧭 这是什么
 
@@ -57,181 +40,45 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
 
 ---
 
+## ⚡ 60 秒上手
+
+前置：Node ≥ 22、pnpm、一个**专用微信号**、一个 DSH profile。装好后三步：
+
+```sh
+dsh plugin --profile <你的profile> add github:PRTS168/dsh-wechat-suite  # 1 装进 profile
+pnpm login                                                             # 2 扫码，写入微信凭据
+pnpm setup                                                             # 3 填白名单等占位项
+```
+
+然后重启 `dsh web`，在微信里给这个号发条消息就该有回复。其它安装方式（Release tarball、
+从 checkout 构建）与分步说明见[快速开始](#-快速开始)；卡住了先看
+[独立管理台](#-独立管理台)的体检——它每一项失败都会告诉你卡在哪。
+
+> [!WARNING]
+> **一个账号一个轮询者。** iLink 每个 bot token 只允许一个鉴权轮询者：同一微信账号同时跑第二个
+> 本实例（或任何其他 iLink 客户端）会导致 HTTP 403 与消息丢失。请为桥准备一个**专用微信号**，
+> 并把它当作可弃置账号 —— 腾讯随时可能限制它。
+
+> [!IMPORTANT]
+> **有两样东西必须填。** `allowFrom` 白名单，以及 `WEIXIN_BOT_TOKEN` / `WEIXIN_ACCOUNT_ID` /
+> `WEIXIN_BASE_URL` 凭据。缺了它们，桥会安全地保持空闲 —— 它绝不会把白名单外的消息喂给模型。
+> 所有 `<...>` 都是要你自己填的占位符；人设 preset 也需自备（把 `agentPreset` 指向你放在
+> `$DSH_HOME/.agent-presets/<名>/` 的 preset）。
+
+---
+
 ## ✨ v4.0 重大更新
 
-**上下文管理大改 · Web 管理台重写 · 长期记忆上线。** 完整发行说明：
-[`releases/v4.0-release-notes.md`](releases/v4.0-release-notes.md) ·
-[Release 页面](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v4.0)。
+- **上下文管理大改** —— 不再靠"到点换对话"续命：一个会话到底 + 分层记忆，`/context` 直接显示
+  真实占用、压缩触发点、压缩后原样保留多少 token。
+- **长期记忆（新）** —— `MEMORY.md` 跨会话事实文件 + `remember_fact` 工具（说"记一下"立刻落盘）
+  + 每天自动整理一次。
+- **Web 管理台重写** —— 新手 / 高级双模式、8 项体检（每项都说明卡在哪、怎么解决）、配置备份与一键回滚。
+- **问题台账（新）** —— 每次被吞掉的失败都留痕：`/problems` 可查、`/status` 显示网关健康，告警限流。
+- **修掉的真问题** —— `send_email` 一直报"SMTP 未配置"（宿主按 bundle schema 静默丢弃配置）、
+  模型复读消息围栏、心跳定时器泄漏、工具步骤假警报等。
 
-### 上下文管理：从"到点换对话"到"一个会话到底 + 分层记忆"
-
-默认方案 v0.3.x 起就是 `manual`（不自动轮换）；v4.0 做的是把这条路线**做实** ——
-以前你既看不见上下文用了多少，也不知道宿主的压缩何时触发、会保留什么。桥现在补齐三件事：
-
-- **`/context`（新）**：把宿主实测的数字摆出来 —— 占用 / 模型窗口 / 组成（对话·工具·系统）/
-  压缩触发点 / 压缩后原样保留多少 / 长期记忆条数。读的是宿主投影缓存，不是估算。
-- **压缩参数建议显式写死**：插件默认 `thresholdRatio 0.8 / retainRatio 0.16`，建议改成
-  `0.65 / 0.25`。原因：宿主的**溢出恢复**路径把 `retainTokens` 硬编码为 0，那条路只保留
-  最后一条消息 —— 正是"刚说完就忘"。提前到 65% 触发就永远走不到那里；保留 25%
-  （100 万窗口＝25 万 token 逐字保留）意味着普通对话整段都在原样尾巴里。
-- **压缩后自动重新注入记忆**：压缩发生在回合中间，桥监听 `compaction/summary`，
-  让下一条消息重新带上完整长期记忆。
-- 轮换方案（`rotate-turns` / `rotate-pressure` / `rotate-tokens` / `daily`）完整保留，
-  谁需要谁自己切。
-
-### 长期记忆（新）
-
-`MEMORY.md` 跨会话事实文件（关于主人 / 偏好与习惯 / 常用设备与环境 / 待办与承诺 / 重要决定 + 作废台账）：
-
-- 作为**背景资料**贴在用户消息围栏**外面**注入 —— 记忆永远不会被当成主人的指令；没有内容时不注入。
-- **每天 04:30 自动整理**（只从围栏里的主人原话提取，用会话自己的模型；要求空闲 2 小时以上、
-  当天至少 5 句主人发言，否则跳过）。
-- **`remember_fact` 工具（新）**：说"记一下"时**真的写进文件**，而不是嘴上说"记下了"；
-  支持 `replaces` 取代旧事实；写不进去会明确回 `❌`，绝不假装成功。
-- **`/memory`** 查看，`/memory now` 立刻整理。
-
-### Web 管理台重写
-
-`http://127.0.0.1:8790/` 打开就是新页面，左上角切换：
-
-- **新手模式**：只留必须懂的几项，全程大白话 —— 谁能跟我说话 / 用哪个大脑 / 它记不记得住 /
-  聊久了怎么办，外加"出问题了"页直接看日志原文。
-- **高级模式**：全部 36 个配置键、provider 与图片路由、记忆与问题日志路径、6 种上下文方案
-  + 参数微调 + 原始 JSON、对话与转录、配置备份与**一键回滚**。
-- **8 项体检**：一行结论 + 每项失败都带"怎么解决"。
-- 顺带修掉：写操作的守卫头以前是死代码、配置文件读不出来会被当成空配置覆盖、
-  备份按文件名而不是时间裁剪、数字字段缺服务端校验。
-
-### 问题台账：一切失败都留痕
-
-被吞掉的失败不再消失：写 `$DSH_HOME\wechat-problems.log`（256KB 轮转）+ `/problems` 可查 +
-**在微信里告诉你一次**（同问题 10 分钟一次、每小时最多 6 条）+ `/status` 多一行**网关健康**。
-覆盖入站处理、网关 status/error/fatal、出站失败、整轮空回复、切会话后丢弃的回复、
-早安推送、提醒读写与投递、记忆 IO、管理台队列、OCR 与语音转写失败等。
-
-### 修掉的真问题
-
-- **配置被宿主静默丢弃** —— `smtpHost/smtpPort/smtpUsername/smtpPassword/smtpFromName`
-  只声明在会话节点侧，宿主校验 profile patch 时直接丢掉，于是 `send_email` 永远回
-  "SMTP 未配置"，**哪怕配置齐全、凭据也完全可用**。同样被丢的还有 `imageInput` /
-  `imageInputModel` 与 12 个网关键（`sendChunkRetries`、`allowCdnHosts` 等：改了等于没改）。
-  现在四份键集必须相等，并有 `config-surface` 测试守护。
-- **模型替主人写话** —— 长对话里模型复读"用户消息"围栏、自己编出主人的下一句并作答，
-  整段发到了微信。现在出站前确定性裁掉围栏及其后内容（代码块内的引用不误伤），并记 `model/echo`。
-- **假警报** —— 工具调用步骤本来没有文本，旧代码当成"模型返回空内容"并给主人发 ⚠️。
-  现在按整轮判定：整轮无产出才算问题。
-- 切会话后心跳定时器永不停止；热重载不 abort 在途长轮询（会被 iLink 判 403 导致新桥停摆）；
-  时钟异常时定时器 NaN 忙循环；提醒文件读坏被当空覆盖；卸载时未决审批永久悬挂；
-  `net.ts` 响应流缺 `error` 监听。
-
-### 其它
-
-- 单元测试 **167 → 255 项**，新增 `config-surface` / `problems` / `robustness` /
-  `context-report` / `memory` / `outbound-guard` / `packaging` 七组。
-- 新增源码：`src/node/memory.ts`、`src/node/problems.ts`、`src/node/context-report.ts`。
-
----
-
-## 📦 v0.3.1 上一版
-
-<details>
-<summary>v0.3.1（天气与命令面修复）—— 点开看细节</summary>
-
-自 v0.3.0 以来的修复。完整发行说明：
-[`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md) ·
-[Release 页面](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.1)。
-
-### 修复
-
-- **`/早安 test` 只回一句 `fetch failed`** —— `fetch` 把任何传输层失败都报成 `TypeError: fetch failed`，真实原因（`ENOTFOUND` / `ECONNREFUSED` / TLS / 超时）藏在 `error.cause` 里；代理活着但不放行 `api.open-meteo.com` 时，与真的断网完全无法区分
-  - 现在会展开 cause 链（含 happy-eyeballs 的 `AggregateError`）写出真实原因，并改用 `node:https` **直连重试一次**（`agent: false`，不经过任何代理 dispatcher）；两次都失败时同时给出两条原因
-- **裸 `1` / `2` 回答权限请求失效** —— 审批检查位于「是否以 `/` 开头」判断之后，数字根本到不了 `resolveApproval()`，会被当成聊天内容喂给模型，审批只能等超时
-  - 审批回复（`/yes` `/no` 与裸 `1` `/2`）现在最先处理；没有待确认请求时 `1` `/2` 仍会交回给 `/model` `/perm` 菜单与模型
-- **`/yes` `/no` 在没有待确认请求时**：以前回「❓ 未知命令 /yes」并附上整段帮助，现在明确回一句「当前没有待确认的请求」
-- **老灯控词表失效** —— 已归档的 `dsh-wechat-tools` 插件用的是设备自己的词（`/gear` `/off` `/low` `/mid` `/high`），此前一律回「未知命令」
-  - 五个拼写已恢复并列入 `/help`，与 `/开灯` 系列共用同一份实现
-- **灯控同样被代理绑住** —— 局域网设备请求现在也会在传输层失败后直连重试，并且报出真实原因而不是 `fetch failed`
-- **`/perm` 完全没反应** —— 宿主的权限预设是**会话级**服务（`current(session)`、`set(session, name)`，标签来自 `optionOf()`），而桥按「传事件数组」的旧假设调用：异常逃出命令路由、被入站处理器吞掉，于是用户看到的是完全静默
-  - 现在按宿主真实签名调用，并对整段调用加保护（宿主 API 变化时至少回一句失败原因）
-  - **命令面不再静默**：`/perm` `/model` `/sessions` `/status` `/send` 任一步骤抛错都会回 `❌ …失败：<真实原因>`；`/send` 改为经 `ctx.get('wechat')` 取服务
-  - `/sessions` 与 `/status` 会先尝试恢复持久化的 `wechat-` 会话，重启后不再显示「没有会话」
-- **审批提示发不到微信，工具调用一直等到超时** —— 两层原因，缺一不可：
-  - **路由作用域**：宿主以 `ctx.waterfall(scopeTarget(agent, agent), 'approval/request', …)` 派发，监听器可能被作用域过滤直接丢掉；
-  - **waterfall 先答者胜**：桌面客户端的应答器（GUI 里那张「等待审批」卡片）先占住请求，微信侧**连被问到的机会都没有**。
-  - 会话事件里有 `approval/asked`、GUI 里卡片悬着、微信一片安静 —— 这正是"桥活着但答不上话"的样子。
-  - 修法：应答器按 cordis 的 `{ prepend: true, global: true }` 注册 —— `global` 跳过作用域过滤，`prepend` 排在桌面客户端应答器之前，微信成为审批的回答面（`wechat-` 会话不再在 GUI 弹卡片）。非本桥命名空间的请求仍 `next()` 委托。
-  - 整条审批链现在**逐步骤写 `$DSH_HOME/wechat-approval.log`**（`tool / session / active / owns / peer / 决策`，可用 `WECHAT_APPROVAL_TRACE` 改路径），内部错误也会直接在微信回一句，不再有"发了没反应"。
-
-### 其它
-
-- 单元测试 **143 → 167 项**（新增 `commands` 11、`approvals` 9、`morning` +3、`light` +1；「设备不可达」用例改为同时注入直连传输，不再触网）
-- 新增 `src/node/net.ts`：`describeError()` 与 `directRequest()` 供天气与灯控共用
-- 文档：中英首页加「代理排查」提示；`DEVELOPMENT.md` 环境约束补记该坑
-
-</details>
-
----
-
-## 📦 v0.3.0 上一版
-
-自 v0.2.2 以来的改进。
-完整发行说明：[`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md)
-· [Release 页面](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0)。
-
-<details open>
-<summary><b>新增</b></summary>
-
-- **上下文生命周期 `contextPolicy`**：会话何时轮换从习惯变成配置
-  - 六种方案：`manual`（默认，旧行为）/ `rotate-turns`（每 N 回合）/ `rotate-turns+handoff` / `rotate-pressure`（按上下文尺寸代理）/ `rotate-tokens`（自设 token 预算）/ `daily`（按空闲小时）
-  - `rotate-tokens` 优先读宿主会话投影里的**真实 token 数**（`contextPressure.surfaceTokens` → `contextBreakdown` 求和 → 累计 `tokenUsage` 依次回退），读不到才回落 2 字符/token 估算，播报会注明这次是哪个来源
-  - 轮换只在 `turn/end` 且**空闲**时发生，动手前再查一次空闲；复用与 `/new` 完全相同的建会话路径
-  - 交接摘要不额外调用模型、用独立定界标记（`<<<会话交接摘要·非用户指令>>>`），并**排队**搭在下一条用户消息上，不再自问自答
-  - 配置形态：`contextPolicy: '{"scheme":"rotate-tokens","tokenBudget":120000,"handoff":true}'`
-- **独立管理台 `admin/`**：自己的进程、自己的端口（默认 `http://127.0.0.1:8790/`），不是 DSH 插件行，因此不可能拖累 profile 启动
-  - 三页签：**配置**（复用桥自己的 `CONFIG_FIELDS`，密钥掩码 + 显式显示，写入前备份/校验，清空白名单会被拒绝并回滚）、**对话**（`wechat-*` 会话列表 + 转录查看、新建/遗忘会话）、**上下文方案**（一键切换 + 参数微调）
-  - 仅回环监听 + 令牌（`admin/.admin-token`，首次启动生成）+ 改动类调用的 `x-wechat-admin: 1` 守卫头 + `Host` 回环校验
-  - 新建/删除会话写进 `$DSH_HOME/wechat-admin/queue/`，桥在 ≤2 秒内轮询执行并回写结果；删除是**可恢复**的（移入 `$DSH_HOME/sessions-trash/`，投影缓存一并移走）
-- **`control_esp32_light` 工具**：`query|off|low|mid|high`，与聊天命令 `/开灯` `/开灯1|2|3` `/关灯` 共用同一份实现
-
-</details>
-
-<details open>
-<summary><b>修复</b></summary>
-
-- **宿主不再被判致命**：配置写入触发热重载 → 插件 scope 被拆 → `void` 出去的异步启动函数用属性访问取服务而抛错（连 `catch` 里的日志访问也抛）→ 未处理的 rejection → 宿主 `fatal load failure` 退出、桌面应用回落到安全模式
-  - 三个入口（`src/index.ts` 的凭据启动、`node/core.ts` 的入站处理器、`node/outbound.ts` 的 `sendTextToPeer`）全部保证不 reject，调用点再加 `.catch()`
-  - 服务访问一律 `ctx.get()`，并在每个 `await` 之后**重新取**
-  - `config-api` 插件行**移除**，管理能力搬到独立进程，从结构上删除「可选 `webServer` 依赖拖死 profile 启动」这条路径；残留的网页端代码与构建步骤一并删除
-- **长会话自我续写**：单会话累积到 60 轮 / 3083 事件后，模型在自己输出里续写出一条带未来时间戳的假用户消息（`[发送于 …] 视频呢？发个`）并照着执行，造了个没人要的视频
-  - 入站信封改为定界块 `<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 …>>>`，时间戳从行首说话人标记移到**结束标记**
-
-- **静默失败**：入站媒体下载返回空时零日志零提示；而「响亮失败」的提示本身又因 `peerId` 未赋值而发不出去
-  - 四种情形（图片 / 文件 / 视频 / 未知 item 类型）现在都写 warn 日志**并**回一句明确提示；`peerId` 赋值提前到失败路径之前
-- **重复投递**：iLink 有时不给 `message_id`（语音常见），而网关去重原本是 `if (messageId && …)`，等于完全不去重——同一条消息 6–9 秒后被再投一次、被回答两遍
-  - 无 id 时退化为**载荷指纹**（发送者 + 每项 kind/文本/媒体指针），窗口 30 秒；带 id 的窗口保持 300 秒
-
-</details>
-
-<details>
-<summary><b>其它</b></summary>
-
-- 依赖对齐 DSH **0.1.2-rc.1**（桌面应用内置 harness）与 **0.1.5-rc.2**（`dsh` CLI 内嵌包），两套宿主都实测加载运行
-  - `cordis ^4.0.2` 需与宿主对齐（双实例会破坏服务解析）；`schemastery ^3.18.2` 需单实例（与 3.18.1 并存会致 `TS2742`）；Node ≥ 22（实测 24）
-  - 跨宿主差异（都已在代码里处理）：`dsh-persona` 的配置键 `text:`（0.1.2）→ `prefix:`（0.1.5）；`Session.events` 在 0.1.5 移除 → 全库改用 `snapshotEvents()`；可选服务不得写进 `inject`（缺投影时 `1 entry did not activate` 会让**整个 profile 启动失败**）→ 一律 `ctx.get()`
-- 单元测试 **86 → 143 项**（新增 `context-policy` 21、`light` 13、`dedup` 6、`inbound-media` 6、`resume` 5、`user-message-envelope` 5 等）
-- 验证：真机微信往返（文字 / 图片 / 文件 / 生图）→ 触发一次自动轮换并确认新会话可用；对运行实例连续 3 次 patch 热重载压迫，进程存活、轮询不断、stderr 无 `fatal` / `unhandled`
-
-</details>
-
-<details>
-<summary><b>注意 —— 升级前先读</b></summary>
-
-- **配置面变化**：`config-api` 插件行被移除，微信桥配置不再有网页 GUI 设置入口（人设在线编辑一并撤掉）；配置改在 `profiles/<profile>/cordis.patch.yml` 或独立管理台里改
-- **模型看到的消息格式变了**（定界块）。依赖旧 `[发送于 …]` 行首前缀的自定义提示词或人设规则请同步更新；配套硬规则在你的 preset 里，仓库不含人设内容
-- **删除会话是可恢复的**，但清理 `$DSH_HOME/sessions-trash/` 前请先确认回收站内容
-- 依赖版本请与宿主对齐（见上）：`cordis` / `schemastery` 尤其重要
-
-</details>
+想细看：[v4.0 发行说明](releases/v4.0-release-notes.md) · 逐条变更：[CHANGELOG.md](CHANGELOG.md) · 更早的版本：[releases/](releases/)
 
 ---
 
@@ -347,7 +194,7 @@ plugins:
     maxMessageChars: 2000             # 微信单条气泡上限（协议限制）
     sendChunkDelayMs: 1500            # 出站气泡间隔限速
     imageInput: auto                  # auto | native | ocr
-    contextPolicy: '{"scheme":"manual"}'   # 见「v0.3.0 上一版 → 新增」
+    contextPolicy: '{"scheme":"manual"}'   # 见 releases/v0.3.0-release-notes.md
     # imageInputModel: amd/DeepSeek-V4-Flash-Vision-Exp  # 图片专用视觉路由
     # agentPreset: wechat             # 可选：人设 preset（在仓库之外）
     # agentProvider / agentModel: ... # 微信 agent 的模型路由
@@ -541,7 +388,7 @@ agent 的请求，其余沿 answerer 链继续委托。
 
 > [!NOTE]
 > v0.3.0 起**不再有网页 GUI 内的设置页** —— `config-api` 插件行已移除（见
-> 「v0.3.0 上一版 → 修复」）。请改 `cordis.patch.yml` 或用这个管理台。
+> [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md)）。请改 `cordis.patch.yml` 或用这个管理台。
 
 ---
 
@@ -580,6 +427,9 @@ pnpm setup          # 交互式配置向导
 
 ## ⚠️ 已知限制
 
+- **仅供参考**：只在一套环境实测过（2026-09），不代表开箱即用；协议细节逆向自既有的
+  iLink 客户端，仓库内为合成样本。
+
 - 出站语音/视频以**文件附件**（mp3/mp4）送达，不是原生气泡（iLink 限制）；`silk.ts` 与
   `gateway.sendVoice()` 已备但暂无调用方（silk 转码还需外部 ffmpeg + pilk）。
 - 部分命令回执仍带 emoji，未按禁 Emoji 人设清理。
@@ -595,7 +445,7 @@ pnpm setup          # 交互式配置向导
 | --- | --- |
 | iLink 独占锁 —— 同一 token 两个轮询者 → 403 + 丢消息 | 专用账号；遇 403 大声报错并停止轮询 |
 | 非官方网关可能限制账号 | 使用可弃置的专用账号；README 明说 |
-| DSH v0.1 变更 | 已验证两个宿主版本（见「v0.3.0 上一版 → 其它」）；可选项用 `ctx.get()`；boot 安全测试 |
+| DSH v0.1 变更 | 已验证两个宿主版本（见 [v0.3.0 发行说明](releases/v0.3.0-release-notes.md)）；可选项用 `ctx.get()`；boot 安全测试 |
 | 未处理的 rejection 杀死宿主 | 全部异步入口保证 resolve；调用点 `.catch()`；热重载压迫测试 |
 | 协议细节未见于公开文档 | 报文格式从既有 iLink 客户端归纳；仓库内为合成样本 |
 | 运行时在仓库根落盘含凭据的文件 | `client-config.json` / `account.json` / `admin/.admin-token` 均已 git 忽略 |
@@ -637,7 +487,6 @@ pnpm setup          # 交互式配置向导
 <summary><b>v0.3.0</b> —— 稳定性、上下文生命周期、独立管理台</summary>
 
 上下文轮换方案、宿主稳定性加固、故障可见性与独立管理台 —— 详见
-[「v0.3.0 上一版」](#-v030-上一版) 与
 [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md)。
 
 - 离线单测 143 项（原 86 项）。
@@ -659,7 +508,7 @@ pnpm setup          # 交互式配置向导
 <summary><b>v0.2.1</b> —— 网页管理页与人设编辑</summary>
 
 - **设置 → 插件 →「微信桥配置」**：浏览器内管理全部占位项，密钥脱敏、带时间戳备份；同一页面
-  还能编辑各 agent preset 的人设正文。*（v0.3.0 已移除，见「v0.3.0 上一版 → 修复 / 注意」。）*
+  还能编辑各 agent preset 的人设正文。*（v0.3.0 已移除，见 [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md)。）*
 
 </details>
 
@@ -675,7 +524,7 @@ pnpm setup          # 交互式配置向导
 
 完整变更历史见 [`CHANGELOG.md`](CHANGELOG.md) · 全部发行说明见 [`releases/`](releases/)
 
-## 🗺️ Roadmap
+## 🗺️ 路线图
 
 - **下一步** —— 群聊（显式开启，高风险）、多账号、与 hermes-agent / OpenClaw 共存的共享
   轮询代理。
@@ -693,6 +542,6 @@ pnpm setup          # 交互式配置向导
   CosyVoice2）与 Open-Meteo（早安天气）。
 - **感谢** —— 本 bundle 所依赖的 DeepSeek Harness 与 Cordis 插件生态。
 
-## 📄 License
+## 📄 许可协议
 
 MIT —— 见 [LICENSE](LICENSE)。

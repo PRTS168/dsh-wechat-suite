@@ -11,36 +11,17 @@
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
 
   <p>
-    <a href="#-v40-highlights">v4.0 highlights</a> ·
-    <a href="#-quickstart">Quickstart</a> ·
+    <a href="#-what-it-is">What it is</a> ·
+    <a href="#-60-second-setup">60-second setup</a> ·
     <a href="#-features">Features</a> ·
     <a href="#-configuration">Configuration</a> ·
     <a href="#-commands-and-tools">Commands</a> ·
     <a href="#-standalone-admin-console">Admin console</a> ·
     <a href="#-long-term-memory">Memory</a> ·
-    <a href="#-development">Development</a> ·
+    <a href="#-v40-highlights">Changelog</a> ·
     <a href="README.zh.md">中文说明</a>
   </p>
 </div>
-
-> [!WARNING]
-> **One poller per account.** iLink allows exactly ONE authenticated poller per bot token.
-> Running a second instance of this bridge — or any other iLink client — against the same
-> WeChat account causes HTTP 403 and dropped messages. Use a **dedicated WeChat account**,
-> and treat the account as disposable: Tencent may restrict it at any time.
-
-> [!IMPORTANT]
-> **Two things must be filled in.** A `allowFrom` allowlist entry, and the `WEIXIN_BOT_TOKEN` /
-> `WEIXIN_ACCOUNT_ID` / `WEIXIN_BASE_URL` credentials. Without them the bridge stays safely
-> idle — it never feeds a non-allowlisted message to the model.
-
-> [!NOTE]
-> **Reference only.** Verified on one specific environment (2026-09); not a blanket promise of
-> portability. Everything that looks like `<...>` is a placeholder you must fill in. The
-> protocol was reconstructed from existing clients. Persona presets are not shipped: point
-> `agentPreset` at a preset of your own under `$DSH_HOME/.agent-presets/<name>/`.
-
----
 
 ## 🧭 What it is
 
@@ -60,203 +41,50 @@ you (WeChat)  ⇄  iLink  ⇄  wechat-gateway  ⇄  wechat-conversation-node  �
 
 ---
 
+## ⚡ 60-second setup
+
+Prerequisites: Node ≥ 22, pnpm, a **dedicated WeChat account**, and a DSH profile.
+
+```sh
+dsh plugin --profile <your-profile> add github:PRTS168/dsh-wechat-suite  # 1 install into the profile
+pnpm login                                                             # 2 scan the QR, store credentials
+pnpm setup                                                             # 3 fill in the allowlist and the rest
+```
+
+Restart `dsh web`, send the bot a WeChat message, and you should get a reply. Other install
+paths (Release tarball, build from a checkout) and the step-by-step version live in
+[Quickstart](#-quickstart); if something is off, the [admin console](#-standalone-admin-console)
+health report names what is missing.
+
+> [!WARNING]
+> **One poller per account.** iLink allows exactly ONE authenticated poller per bot token.
+> Running a second instance of this bridge — or any other iLink client — against the same
+> WeChat account causes HTTP 403 and dropped messages. Use a **dedicated WeChat account**,
+> and treat the account as disposable: Tencent may restrict it at any time.
+
+> [!IMPORTANT]
+> **Two things must be filled in.** An `allowFrom` allowlist entry, and the `WEIXIN_BOT_TOKEN` /
+> `WEIXIN_ACCOUNT_ID` / `WEIXIN_BASE_URL` credentials. Without them the bridge stays safely
+> idle — it never feeds a non-allowlisted message to the model. Everything that looks like
+> `<...>` is a placeholder you must fill in, and persona presets are not shipped: point
+> `agentPreset` at a preset of your own under `$DSH_HOME/.agent-presets/<name>/`.
+
+---
+
 ## ✨ v4.0 highlights
 
-**Context management rebuilt · admin console rewritten · long-term memory shipped.** Full
-announcement: [`releases/v4.0-release-notes.md`](releases/v4.0-release-notes.md) ·
-[release page](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v4.0).
+- **Context management, reworked** — one session for good, plus layered memory: `/context` reports
+  the real occupancy, the compaction trigger point, and how many tokens survive verbatim.
+- **Long-term memory (new)** — a cross-session `MEMORY.md` fact file, a `remember_fact` tool
+  ("remember this" lands on disk immediately), and a daily consolidation pass.
+- **Web admin console, rewritten** — beginner/advanced modes, an 8-check health report where every
+  failure says how to fix it, config backups, and one-click rollback.
+- **Problem ledger (new)** — every swallowed failure leaves a trace: `/problems` to read it,
+  gateway health in `/status`, and rate-limited notices instead of a flood.
+- **Real bugs fixed** — `send_email` always reporting "SMTP not configured" (the host silently
+  dropped the keys), the model echoing the message fence, a leaking heartbeat timer, false alarms.
 
-### Context: making "one session, for good" actually work
-
-`manual` (no automatic rotation) has been the default since v0.3.x; v4.0 is about making that
-choice *usable* — before it you could neither see how full the context was nor learn when the
-host would compact it or what it would keep. The bridge now adds three things around it:
-
-- **`/context` (new)** — prints the host's own measured numbers: usage / model window / breakdown
-  (conversation · tools · system) / the compaction trigger point / how much recent history stays
-  verbatim / how many long-term facts are on file. Read from the host's projection cache, not
-  estimated.
-- **Compaction parameters should be written down explicitly**: the plugin defaults are
-  `thresholdRatio 0.8 / retainRatio 0.16`; set `0.65 / 0.25` instead. Reason: the host's
-  **overflow-recovery** path hard-codes `retainTokens` to 0 and keeps only the last message —
-  which is exactly "what I just said, forgotten". Triggering at 65% means that path is never
-  reached, and retaining 25% (250k tokens of a 1M window) keeps an ordinary conversation inside
-  the verbatim tail from start to finish.
-- **Memory is re-injected after a compaction**: compaction happens mid-turn, so the bridge watches
-  `compaction/summary` and makes the owner's next message carry the full long-term memory again.
-- The rotation schemes (`rotate-turns` / `rotate-pressure` / `rotate-tokens` / `daily`) are all
-  still there for anyone who wants them; they simply stay outside the default.
-
-### Long-term memory (new)
-
-A cross-session facts file, `MEMORY.md` (关于主人 / 偏好与习惯 / 常用设备与环境 / 待办与承诺 /
-重要决定, plus a retired-facts ledger):
-
-- Injected as **background**, placed **outside** the user-message fence — memory is never mistaken
-  for an instruction from the owner — and skipped entirely while the file holds no facts.
-- **Consolidated daily at 04:30** (facts extracted only from the owner's own fenced words, using
-  the session's own model; requires 2 h of idle time and at least 5 owner utterances, otherwise
-  it is skipped).
-- **`remember_fact` tool (new)**: when the owner says "记一下", the fact is **really written to
-  disk** rather than acknowledged in words; `replaces` retires a superseded fact, and a write that
-  cannot happen answers `❌` instead of pretending.
-- **`/memory`** to view, `/memory now` to consolidate immediately.
-
-### Web admin console, rewritten
-
-`http://127.0.0.1:8790/` opens the new page; the mode switch is in the top-left corner:
-
-- **Beginner mode** — only what has to be understood, in plain language: who may talk to it
-  (allowlist) / which brain it uses (model) / whether it remembers (memory + daily consolidation
-  time) / what happens when a chat gets long (two choices), plus a "something broke" page showing
-  the raw log.
-- **Advanced mode** — all 36 config keys (grouped), provider and image routes, memory and
-  problem-log paths, every context scheme (`manual` plus five rotation policies) with knobs
-  and the raw JSON, conversations and transcripts, config backups and **one-click rollback**.
-- **8 health checks** — one summary line, and every failure says *how to fix it*.
-- Also fixed along the way: the mutation guard header used to be dead code, a config file that
-  could not be read was shown as an empty config and overwritten on save, backups were pruned by
-  filename instead of time, and numeric fields had no server-side validation.
-
-### Problem ledger: every failure leaves a trace
-
-A swallowed failure no longer disappears: it is written to `$DSH_HOME/wechat-problems.log`
-(rotated at 256 KB), listed by `/problems`, **told to you once in WeChat** (same problem at most
-once per 10 minutes, ≤ 6 per hour), and `/status` gained a **gateway health** line. Covered paths
-include inbound handling, gateway status/error/fatal, outbound chunk failures, whole empty turns,
-replies dropped after a session switch, the morning push, reminder reads/writes and delivery,
-memory IO, the console queue, and OCR / speech-to-text failures.
-
-### Real bugs fixed
-
-- **Config silently dropped by the host** — `smtpHost / smtpPort / smtpUsername / smtpPassword /
-  smtpFromName` were declared only on the conversation node, so the host threw them away while
-  validating the profile patch and `send_email` answered "SMTP 未配置" forever, **even with a
-  complete, working account** (verified with a TLS + AUTH LOGIN handshake). `imageInput` /
-  `imageInputModel` and 12 gateway tuning keys (`sendChunkRetries`, `allowCdnHosts`, …) were
-  dropped the same way — setting them changed nothing, silently. All four key sets must now be
-  equal, and a `config-surface` test enforces it.
-- **The model writing the owner's lines** — in a long conversation the model echoed the
-  "user message" fence, invented the owner's next line and answered it, and the whole thing was
-  sent to WeChat. The outbound path now deterministically cuts the fence and everything after it
-  (quoting it inside a code block is left alone) and records `model/echo`.
-- **False alarm** — a tool-calling step has no text of its own, and the old code reported that as
-  "the model returned nothing" and sent the owner a ⚠️. The judgement is now per turn: only a turn
-  that produced nothing at all counts.
-- Also: a heartbeat timer that outlived every session switch; a hot reload that did not abort the
-  in-flight long poll (overlapping pollers get HTTP 403 from iLink and the fresh bridge stops);
-  a NaN busy loop in the morning/reminder timers when the clock was unreadable; a corrupt reminder
-  file treated as empty and overwritten on the next save; pending approvals left hanging on
-  unload; and a missing `error` listener on the response stream in `net.ts`.
-
-### Other
-
-- Offline unit tests **167 → 255**, with seven new suites: `config-surface` / `problems` /
-  `robustness` / `context-report` / `memory` / `outbound-guard` / `packaging`.
-- New source files: `src/node/memory.ts`, `src/node/problems.ts`, `src/node/context-report.ts`.
-
----
-
-## 📦 v0.3.1 — previous release
-
-<details>
-<summary>v0.3.1 (weather and command-surface fixes) — expand for details</summary>
-
-Fixes since v0.3.0. Full announcement:
-[`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md) ·
-[release page](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.1).
-
-### Fixed
-
-- **`/早安 test` only ever answered `fetch failed`** — `fetch` reports every transport failure as a bare `TypeError: fetch failed` and keeps the real reason (`ENOTFOUND` / `ECONNREFUSED` / TLS / timeout) in `error.cause`, so a local proxy that is up but does not carry `api.open-meteo.com` looks exactly like a dead network
-  - the message now unwraps the cause chain (including the happy-eyeballs `AggregateError`), the request is retried **directly over `node:https`** (`agent: false`, so no proxy dispatcher), and both reasons are reported when it really is down
-- **Bare `1` / `2` stopped answering permission requests** — the approval check sat after the "starts with `/`" guard, so digits never reached `resolveApproval()`: they were fed to the model instead, and the approval timed out
-  - approval replies (`/yes`, `/no`, bare `1` / `2`) are handled first now; with nothing pending, `1` / `2` still fall through to `/model` / `/perm` and to the model
-- **`/yes` and `/no` answered "❓ 未知命令 /yes"** plus the help dump when nothing was pending; they now say so plainly
-- **The retired light vocabulary stopped working** — `/gear` `/off` `/low` `/mid` `/high` (the device's own words, used by the archived `dsh-wechat-tools` plugin) were answered with "unknown command"
-  - all five are restored and listed in `/help`, sharing one implementation with `/开灯` and friends
-- **Light control was proxy-bound too** — a request to a LAN device now retries directly as well, and reports the real reason instead of `fetch failed`
-- **`/perm` answered nothing at all** — the host's permission-preset service is session-scoped (`current(session)`, `set(session, name)`, labels from `optionOf()`), and the bridge called it with an event array: the throw escaped the command router, the inbound handler swallowed it, and the user saw pure silence
-  - it now uses the real signatures, and the whole call is guarded so a host API change still produces a reply
-  - the command surface is **never silent** any more: `/perm` `/model` `/sessions` `/status` `/send` report `❌ …failed: <real reason>` instead of nothing; `/send` also reads the gateway through `ctx.get()`
-  - `/sessions` and `/status` now resume a persisted `wechat-` session first, so a restart no longer reads as "no sessions"
-- **Approval prompts never reached WeChat** — two mechanisms, both required to lose the request:
-  - the host dispatches `approval/request` through a **routed scope target** (`ctx.waterfall(scopeTarget(agent, agent), …)`), so a listener can be filtered out by scope;
-  - waterfall is **first-answer-wins**, and the desktop client's answerer (the "等待审批" card in the app) claims the request first — WeChat never even gets asked.
-  - The session log showed `approval/asked` and the app showed a pending card while the chat stayed silent: a live bridge that could not answer.
-  - Fixed by registering the answerer with cordis's `{ prepend: true, global: true }` — `global` skips the scope filter, `prepend` puts the bridge ahead of the desktop answerer, so WeChat becomes the answering surface for `wechat-` sessions. Requests from other namespaces are still delegated with `next()`.
-  - The whole chain now writes one line per step to `$DSH_HOME/wechat-approval.log` (`tool / session / active / owns / peer / decision`; override with `WECHAT_APPROVAL_TRACE`), and an internal error is reported in chat instead of vanishing.
-
-### Other
-
-- unit tests **143 → 167** (new: `commands` 11, `approvals` 9, `morning` +3, `light` +1; the unreachable-device case now injects both transports and no longer touches the network)
-- new `src/node/net.ts` — `describeError()` and `directRequest()` shared by the weather push and light control
-- docs: proxy troubleshooting tip on both homepages, and the trap recorded under *Environment* in `DEVELOPMENT.md`
-
-</details>
-
----
-
-## 📦 v0.3.0 — previous release
-
-Changes since v0.2.2. Full announcement:
-[`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md) ·
-[release page](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0).
-
-<details open>
-<summary><b>Added</b></summary>
-
-- **Context lifecycle `contextPolicy`** — when a session rotates is configuration, not habit
-  - six schemes: `manual` (default, v0.2.x behaviour) / `rotate-turns` (every N turns) / `rotate-turns+handoff` / `rotate-pressure` (context-size proxy) / `rotate-tokens` (token budget) / `daily` (idle hours)
-  - `rotate-tokens` prefers the host's real numbers (`contextPressure.surfaceTokens` → `contextBreakdown` sum → cumulative `tokenUsage`, in that order) and only falls back to a 2-chars-per-token estimate; the announcement says which one fired
-  - rotation is evaluated on `turn/end`, idleness is re-checked right before acting, and it reuses the same session-creation path as `/new`
-  - the handoff note costs no model call, carries its own fence (`<<<会话交接摘要·非用户指令>>>`), and is **queued** onto the next inbound message instead of answering itself
-  - shape: `contextPolicy: '{"scheme":"rotate-tokens","tokenBudget":120000,"handoff":true}'`
-- **Standalone admin console `admin/`** — its own process and port (default `http://127.0.0.1:8790/`), not a DSH plugin row, so it cannot affect profile boot
-  - tabs: **config** (the bridge's own `CONFIG_FIELDS`, masked secrets with an explicit reveal, backup + validation before writing — clearing the allowlist is rejected and rolled back), **conversations** (`wechat-*` list, transcript viewer, new / forget), **context** (one-click scheme switching + knobs)
-  - loopback-only + token (`admin/.admin-token`, minted on first start) + `x-wechat-admin: 1` guard header on mutations + loopback `Host` check
-  - session commands go through `$DSH_HOME/wechat-admin/queue/` and are executed within ≤ 2 s; forgetting a session is recoverable (`$DSH_HOME/sessions-trash/`, projection cache moved too)
-- **`control_esp32_light` tool** — `query|off|low|mid|high`, sharing one implementation with `/开灯` `/开灯1|2|3` `/关灯`
-
-</details>
-
-<details open>
-<summary><b>Fixed</b></summary>
-
-- **The host is no longer judged fatal** — a config write triggers a hot reload, the plugin scope is torn down, a `void`-ed async startup function throws on property access (even the logging inside `catch` throws), and the unhandled rejection exited the harness into safe mode
-  - all three entry points (`src/index.ts` credential startup, `node/core.ts` inbound handler, `node/outbound.ts` `sendTextToPeer`) now always resolve, with `.catch()` added at call sites
-  - services are fetched with `ctx.get()` and **re-read after every `await`**
-  - the `config-api` plugin row was removed — management moved to a separate process, structurally deleting the "optional `webServer` stalls profile boot" path; the leftover client code and its build step were deleted too
-- **Long-session self-continuation** — after 60 turns / 3083 events the model wrote a fake user message with a future timestamp into its own output and executed it (it produced an unrequested video)
-  - inbound messages are now fenced (`<<<微信用户消息>>> … <<<微信用户消息结束｜发送于 …>>>`), with the timestamp moved from the line prefix to the **closing marker**
-
-- **Silent failures** — an empty media download logged nothing and said nothing, and the notice itself could not be delivered because `node.peerId` was assigned later
-  - all four cases (image / file / video / unknown item) now log a warning **and** answer in chat; `peerId` assignment moved ahead of the failure paths
-- **Duplicate delivery** — iLink sometimes omits `message_id` (common for voice) and the gateway dedup was `if (messageId && …)`, i.e. no dedup at all: the same message came back 6–9 s later and was answered twice
-  - id-less messages now fall back to a **payload fingerprint** (sender + each item's kind/text/media pointer) with a 30 s window; the id window stays at 300 s
-
-</details>
-
-<details>
-<summary><b>Other</b></summary>
-
-- aligned with DSH **0.1.2-rc.1** (harness bundled in the desktop app) and **0.1.5-rc.2** (packages embedded in the `dsh` CLI); both load and run
-  - `cordis ^4.0.2` must match the host (two instances break service resolution); `schemastery ^3.18.2` must be a single instance (3.18.1 alongside it raises `TS2742`); Node ≥ 22 (tested on 24)
-  - cross-host differences, all handled in code: `dsh-persona`'s key `text:` (0.1.2) → `prefix:` (0.1.5); `Session.events` removed in 0.1.5 → `snapshotEvents()`; optional services never in `inject` (a missing projection yields `1 entry did not activate` and fails the whole profile) → `ctx.get()`
-- unit tests **86 → 143** (new: `context-policy` 21, `light` 13, `dedup` 6, `inbound-media` 6, `resume` 5, `user-message-envelope` 5, …)
-- verified live: WeChat round trips (text / image / file / image generation) → one automatic rotation with the new session usable → 3 rapid patch hot reloads with the process alive, polling continuous and no `fatal` / `unhandled` in stderr
-
-</details>
-
-<details>
-<summary><b>Notes — read before upgrading</b></summary>
-
-- **Config surface changed**: the `config-api` row is gone, so there is no in-GUI settings page any more (persona editing went with it); edit `profiles/<profile>/cordis.patch.yml` or use the standalone console
-- **The message format the model sees changed** (fenced block) — update any persona rule or custom prompt keyed off the old `[发送于 …]` prefix; the matching hard rules live in your preset, and this repo ships no persona content
-- **Forgetting a session is recoverable** — check `$DSH_HOME/sessions-trash/` before clearing it
-- keep dependency versions aligned with the host; `cordis` / `schemastery` especially
-
-</details>
+Read more: [v4.0 release notes](releases/v4.0-release-notes.md) · every change: [CHANGELOG.md](CHANGELOG.md) · older: [releases/](releases/)
 
 ---
 
@@ -379,7 +207,7 @@ plugins:
     maxMessageChars: 2000             # WeChat bubble cap (protocol limit)
     sendChunkDelayMs: 1500            # throttle between outbound bubbles
     imageInput: auto                  # auto | native | ocr
-    contextPolicy: '{"scheme":"manual"}'   # see "v0.3.0 — previous release → Added"
+    contextPolicy: '{"scheme":"manual"}'   # see releases/v0.3.0-release-notes.md
     # imageInputModel: amd/DeepSeek-V4-Flash-Vision-Exp  # vision route for pictures only
     # agentPreset: wechat             # optional persona preset (lives outside this repo)
     # agentProvider / agentModel: ... # model route for the WeChat agent
@@ -627,6 +455,9 @@ pnpm setup          # interactive config wizard
 
 ## ⚠️ Known limits
 
+- **Reference only** — verified on one specific environment (2026-09); portability is not promised.
+  The protocol was reconstructed from existing iLink clients, with synthetic fixtures in-repo.
+
 - Outbound voice/video arrive as **file attachments** (mp3/mp4), not native bubbles (iLink
   limitation). `silk.ts` and `gateway.sendVoice()` exist as unused spares (silk needs external
   ffmpeg + pilk).
@@ -689,8 +520,7 @@ See [`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md).
 <summary><b>v0.3.0</b> — stability, context lifecycle, standalone console</summary>
 
 Context rotation policies, host-stability hardening, failure visibility and the standalone admin
-console — see [v0.3.0 — previous release](#-v030--previous-release) and
-[`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md).
+console — see [`releases/v0.3.0-release-notes.md`](releases/v0.3.0-release-notes.md).
 
 - 143 offline unit tests (was 86).
 
