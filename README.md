@@ -550,6 +550,17 @@ The page has **two modes**, switched in the top-left corner (the choice is remem
 | **Beginner** | people who do not want to learn the config surface | only the few things that must be understood, in plain language: who may talk to it (allowlist) / which brain it uses (model dropdown) / whether it remembers (memory + daily consolidation time) / what happens when a chat gets long (two choices), plus a "something broke" page with the raw log; one health summary line on top |
 | **Advanced** | people who want all of it | every config key (grouped) / provider and image routes / memory and problem-log paths / every context scheme (`manual` + the five rotation policies) with knobs and the raw JSON / conversations and transcripts / config backups and **one-click rollback** / the full environment self-check |
 
+**Beginner mode** — one glance at whether it can work right now; a red dot names what is missing
+and where to put it:
+
+<img src="assets/admin-simple.png" alt="Beginner mode: one health summary line plus only the few settings that matter, with red dots naming what is missing" width="100%">
+
+**Advanced mode** — every config key, grouped into required / optional, with secret fields masked:
+
+<img src="assets/admin-advanced.png" alt="Advanced mode: every config key grouped into required and optional, secret fields masked" width="100%">
+
+> Both screenshots come from a demo instance: every value, path and persona is placeholder data.
+
 | Endpoint | What it does |
 | --- | --- |
 | `GET /api/state` | config values (secrets masked), field definitions, context schemes, conversations |

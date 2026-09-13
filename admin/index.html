@@ -782,12 +782,19 @@ async function loadAll() {
 }
 
 // ── mode + boot ─────────────────────────────────────────────────────────────
-// `?mode=advanced|simple` deep-links a mode (the README screenshots use it, and
-// it is handy for bookmarking); otherwise the remembered choice wins.
-const modeParam = new URLSearchParams(location.search).get('mode');
+// `?mode=advanced|simple` and `?section=<id>` deep-link the view (the README
+// screenshots use them, and both are handy for bookmarking); otherwise the
+// remembered choice wins and the overview is shown.
+const params = new URLSearchParams(location.search);
+const modeParam = params.get('mode');
 S.mode = modeParam === 'advanced' || modeParam === 'simple'
   ? modeParam
   : (localStorage.getItem('wechat-admin-mode') === 'advanced' ? 'advanced' : 'simple');
+const sectionParam = params.get('section');
+if (sectionParam && SECTIONS.some((s) => s.id === sectionParam)) S.section = sectionParam;
+// An advanced-only panel has no nav entry in simple mode; fall back rather than
+// render a panel the reader cannot navigate away from.
+if (!isAdvanced() && SECTIONS.find((s) => s.id === S.section)?.only) S.section = 'overview';
 
 function renderModes() {
   $('#modes').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === S.mode));
