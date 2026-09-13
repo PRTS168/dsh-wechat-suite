@@ -4,7 +4,8 @@
 
 | 版本 | 说明 | 主题 |
 |---|---|---|
-| [v0.3.1](./v0.3.1-release-notes.md) | 2026-09 | **天气与命令面修复**：etch failed 暴露真实原因并改用直连重试、裸 1/2 审批恢复、/gear /off /low /mid /high 灯控词表恢复 |
+| [v4.0](./v4.0-release-notes.md) | 2026-09 | **上下文管理大改 · Web 管理台重写 · 长期记忆**：一个会话到底 + 分层记忆、`/context` 显示真实占用、压缩后重新注入记忆、`MEMORY.md` 与 `remember_fact`、管理台新手/高级双模式与一键回滚、问题台账（一切失败留痕） |
+| [v0.3.1](./v0.3.1-release-notes.md) | 2026-09 | **天气与命令面修复**：fetch failed 暴露真实原因并改用直连重试、裸 1/2 审批恢复、/gear /off /low /mid /high 灯控词表恢复 |
 | [v0.3.0](./v0.3.0-release-notes.md) | 2026-09 | **稳定性 · 上下文生命周期 · 独立管理台**：`contextPolicy` 六种轮换方案与免模型调用的会话交接、宿主不再被未处理 rejection 拖死、无 `message_id` 消息的载荷指纹去重、独立管理台（含可恢复删除会话） |
 | [v0.2.2](./v0.2.2-release-notes.md) | 2026-09 | **适配 DeepSeek 4.1 多模态**：原生图片输入（与 OCR 可切换、`/识图` 命令）、`send_email`、凭据加固 |
 | [v0.2.1](./v0.2.1-release-notes.md) | 2026-09 | Web 管理页（微信桥配置）与人设在线编辑 |

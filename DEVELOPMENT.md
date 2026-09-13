@@ -51,6 +51,9 @@ GUI 卡片悬着、微信一片安静"。
 | `ocr.ts` / `stt.ts` / `tts.ts` / `image-gen.ts` | 硅基流动媒体模型调用 |
 | `reminders.ts` / `morning.ts` | 定时提醒、早安天气 |
 | `approvals.ts` | 审批桥（`/yes` `/no`） |
+| `memory.ts` | **长期记忆**：`MEMORY.md` 的读写（备份 + 4000 字上限 + 审计日志）、简报注入节奏、每日整理（`consolidateNow`）、`noteCompaction()` |
+| `problems.ts` | **问题台账**：被吞掉的失败 → 日志（256KB 轮转）+ 内存台账 + 限流告警 + `/problems` 文案 |
+| `context-report.ts` | **`/context`**：读宿主投影缓存（`contextPressure` / `contextBreakdown`）、preset 里的压缩参数，渲染成人话 |
 | `patch-config.ts` | `cordis.patch.yml` 读写（v0.3.0 起同时被独立管理台复用） |
 | `labels.ts` | 会话徽标与 turn 结束原因文案 |
 
@@ -62,7 +65,7 @@ GUI 卡片悬着、微信一片安静"。
 pnpm install
 pnpm build          # tsc -p tsconfig.json（src/ → lib/）
 pnpm typecheck      # tsc --noEmit
-pnpm test           # node --test "test/*.test.ts" —— 167 项，不需要微信账号
+pnpm test           # node --test "test/*.test.ts" —— 255 项，不需要微信账号
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导（只改 profile 的 dsh-chatnode-wechat 段，先备份）
 pnpm login          # 扫码配对，写 WEIXIN_* 凭据
@@ -179,16 +182,29 @@ llm-deepseek:
 拒收，会在回合中途失败。本仓库的对策是 `vision.ts` 的**拒绝缓存**——某路由拒绝
 一次后抑制 3 小时，后续图片直接走 OCR。
 
-### ④ bundle 的 Config schema 里有「死键」
+### ④ 配置键必须四处一致（v4.0 之前这里有一类静默失效）
 
-`src/index.ts` 的 `extractGatewayConfig()` **只向网关转发 4 个键**：
-`baseUrl` / `cdnBaseUrl` / `token` / `accountId`。schema 里声明的其他网关调优键
-（`longPollTimeoutMs`、`retryDelayMs`、`maxConsecutiveFailures`、
-`rateLimitCircuit*`、`sendChunkRetries`、`allowCdnHosts` …）**在 profile 里配了不生效**。
+宿主的加载顺序是：**先用 bundle 的 `src/index.ts` schema 校验 profile patch，再调
+`apply()`**。因此一个键如果节点会读、bundle 却没声明，它在 `apply()` 之前就**被宿主丢掉了**——
+用户填了、日志里没有、功能永远不生效。
 
-要调网关参数，得直接给 `WechatGateway` 插件挂配置（在 profile 里用 `ctx.plugin`
-或另开一个行），而不是写在 `dsh-chatnode-wechat` 段下。若要新增转发键，
-改 `extractGatewayConfig` 并补测试。
+v4.0 之前真实踩到的三处（都已修）：
+
+| 症状 | 真因 |
+|---|---|
+| `send_email` 永远回"SMTP 未配置"，而 patch 里五项齐全、凭据也能登录成功 | `smtpHost/smtpPort/smtpUsername/smtpPassword/smtpFromName` 只声明在节点侧 |
+| `imageInput` / `imageInputModel` 改了没反应 | 同上，bundle schema 里没有 |
+| 12 个网关键（`longPollTimeoutMs`、`retryDelayMs`、`maxConsecutiveFailures`、`rateLimitCircuit*`、`sendChunkRetries`、`allowCdnHosts` …）配了等于没配 | `extractGatewayConfig()` 只转发 `baseUrl/cdnBaseUrl/token/accountId` 四个 |
+
+**现在的规则**：节点面的配置键在四处必须一致 —— bundle schema（`src/index.ts`）、`apply()`
+转发给节点的键、节点 schema（`src/node/index.ts`）、管理台字段（`src/node/patch-config.ts` 的
+`CONFIG_FIELDS`），各 36 个；网关自己的 18 个调优键不在节点面，另外由 `GATEWAY_KEYS` 统一转发
+（其中 `pollIdleDelayMs` / `qrPollIntervalMs` 此前连 schema 都没进）。
+**新增任何配置键都要同时改这几处**：`test/config-surface.test.ts` 做的是单向差集校验
+（节点 schema ⊆ bundle schema、节点 schema ⊆ 转发键、`GATEWAY_KEYS` ⊆ bundle schema 且 ⊆ 网关
+schema），另有一份"必须能在管理台里改"的显式清单；漏一处就直接红。
+
+要调网关参数现在直接写在 `dsh-chatnode-wechat` 段下即可（不必再挂 `WechatGateway` 自己的 config）。
 
 ### ⑤ 运行时会在仓库根写含凭据的文件
 
@@ -336,15 +352,17 @@ image/file 块会被丢弃——媒体出站走工具路径（`wechat_send_image
 ### 发布流程
 
 ```sh
-# 1. 版本号与文档（三处都要改）
-#    package.json version、README.md 状态行、README.zh.md 状态行
+# 1. 版本号与文档（四处都要改）
+#    package.json version、README.md / README.zh.md 的版本历史小节
+#    （徽章指向 /releases，不必逐版改；历史小节要加当版条目）
 # 2. 补 CHANGELOG.md（逐条技术变更）
-# 3. 补 releases/vX.Y.Z-release-notes.md（面向使用者的发行公告）
+# 3. 补 releases/vX.Y.Z-release-notes.md（面向使用者的发行公告），
+#    并在 releases/README.md 的版本表里加一行
 # 4. 验证
-pnpm build && node --test --test-timeout=15000 --test-force-exit "test/*.test.ts"
+pnpm build && node --test --test-timeout=30000 "test/*.test.ts"
 # 5. 提交（lib/ 要一起提交）→ 打 tag → 推送
 git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main && git push origin vX.Y.Z
-# 6. 建 GitHub Release，正文用 releases/vX.Y.Z-release-notes.md 去掉首行标题
+# 6. 建 GitHub Release：正文 = releases/vX.Y.Z-release-notes.md 原样（含首行标题），并上传包 tarball
 ```
 
 > **推 tag ≠ 发布 Release。** `git push origin vX.Y.Z` 只产生 tag，Releases 页面
@@ -360,7 +378,23 @@ git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main
 >       -d @- https://api.github.com/repos/PRTS168/dsh-wechat-suite/releases
 > ```
 >
-> 发布后核对：`GET /releases/latest` 返回新 tag，且 `draft=false`
+>
+> **别忘了上传包 tarball。** README 的"从 Release tarball 装"指向
+> `…/releases/download/vX.Y.Z/<name>-<version>.tgz`；历次 Release 都**没有**上传资产，
+> 所以那个地址一直是 404。上传（令牌同样只放环境变量，不落盘）：
+>
+> ```sh
+> pnpm pack --pack-destination /tmp          # 产物名 = <name>-<version>.tgz
+> REL=$(curl -sS -H "Authorization: Bearer $TOKEN" \
+>   https://api.github.com/repos/PRTS168/dsh-wechat-suite/releases/tags/vX.Y.Z | jq -r .id)
+> curl -sS -X POST -H "Authorization: Bearer $TOKEN" \
+>   -H 'Content-Type: application/gzip' \
+>   --data-binary @/tmp/<name>-<version>.tgz \
+>   "https://uploads.github.com/repos/PRTS168/dsh-wechat-suite/releases/$REL/assets?name=<name>-<version>.tgz"
+> ```
+>
+> 上传前先确认包里**没有** `admin/.admin-token`、`*.log`（`packaging` 测试守着 `files` 白名单）。
+>> 发布后核对：`GET /releases/latest` 返回新 tag，且 `draft=false`
 > （列表接口可能命中缓存，用 `/releases/latest` 或加时间戳参数复验）。
 
 **约定**：先补 `CHANGELOG.md`（技术变更），再写一份对应的 `releases/vX.Y.Z-release-notes.md`
@@ -368,10 +402,10 @@ git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main
 标题行），两者与代码在同一批提交里推上去。文档一律以**使用者**为读者：只写他们需要知道的
 行为、配置与升级动作，不写仓库维护过程。
 
-**注意**：`test/*.test.ts` 用 `pnpm test` 跑偶发超时，加
-`--test-timeout=15000 --test-force-exit` 更稳（reminder 用例含真实计时器）。
+**注意**：个别用例含真实计时器（reminder / 心跳），所以给 `--test-timeout=30000`。
+**不要**加 `--test-force-exit`：在 Windows + Node 24 上它会触发 `commands.test.ts` 的
+文件级 libuv 断言（`UV_HANDLE_CLOSING`）而报假失败，去掉即全绿。
 
----
 
 ## 6. 已知盲区（改动前先看这里）
 
@@ -386,10 +420,14 @@ git commit -am "feat: ..." && git tag -a vX.Y.Z -m "..." && git push origin main
 - **原生图片块本身**：`vision.test.ts` 用 stub 目录覆盖**模式判定**，
   但 `attachments.saveImage` 只在真机跑过
 
-单测覆盖的分布（共 167 项）：node 24 / context-policy 21 / gateway 18 / light 14 /
-vision 10 / commands 11 / approvals 9 / morning 9 / markdown 9 / patch-config 7 /
-dedup 6 / inbound-media 6 / resume 5 / user-message-envelope 5 / email 4 /
-picker 4 / reminders 4。
+单测覆盖的分布（共 255 项）：memory 36 / node 33 / context-policy 21 / gateway 18 / light 15 /
+commands 11 / vision 10 / problems 10 / approvals 9 / morning 9 / markdown 9 / outbound-guard 8 /
+context-report 8 / robustness 8 / patch-config 7 / dedup 6 / inbound-media 6 / config-surface 5 /
+resume 5 / user-message-envelope 5 / email 4 / picker 4 / reminders 4 / packaging 3 / boot-safety 1。
+
+`config-surface` 是这一版新增的**结构性**测试：它读源码里的键集做子集校验，
+专治"配置键加了一处忘了另一处"（见 §3 ④）。`outbound-guard` 的用例直接取自
+2026-09-13 那次模型冒充主人发言的真实事故原文。
 
 ## 7. 环境约束
 

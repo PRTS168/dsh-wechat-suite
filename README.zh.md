@@ -5,18 +5,19 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-167%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-255%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
 
   <p>
+    <a href="#-v40-重大更新">v4.0 重大更新</a> ·
     <a href="#-快速开始">快速开始</a> ·
-    <a href="#-v031-改进">v0.3.1 改进</a> ·
     <a href="#-功能">功能</a> ·
     <a href="#-配置">配置</a> ·
     <a href="#-命令与工具">命令</a> ·
     <a href="#-独立管理台">管理台</a> ·
+    <a href="#-长期记忆">记忆</a> ·
     <a href="#-开发">开发</a> ·
     <a href="README.md">English</a>
   </p>
@@ -56,7 +57,85 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
 
 ---
 
-## ✨ v0.3.1 改进
+## ✨ v4.0 重大更新
+
+**上下文管理大改 · Web 管理台重写 · 长期记忆上线。** 完整发行说明：
+[`releases/v4.0-release-notes.md`](releases/v4.0-release-notes.md) ·
+[Release 页面](https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v4.0)。
+
+### 上下文管理：从"到点换对话"到"一个会话到底 + 分层记忆"
+
+默认方案 v0.3.x 起就是 `manual`（不自动轮换）；v4.0 做的是把这条路线**做实** ——
+以前你既看不见上下文用了多少，也不知道宿主的压缩何时触发、会保留什么。桥现在补齐三件事：
+
+- **`/context`（新）**：把宿主实测的数字摆出来 —— 占用 / 模型窗口 / 组成（对话·工具·系统）/
+  压缩触发点 / 压缩后原样保留多少 / 长期记忆条数。读的是宿主投影缓存，不是估算。
+- **压缩参数建议显式写死**：插件默认 `thresholdRatio 0.8 / retainRatio 0.16`，建议改成
+  `0.65 / 0.25`。原因：宿主的**溢出恢复**路径把 `retainTokens` 硬编码为 0，那条路只保留
+  最后一条消息 —— 正是"刚说完就忘"。提前到 65% 触发就永远走不到那里；保留 25%
+  （100 万窗口＝25 万 token 逐字保留）意味着普通对话整段都在原样尾巴里。
+- **压缩后自动重新注入记忆**：压缩发生在回合中间，桥监听 `compaction/summary`，
+  让下一条消息重新带上完整长期记忆。
+- 轮换方案（`rotate-turns` / `rotate-pressure` / `rotate-tokens` / `daily`）完整保留，
+  谁需要谁自己切。
+
+### 长期记忆（新）
+
+`MEMORY.md` 跨会话事实文件（关于主人 / 偏好与习惯 / 常用设备与环境 / 待办与承诺 / 重要决定 + 作废台账）：
+
+- 作为**背景资料**贴在用户消息围栏**外面**注入 —— 记忆永远不会被当成主人的指令；没有内容时不注入。
+- **每天 04:30 自动整理**（只从围栏里的主人原话提取，用会话自己的模型；要求空闲 2 小时以上、
+  当天至少 5 句主人发言，否则跳过）。
+- **`remember_fact` 工具（新）**：说"记一下"时**真的写进文件**，而不是嘴上说"记下了"；
+  支持 `replaces` 取代旧事实；写不进去会明确回 `❌`，绝不假装成功。
+- **`/memory`** 查看，`/memory now` 立刻整理。
+
+### Web 管理台重写
+
+`http://127.0.0.1:8790/` 打开就是新页面，左上角切换：
+
+- **新手模式**：只留必须懂的几项，全程大白话 —— 谁能跟我说话 / 用哪个大脑 / 它记不记得住 /
+  聊久了怎么办，外加"出问题了"页直接看日志原文。
+- **高级模式**：全部 36 个配置键、provider 与图片路由、记忆与问题日志路径、6 种上下文方案
+  + 参数微调 + 原始 JSON、对话与转录、配置备份与**一键回滚**。
+- **8 项体检**：一行结论 + 每项失败都带"怎么解决"。
+- 顺带修掉：写操作的守卫头以前是死代码、配置文件读不出来会被当成空配置覆盖、
+  备份按文件名而不是时间裁剪、数字字段缺服务端校验。
+
+### 问题台账：一切失败都留痕
+
+被吞掉的失败不再消失：写 `$DSH_HOME\wechat-problems.log`（256KB 轮转）+ `/problems` 可查 +
+**在微信里告诉你一次**（同问题 10 分钟一次、每小时最多 6 条）+ `/status` 多一行**网关健康**。
+覆盖入站处理、网关 status/error/fatal、出站失败、整轮空回复、切会话后丢弃的回复、
+早安推送、提醒读写与投递、记忆 IO、管理台队列、OCR 与语音转写失败等。
+
+### 修掉的真问题
+
+- **配置被宿主静默丢弃** —— `smtpHost/smtpPort/smtpUsername/smtpPassword/smtpFromName`
+  只声明在会话节点侧，宿主校验 profile patch 时直接丢掉，于是 `send_email` 永远回
+  "SMTP 未配置"，**哪怕配置齐全、凭据也完全可用**。同样被丢的还有 `imageInput` /
+  `imageInputModel` 与 12 个网关键（`sendChunkRetries`、`allowCdnHosts` 等：改了等于没改）。
+  现在四份键集必须相等，并有 `config-surface` 测试守护。
+- **模型替主人写话** —— 长对话里模型复读"用户消息"围栏、自己编出主人的下一句并作答，
+  整段发到了微信。现在出站前确定性裁掉围栏及其后内容（代码块内的引用不误伤），并记 `model/echo`。
+- **假警报** —— 工具调用步骤本来没有文本，旧代码当成"模型返回空内容"并给主人发 ⚠️。
+  现在按整轮判定：整轮无产出才算问题。
+- 切会话后心跳定时器永不停止；热重载不 abort 在途长轮询（会被 iLink 判 403 导致新桥停摆）；
+  时钟异常时定时器 NaN 忙循环；提醒文件读坏被当空覆盖；卸载时未决审批永久悬挂；
+  `net.ts` 响应流缺 `error` 监听。
+
+### 其它
+
+- 单元测试 **167 → 255 项**，新增 `config-surface` / `problems` / `robustness` /
+  `context-report` / `memory` / `outbound-guard` / `packaging` 七组。
+- 新增源码：`src/node/memory.ts`、`src/node/problems.ts`、`src/node/context-report.ts`。
+
+---
+
+## 📦 v0.3.1 上一版
+
+<details>
+<summary>v0.3.1（天气与命令面修复）—— 点开看细节</summary>
 
 自 v0.3.0 以来的修复。完整发行说明：
 [`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md) ·
@@ -88,6 +167,8 @@ DSH profile 接到微信个人账号 —— 这条用法不受官方支持。
 - 单元测试 **143 → 167 项**（新增 `commands` 11、`approvals` 9、`morning` +3、`light` +1；「设备不可达」用例改为同时注入直连传输，不再触网）
 - 新增 `src/node/net.ts`：`describeError()` 与 `directRequest()` 供天气与灯控共用
 - 文档：中英首页加「代理排查」提示；`DEVELOPMENT.md` 环境约束补记该坑
+
+</details>
 
 ---
 
@@ -169,7 +250,7 @@ dsh plugin --profile <你的profile> add github:PRTS168/dsh-wechat-suite
 
 # 从 Release tarball 装
 dsh plugin --profile <你的profile> add \
-  https://github.com/PRTS168/dsh-wechat-suite/releases/download/v0.3.1/dsh-cowork-chatnode-wechat-0.3.1.tgz
+  https://github.com/PRTS168/dsh-wechat-suite/releases/download/v4.0/dsh-cowork-chatnode-wechat-4.0.0.tgz
 
 # 发布到 npm 之后按包名装
 dsh plugin --profile <你的profile> add <包名>
@@ -224,6 +305,36 @@ node admin/server.ts          # Windows 上也可用 admin/start-admin.bat
 > 拦掉了。桥会自动改用直连重试一次；两次都失败时，报错会写出真实原因
 > （`ENOTFOUND` / `ECONNREFUSED` / TLS）。
 
+## 🧠 长期记忆
+
+跨会话的事实文件 `${DSH_HOME}/wechat-memory/MEMORY.md`，五个小节 + 一个作废台账：
+
+```markdown
+## 关于主人
+- 主人有两个邮箱：主 owner@example.com、副 alt@example.com（2026-09-13）
+
+## 偏好与习惯
+## 常用设备与环境
+## 待办与承诺
+## 重要决定
+## 已过期
+- 主人在 A 城（作废 2026-09-13）
+```
+
+- **怎么进去的**：① 主人说"记一下…"时模型调用 `remember_fact` **立刻落盘**；
+  ② 每天定点（默认 04:30）自动整理一次当天的主人原话。两条路都走同一套写入：
+  原子替换 + 先备份 + 4000 字上限 + 每次改动一行审计（`memory-log.md`）。
+- **怎么出来的**：作为**背景资料**贴在用户消息围栏**外面**注入 —— 人设的硬规则是
+  "只有围栏里的才算主人发言"，所以记忆永远不会被误当成命令。文件没有事实时**不注入**。
+- **不会被忘掉**：换会话、重启、压缩都带着；压缩发生后桥会主动在下一条消息重新注入一次。
+- **用户可以随时看/改**：`/memory` 看，文件是纯 Markdown，用记事本改完下一次注入即生效。
+
+> [!NOTE]
+> 写入是**有边界**的：只记主人本人明确说过、且长期有效的事实（称呼、城市、作息、偏好、
+> 设备与路径、承诺、决定）。密码/token/API key、一次性安排、闲聊情绪、模型自己说过的话
+> 都不写；单条上限 300 字（超了会被截断，并在回执里写明），整份文件上限 4000 字（超了整笔拒绝，
+> 不会悄悄丢）。
+
 ## ⚙️ 配置
 
 ```yaml
@@ -249,15 +360,36 @@ plugins:
     # ttsApiKey / ttsModel: FunAudioLLM/CosyVoice2-0.5B / ttsVoice: speech:<音色uri>
     # mediaDir: <目录>   # 入站媒体落盘（默认 $DSH_HOME/attachments/wechat）
     # reminderFile / morningFile: <路径，默认在 $DSH_HOME 下>
+
+    # ---- 邮件（可选；host + 用户名 + 密码三项齐全才会真正发得出去）----
+    # smtpHost: smtp.example.com
+    # smtpPort: 465                     # 隐式 TLS
+    # smtpUsername: you@example.com     # 同时作为发件人地址
+    # smtpPassword: <授权码>
+    # smtpFromName: <发件人显示名>
+
+    # ---- 长期记忆（可选，全部有默认值）----
+    # memoryFile: $DSH_HOME/wechat-memory/MEMORY.md
+    # memoryInjectEvery: 10             # 每 N 条消息重新注入一次记忆
+    # memoryConsolidateTime: "04:30"    # 每天整理时间；留空 = 不自动整理
+    # problemFile: $DSH_HOME/wechat-problems.log   # 问题台账
+
+    # ---- 网关调优（可选）----
+    # longPollTimeoutMs / apiTimeoutMs / pollIdleDelayMs / retryDelayMs
+    # backoffDelayMs / maxConsecutiveFailures / sessionExpiredPauseMs
+    # sendChunkRetries / sendChunkRetryDelayMs
+    # rateLimitCircuitOpenMs / rateLimitCircuitWindowMs / rateLimitCircuitThreshold
+    # allowCdnHosts: [...]              # 媒体下载的 SSRF 白名单
 ```
 
 `allowFrom` 必填且没有宽松默认值：缺失会启动失败；白名单外的消息只记日志、直接忽略，
 永远不会喂给模型。
 
 > [!TIP]
-> 网关 Config schema 里还声明了一批调优键（`longPollTimeoutMs`、`retryDelayMs`、限流熔断等），
-> 但 bundle 只转发 `baseUrl/cdnBaseUrl/token/accountId` 四键 —— 需要调网关参数请直接配置
-> `WechatGateway` 自身。
+> 上面每一项都能在**管理台**里改（新手模式只显示常用的几项，高级模式列出全部）。
+> 以前有一类坑：某些键只声明在会话节点侧，宿主校验 profile patch 时会**静默丢弃**，
+> 于是"填了等于没填"（`send_email` 报"SMTP 未配置"就是这么来的）。现在 bundle schema /
+> 转发列表 / 节点 schema / 管理台字段四份键集必须相等，并有 `config-surface` 测试守护。
 
 <details>
 <summary><b>原生识图 vs OCR —— 以及「声明才是开关」这个坑</b></summary>
@@ -314,7 +446,10 @@ llm-deepseek:
 | `/use N` | 切换活动会话 |
 | `/new <prompt>` | 新建 agent+会话并开工 |
 | `/stop` | 取消当前任务 |
-| `/status` | agent 状态 + 会话摘要 |
+| `/status` | agent 状态 + 会话摘要 + **网关健康**（在线 / 重连 / 暂停 / 已停止） |
+| `/context` | 上下文占用、模型窗口、组成、压缩触发点、压缩后原样保留多少、记忆条数 |
+| `/memory` | 查看长期记忆；`/memory now` 立刻整理一次 |
+| `/problems` | 最近被记下来的问题（`/problems clear` 清空列表，日志保留） |
 | `/send <路径>` | 发送一张本地图片给当前联系人 |
 | `/model` | 两步切换模型（列表 → 选数字） |
 | `/perm` | 两步切换权限预设（列表 → 选数字） |
@@ -342,6 +477,7 @@ llm-deepseek:
 | `set_reminder(text, inMinutes\|atTime)` | 定时提醒（按联系人） |
 | `list_reminders()` | 查看待办提醒 |
 | `cancel_reminder(id)` | 取消提醒 |
+| `remember_fact(text, section?, replaces?)` | **把主人说过的事实立刻写进长期记忆**（可选 `replaces` 取代旧事实） |
 
 </details>
 
@@ -368,17 +504,30 @@ agent 的请求，其余沿 answerer 链继续委托。
 **仅回环**的 HTTP 管理台，它**不属于** DSH 插件树 —— 不会影响 profile 启动，停掉它也不会
 停掉桥。
 
-| 页签 | 作用 |
+页面有**两个模式**，左上角切换（记住选择）：
+
+| 模式 | 面向 | 内容 |
+| --- | --- | --- |
+| **新手模式** | 不熟配置的人 | 只留必须懂的几项、全程大白话：谁能跟我说话（白名单）/ 用哪个大脑（模型下拉）/ 它记不记得住（记忆 + 每天整理时间）/ 聊久了怎么办（两个选择），外加"出问题了"页直接看日志原文；顶部一行体检结论 |
+| **高级模式** | 要全部控制的人 | 全部配置键（分组）/ provider 与图片路由 / 记忆与问题日志路径 / 6 种上下文方案 + 参数微调 + 原始 JSON / 对话列表与转录 / 配置备份与**一键回滚** / 完整环境自检 |
+
+| 接口 | 作用 |
 | --- | --- |
-| **配置** | 桥的全部 `CONFIG_FIELDS` 配置项，密钥掩码 + 显式显示，写入前校验 + 带时间戳备份 |
-| **对话** | `wechat-*` 会话列表（轮数/token）、转录查看、新建会话、遗忘会话（可恢复） |
-| **上下文** | 一键切换 `contextPolicy` 方案 + 参数微调 |
+| `GET /api/state` | 配置值（密钥掩码）、字段定义、上下文方案、会话列表 |
+| `GET /api/health` | 8 项体检：配置文件 / 白名单 / 人设 / 微信凭据 / 媒体 Key / 长期记忆 / 最近问题 / 聊天模型 |
+| `GET /api/problems` · `GET /api/memory` | 问题台账原文 · 长期记忆原文 |
+| `GET /api/models` | 从 `settings.yaml` 读出真实模型列表（含第三方中转名） |
+| `GET /api/backups` · `POST /api/rollback` | 配置备份列表（按时间）· 回滚（回滚前再存一份当前配置） |
+| `POST /api/config` · `POST /api/scheme` | 写 patch（只提交改动项）· 切换上下文方案 |
+| `GET /api/conversations` · `/api/transcript` · `POST /api/session/*` | 会话列表 / 转录 / 新建 / 遗忘（可恢复） |
 
 **安全姿态** —— 只绑定 `127.0.0.1` · 令牌在首次启动时写入 `admin/.admin-token`
 （可用 `WECHAT_ADMIN_TOKEN` 覆盖）· 每次 API 调用都要带它 · 改动类调用还要带
 `x-wechat-admin: 1` 守卫头（跨站页面无法伪造）· `Host` 必须是回环地址（DNS rebinding
-页面因此够不到它）。会话命令落在磁盘队列（`$DSH_HOME/wechat-admin/queue/`），由桥在 ≤2 秒
-内执行；管理台还能看到桥最近的执行回报。令牌文件已被 git 忽略。
+页面因此够不到它）· 配置文件读不出来时**拒绝写入**（避免把别的插件条目一起覆盖掉）·
+数字字段服务端二次校验（写坏一个整数字段会让整个 profile 起不来）。会话命令落在磁盘队列
+（`$DSH_HOME/wechat-admin/queue/`），由桥在 ≤2 秒内执行；管理台还能看到桥最近的执行回报。
+令牌文件已被 git 忽略。
 
 > [!NOTE]
 > v0.3.0 起**不再有网页 GUI 内的设置页** —— `config-api` 插件行已移除（见
@@ -392,7 +541,7 @@ agent 的请求，其余沿 answerer 链继续委托。
 pnpm install
 pnpm build          # src/ → lib/（tsc）
 pnpm typecheck
-pnpm test           # node --test test/*.test.ts —— 167 项，无需微信
+pnpm test           # node --test test/*.test.ts —— 255 项，无需微信
 pnpm smoke          # 真机手动冒烟
 pnpm setup          # 交互式配置向导
 ```
@@ -407,10 +556,15 @@ pnpm setup          # 交互式配置向导
 - 诚实标注的盲区（暂无单测）：OCR 成功/失败分支、语音下载→ASR 全流程、媒体上行（fake 服务器
   无 `/upload`）、`/send`、`/help`、重启 resume，以及原生图片块本身（`vision.test.ts` 用 stub
   目录覆盖模式判定，`attachments.saveImage` 只在真机上跑）。真机冒烟覆盖主路径。
-- 测试分布（167 项）：`node` 24 · `context-policy` 21 · `gateway` 18 · `light` 14 ·
-  `vision` 10 · `commands` 11 · `approvals` 9 · `morning` 9 · `markdown` 9 · `patch-config` 7 ·
-  `dedup` 6 · `inbound-media` 6 · `resume` 5 · `user-message-envelope` 5 · `email` 4 ·
-  `picker` 4 · `reminders` 4 · `boot-safety` 1
+- 测试分布（255 项）：`memory` 36 · `node` 33 · `context-policy` 21 · `gateway` 18 · `light` 15 ·
+  `commands` 11 · `problems` 10 · `vision` 10 · `markdown` 9 · `morning` 9 · `approvals` 9 ·
+  `outbound-guard` 8 · `context-report` 8 · `robustness` 8 · `patch-config` 7 · `inbound-media` 6 ·
+  `dedup` 6 · `resume` 5 · `config-surface` 5 · `user-message-envelope` 5 · `reminders` 4 ·
+  `email` 4 · `picker` 4 · `packaging` 3 · `boot-safety` 1
+- v4.0 新增的守护型测试：`config-surface`（配置面四份键集必须相等 —— 就是它挡住了
+  "SMTP 配置被宿主丢弃"那一类 bug）、`problems`（台账去重/限流/轮转）、`robustness`
+  （拒写、原子写、备份按时间裁剪、日志轮转）、`packaging`（发布包白名单不能把
+  `.admin-token` 与日志扫进去）、`outbound-guard`（用真实事故原文做用例）。
 
 ---
 
@@ -441,12 +595,29 @@ pnpm setup          # 交互式配置向导
 ## 📚 版本历史
 
 <details open>
+<summary><b>v4.0</b> —— 上下文管理大改 · Web 管理台重写 · 长期记忆</summary>
+
+- **上下文**：默认一个会话到底；`/context` 显示真实占用与压缩触发点；建议把压缩参数写成
+  `thresholdRatio 0.65 / retainRatio 0.25`（避开"只留最后一条消息"的溢出路径）；
+  压缩后自动重新注入记忆。
+- **长期记忆**：`MEMORY.md` + 每天 04:30 整理 + `remember_fact` 工具 + `/memory`。
+- **管理台**：新手 / 高级双模式，8 项体检，备份与一键回滚，写操作守卫头真正生效。
+- **问题台账**：`wechat-problems.log` + `/problems` + `/status` 网关健康，告警限流。
+- **修复**：配置被宿主静默丢弃（`send_email` 报"SMTP 未配置"的真因）、模型冒充主人写话、
+  工具调用步骤被误报成空回复、心跳定时器泄漏、热重载 403、定时器 NaN 忙循环等。
+- 离线单测 255 项（原 167 项）。
+
+见 [`releases/v4.0-release-notes.md`](releases/v4.0-release-notes.md)。
+
+</details>
+
+<details>
 <summary><b>v0.3.1</b> —— 天气与命令面修复</summary>
 
 - 天气推送报出真实失败原因，并直连重试（不受宿主代理影响）。
 - 裸 `1` / `2` 恢复回答权限请求；`/yes` `/no` 不再自称「未知命令」。
 - 老灯控词表 `/gear` `/off` `/low` `/mid` `/high` 恢复，且同样不怕代理。
-- 离线单测 167 项（原 146 项）。
+- 离线单测 167 项（原 143 项）。
 
 见 [`releases/v0.3.1-release-notes.md`](releases/v0.3.1-release-notes.md)。
 

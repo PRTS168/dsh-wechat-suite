@@ -3,6 +3,62 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的组织方式，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [v4.0] — 2026-09-13
+
+**大版本：上下文管理大改 · Web 管理台重写 · 长期记忆上线。** 桥从"会回话"变成
+"记得住、说得清、坏了有痕迹"。完整发行说明见 `releases/v4.0-release-notes.md`。
+
+### Added
+
+- **长期记忆**（`src/node/memory.ts`）：`$DSH_HOME/wechat-memory/MEMORY.md` 跨会话事实文件；
+  作为背景资料贴在用户消息围栏**外**注入（无内容时不注入）；每天 04:30 自动整理
+  （只取围栏内的主人原话，用会话自己的模型；空闲 ≥2h、≥5 句才跑）；写入走原子替换 + 备份 +
+  4000 字上限 + `memory-log.md` 审计
+- **`remember_fact` 工具**：主人说"记一下"时立刻落盘；支持 `replaces` 取代旧事实；
+  写不进去回 `❌` + 真实原因，绝不假装成功；拒绝写入含围栏标记的内容
+- **`/context` 命令**（`src/node/context-report.ts`）：读宿主会话投影，显示占用 / 窗口 /
+  组成（对话·工具·系统）/ 压缩触发点 / 压缩后原样保留量 / 记忆条数
+- **问题台账**（`src/node/problems.ts`）：被吞掉的失败写 `wechat-problems.log`（256KB 轮转）+
+  内存台账 + `/problems` 命令 + `/status` 网关健康行；告警限流（同问题 10 分钟一次、
+  每小时 ≤6 条）
+- **管理台双模式**：新手模式（白话、只留必要项）与高级模式（全部字段 + 诊断 + 备份回滚）；
+  新接口 `/api/health`、`/api/problems`、`/api/memory`、`/api/models`、`/api/backups`、
+  `/api/rollback`
+- 压缩发生后自动重新注入长期记忆（监听 `compaction/summary`）
+- 测试：`config-surface`（配置面四份键集一致性）、`problems`、`robustness`、
+  `context-report`、`memory`、`outbound-guard`（用真实事故原文做用例）、`packaging`（发布包白名单不得扫进 `.admin-token` 与日志）
+
+### Changed
+
+- **上下文管理**：默认 `contextPolicy: manual`（一个会话到底），轮换方案仍保留但不再是默认；
+  建议把压缩参数显式写成 `thresholdRatio 0.65 / retainRatio 0.25`，以避开宿主"溢出恢复"
+  路径（该路径把 `retainTokens` 硬编码为 0，只保留最后一条消息）
+- 网关调优键全部打通转发（此前 12 个键声明了却从不转发，改了等于没改）；
+  `pollIdleDelayMs` / `qrPollIntervalMs` 补进 bundle schema
+- 生图 / 语音转写 / 语音合成跟随 `ocrBaseUrl`（此前各自写死 SiliconFlow 主机）
+- 备份按**修改时间**保留最近 5 份（此前按文件名排序，删掉的可能反而是新的）
+- 测试 167 → 255 项
+
+### Fixed
+
+- **配置被宿主静默丢弃**：`smtpHost/smtpPort/smtpUsername/smtpPassword/smtpFromName` 与
+  `imageInput/imageInputModel` 只声明在会话节点侧，宿主用 bundle schema 校验 patch 时直接
+  丢弃 —— `send_email` 因此永远回"SMTP 未配置"，哪怕配置齐全、凭据可用
+- **模型替主人写话**：长对话中模型复读"用户消息"围栏、编出主人的下一句并作答，整段发到
+  微信；现出站前确定性裁掉围栏及其后内容（代码块内引用不误伤），并记 `model/echo`
+- **假警报**：工具调用步骤本无文本，却被报成"模型返回空内容"并给主人发 ⚠️；改为按整轮判定
+- 管理台 `x-wechat-admin` 守卫头是死代码（写操作实际只有 token 单因子）
+- 管理台读不出配置文件时显示为空配置，保存会覆盖别的插件条目；现拒绝写入
+- 切会话后心跳定时器永不停止；`turn/end` 的 `blocked` 分支完全无记录
+- 热重载不 abort 在途长轮询，与同 token 的新实例重叠会被 iLink 判 403 导致新桥停摆；
+  `restart()` 增加串行化
+- 时钟异常时早安/提醒定时器 NaN → 立即触发 → 重新武装（忙循环）
+- 提醒/早安配置文件读坏被当空并覆盖；写入改为 temp + rename
+- 插件卸载时未决审批永久悬挂；`ctx.on('wechat/message')` 未保存 disposer
+- `net.ts` 响应流缺 `error` 监听（进程级崩溃隐患）
+- 记忆：UTC 日期、子串匹配误伤、标题被改写、定时器游标先推进导致失败不再重试、
+  非 UTF-8 手改文件被写成乱码、IO 失败被谎报为超上限
+
 ## [v0.3.1] — 2026-09-12
 
 ### Fixed
@@ -191,6 +247,7 @@ iLink、真人微信往返并触发一次自动轮换，并在连续多次 patch
 ---
 
 [未发布]: 暂无
+[v4.0]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v4.0
 [v0.3.1]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.1
 [v0.3.0]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0
 [v0.2.2]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.2.2
