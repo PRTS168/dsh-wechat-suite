@@ -1,37 +1,62 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="300" viewBox="0 0 1280 300" role="img" aria-label="dsh-chatnode-wechat — WeChat bridge for DeepSeek Harness">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#07C160"/>
-      <stop offset="48%" stop-color="#0D9488"/>
-      <stop offset="100%" stop-color="#1E3A8A"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="0.82" cy="0.18" r="0.7">
-      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.30"/>
-      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
-    </radialGradient>
-    <pattern id="grid" width="34" height="34" patternUnits="userSpaceOnUse">
-      <path d="M34 0H0V34" fill="none" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="1"/>
-    </pattern>
-  </defs>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="440" viewBox="0 0 1600 440" role="img" aria-label="dsh-chatnode-wechat v4.0 — WeChat bridge for DeepSeek Harness: context, memory, diagnostics">
+  <!-- Typography is inline rather than a <style> block on purpose: this file is
+       served through image proxies that may drop an embedded stylesheet. -->
 
-  <rect width="1280" height="300" fill="url(#bg)"/>
-  <rect width="1280" height="300" fill="url(#grid)"/>
-  <rect width="1280" height="300" fill="url(#glow)"/>
+  <rect width="1600" height="440" fill="#0e1013"/>
+  <rect x="0.5" y="0.5" width="1599" height="439" fill="none" stroke="#1b1f26" stroke-width="1"/>
+  <rect x="64" y="104" width="2" height="252" fill="#6ea8fe" opacity="0.55"/>
 
-  <g transform="translate(1010,86)" opacity="0.95">
-    <rect x="0" y="0" width="200" height="128" rx="26" fill="#FFFFFF" fill-opacity="0.14" stroke="#FFFFFF" stroke-opacity="0.35" stroke-width="2"/>
-    <circle cx="34" cy="34" r="9" fill="#FFFFFF" fill-opacity="0.85"/>
-    <circle cx="64" cy="34" r="9" fill="#FFFFFF" fill-opacity="0.55"/>
-    <circle cx="94" cy="34" r="9" fill="#FFFFFF" fill-opacity="0.35"/>
-    <rect x="24" y="60" width="152" height="12" rx="6" fill="#FFFFFF" fill-opacity="0.55"/>
-    <rect x="24" y="82" width="112" height="12" rx="6" fill="#FFFFFF" fill-opacity="0.35"/>
-    <rect x="24" y="104" width="134" height="12" rx="6" fill="#FFFFFF" fill-opacity="0.22"/>
-  </g>
+  <text x="88" y="140" fill="#6b7280" font-family="system-ui, -apple-system, Segoe UI, Arial, sans-serif" font-size="15" font-weight="500" letter-spacing="3.2">DEEPSEEK HARNESS · WECHAT BRIDGE</text>
+  <text x="86" y="214" fill="#e8eaed" font-family="system-ui, -apple-system, Segoe UI, Arial, sans-serif" font-size="66" font-weight="650" letter-spacing="-1.2">dsh-chatnode-wechat</text>
+  <text x="88" y="256" fill="#8b93a1" font-family="system-ui, -apple-system, Segoe UI, Arial, sans-serif" font-size="22">Turn a WeChat account into a remote control for your DSH agent.</text>
+  <text x="88" y="300" fill="#6b7280" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="17">WeChat  &#8644;  iLink  &#8644;  gateway  &#8644;  conversation-node  &#8644;  agent session</text>
 
-  <g font-family="Segoe UI, -apple-system, Helvetica Neue, Arial, sans-serif">
-    <text x="72" y="112" font-size="30" font-weight="600" fill="#FFFFFF" fill-opacity="0.82" letter-spacing="1">DEEPSEEK HARNESS · BUNDLE</text>
-    <text x="72" y="172" font-size="60" font-weight="700" fill="#FFFFFF">dsh-chatnode-wechat</text>
-    <text x="72" y="212" font-size="24" fill="#FFFFFF" fill-opacity="0.92">Turn WeChat into a remote control for your DSH agent</text>
-    <text x="72" y="252" font-size="19" fill="#FFFFFF" fill-opacity="0.72" font-family="Consolas, SFMono-Regular, Menlo, monospace">WeChat &#8644; iLink &#8644; wechat-gateway &#8644; wechat-conversation-node &#8644; DSH agent session</text>
-  </g>
+  <rect x="88" y="326" width="62" height="28" rx="5" fill="#141a24" stroke="#2b3a52" stroke-width="1"/>
+  <text x="103" y="345" fill="#9dc0ff" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="15" font-weight="500">v4.0</text>
+
+  <rect x="160" y="326" width="98" height="28" rx="5" fill="#14171c" stroke="#23272e" stroke-width="1"/>
+  <text x="174" y="345" fill="#8b93a1" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="15" font-weight="500">context</text>
+
+  <rect x="268" y="326" width="88" height="28" rx="5" fill="#14171c" stroke="#23272e" stroke-width="1"/>
+  <text x="282" y="345" fill="#8b93a1" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="15" font-weight="500">memory</text>
+
+  <rect x="366" y="326" width="132" height="28" rx="5" fill="#14171c" stroke="#23272e" stroke-width="1"/>
+  <text x="380" y="345" fill="#8b93a1" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="15" font-weight="500">diagnostics</text>
+
+  <rect x="508" y="326" width="106" height="28" rx="5" fill="#14171c" stroke="#23272e" stroke-width="1"/>
+  <text x="522" y="345" fill="#8b93a1" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="15" font-weight="500">admin UI</text>
+
+  <rect x="944" y="104" width="592" height="272" rx="10" fill="#14171c" stroke="#23272e" stroke-width="1"/>
+  <path d="M944 150 H1536" fill="none" stroke="#23272e" stroke-width="1"/>
+
+  <circle cx="976" cy="127" r="4.5" fill="#3fb950"/>
+  <circle cx="996" cy="127" r="4.5" fill="#2b3038"/>
+  <circle cx="1016" cy="127" r="4.5" fill="#2b3038"/>
+  <text x="1040" y="132" fill="#6b7280" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="14">wechat-&lt;session&gt; · live</text>
+
+  <text x="976" y="182" fill="#8b93a1" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="15">/context</text>
+  <text x="1504" y="182" fill="#e8eaed" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="16" font-weight="500">15.9k / 1M tokens</text>
+
+  <text x="976" y="218" fill="#8b93a1" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="15">compact at</text>
+  <text x="1504" y="218" fill="#e8eaed" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="16" font-weight="500">650k &#183; keep 250k verbatim</text>
+
+  <text x="976" y="254" fill="#8b93a1" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="15">/memory</text>
+  <text x="1504" y="254" fill="#e8eaed" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="16" font-weight="500">facts carried across sessions</text>
+
+  <path d="M976 274 H1504" fill="none" stroke="#23272e" stroke-width="1"/>
+
+  <circle cx="981" cy="300" r="4" fill="#3fb950"/>
+  <text x="996" y="305" fill="#8b93a1" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="15">gateway</text>
+  <text x="1069" y="305" fill="#e8eaed" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="16" font-weight="500">online</text>
+
+  <circle cx="1160" cy="300" r="4" fill="#3fb950"/>
+  <text x="1175" y="305" fill="#8b93a1" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="15">problems</text>
+  <text x="1263" y="305" fill="#e8eaed" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="16" font-weight="500">0 in 24h</text>
+
+  <circle cx="1372" cy="300" r="4" fill="#3fb950"/>
+  <text x="1387" y="305" fill="#8b93a1" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="15">tests</text>
+  <text x="1504" y="305" fill="#e8eaed" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="16" font-weight="500">255</text>
+
+  <path d="M944 330 H1536" fill="none" stroke="#23272e" stroke-width="1"/>
+  <text x="976" y="356" fill="#6b7280" font-family="ui-monospace, SFMono-Regular, Consolas, Menlo, monospace" font-size="14">$DSH_HOME/wechat-problems.log &#183; rotates at 256 KB</text>
 </svg>
