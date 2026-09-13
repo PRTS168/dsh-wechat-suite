@@ -26,8 +26,9 @@ function tempDir(prefix: string): string {
 test('an unreadable config file is refused, never overwritten', async () => {
   const dir = tempDir('patch-guard-')
   const file = join(dir, 'cordis.patch.yml')
+  const original = ['- id: someone-elses-plugin', '  config:', '    key: keep-me', ''].join('\n')
   try {
-    writeFileSync(file, ['- id: someone-elses-plugin', '  config:', '    key: keep-me', ''].join('\n'), 'utf8')
+    writeFileSync(file, original, 'utf8')
     let sawUnreadable = false
     if (process.platform !== 'win32') {
       // Permissions are the portable way to make a readable file unreadable;
@@ -52,10 +53,17 @@ test('an unreadable config file is refused, never overwritten', async () => {
       return
     }
 
-    const read = await readPatchFile(file)
-    assert.ok(read.unreadable)
-    await assert.rejects(() => applyPatchConfig(file, { agentModel: 'x' }), PatchUnreadableError)
-    assert.match(readFileSync(file, 'utf8'), /keep-me/, '别人的条目一个字节都不能丢')
+    try {
+      const read = await readPatchFile(file)
+      assert.equal(read.exists, true, '文件存在 → 不能说“文件不存在”')
+      assert.ok(read.unreadable, '必须标记为读不出来')
+      await assert.rejects(() => applyPatchConfig(file, { agentModel: 'x' }), PatchUnreadableError)
+    } finally {
+      // 权限必须在回读之前恢复：chmod 000 的文件连这个测试自己也读不了，
+      // 少了这一步它就会在下面那行以 EACCES 崩掉（Linux CI 上正是这么红的）。
+      chmodSync(file, 0o600)
+    }
+    assert.equal(readFileSync(file, 'utf8'), original, '别人的条目一个字节都不能丢')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
