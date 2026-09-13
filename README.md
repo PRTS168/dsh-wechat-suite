@@ -211,7 +211,7 @@ plugins:
     # imageInputModel: amd/DeepSeek-V4-Flash-Vision-Exp  # vision route for pictures only
     # agentPreset: wechat             # optional persona preset (lives outside this repo)
     # agentProvider / agentModel: ... # model route for the WeChat agent
-    # esp32BaseUrl: http://<esp32-ip>:80   # light control (optional)
+    # esp32BaseUrl: http://<esp32-ip>:80   # light control (optional; no built-in default, fill it in to use it)
 
     # ---- media helpers (all optional; each capability degrades gracefully) ----
     # ocrApiKey / ocrModel: deepseek-ai/DeepSeek-OCR / ocrBaseUrl

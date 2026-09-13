@@ -198,7 +198,7 @@ plugins:
     # imageInputModel: amd/DeepSeek-V4-Flash-Vision-Exp  # 图片专用视觉路由
     # agentPreset: wechat             # 可选：人设 preset（在仓库之外）
     # agentProvider / agentModel: ... # 微信 agent 的模型路由
-    # esp32BaseUrl: http://<esp32-ip>:80   # 灯控（可选）
+    # esp32BaseUrl: http://<esp32-ip>:80   # 灯控（可选；没有内置默认地址，要用就得填）
 
     # ---- 媒体助手（全部可选；未配时对应能力优雅降级）----
     # ocrApiKey / ocrModel: deepseek-ai/DeepSeek-OCR / ocrBaseUrl
