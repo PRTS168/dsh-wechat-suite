@@ -419,10 +419,44 @@ interface DigestState {
   startedTurns: Set<number>
   /** Whether this turn produced anything to send (a textless step is normal). */
   sawText: boolean
-  heartbeat?: ReturnType<typeof setInterval>
+  /** Cancels the scheduled progress lines (early first line + steady interval). */
+  cancelDigests?: () => void
   /** Heartbeat currently running for this session (so it can be stopped even
    *  after the session stops being the active one). */
   heartbeating: boolean
+}
+
+/**
+ * How long a turn may stay silent before the first progress line goes out.
+ *
+ * Waiting a full `digestIntervalSec` (300s by default) means five minutes of
+ * nothing on a long tool-heavy turn, which the owner reads as "it froze" — the
+ * difference between slow and stuck is whether anything arrives meanwhile.
+ */
+export const FIRST_DIGEST_DELAY_MS = 20_000
+
+/**
+ * Schedule the progress lines for an open turn: one early, then every interval.
+ *
+ * Returns the cancel function, which the caller **must** run when the turn ends:
+ * a cancelled-late interval keeps pushing "🔄 仍在处理中" into a chat where
+ * nothing is being processed any more (that leak is why this is a function with
+ * an explicit cancel instead of an interval the caller has to remember).
+ */
+export function scheduleDigests(
+  intervalSec: number,
+  tick: () => void,
+  earlyMs: number = FIRST_DIGEST_DELAY_MS,
+): () => void {
+  const intervalMs = intervalSec * 1000
+  const first = setTimeout(tick, Math.min(earlyMs, intervalMs))
+  const every = setInterval(tick, intervalMs)
+  first.unref?.()
+  every.unref?.()
+  return () => {
+    clearTimeout(first)
+    clearInterval(every)
+  }
 }
 
 /**
@@ -434,20 +468,18 @@ export function attachSessionOutbound(node: WechatConversationNode): () => void 
   const digestState = new Map<string, DigestState>()
 
   const stopHeartbeat = (state: DigestState) => {
-    if (state.heartbeat) {
-      clearInterval(state.heartbeat)
-      state.heartbeat = undefined
-    }
+    state.cancelDigests?.()
+    state.cancelDigests = undefined
     state.heartbeating = false
   }
 
   const startHeartbeat = (session: Session, state: DigestState): boolean => {
     stopHeartbeat(state)
     if (node.config.digestIntervalSec <= 0) return false
-    state.heartbeat = setInterval(() => {
+    state.cancelDigests = scheduleDigests(node.config.digestIntervalSec, () => {
       void sendTextToPeer(node, digestLine(session, sessionBadge(node, session)))
-    }, node.config.digestIntervalSec * 1000)
-    state.heartbeat.unref?.()
+    })
+    state.heartbeating = true
     return true
   }
 

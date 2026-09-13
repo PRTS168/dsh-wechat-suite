@@ -150,7 +150,7 @@ node admin/server.ts          # or admin/start-admin.bat on Windows
 | **Control** | `/model` and `/perm` two-step menus; `/yes` `/no` (or bare `1` / `2`) approvals; `/开灯` `/关灯` or `/gear` `/off` `/low` `/mid` `/high` light control (`control_esp32_light`) |
 | **Proactive** | `set_reminder` (per-peer, persistent, catch-up after downtime) and the daily `/早安` weather digest (Open-Meteo, zero LLM cost) |
 | **Email** | `send_email` over a configured implicit-TLS SMTP account |
-| **Noise control** | Digest-style outbound: one heartbeat line per `digestIntervalSec`, replies chunked to `maxMessageChars` with throttling, end-of-turn notices only for error / abort / truncation |
+| **Noise control** | Digest-style outbound: on a long turn the first heartbeat line lands after ~20s and then every `digestIntervalSec`; replies are chunked to `maxMessageChars` with throttling, and end-of-turn notices appear only for error / abort / truncation |
 
 ---
 
@@ -202,7 +202,7 @@ retired-facts ledger:
 plugins:
   dsh-chatnode-wechat:
     allowFrom: ["<your-wechat-id>@im.wechat"] # hard allowlist, REQUIRED, no default
-    digestIntervalSec: 300            # heartbeat summary while a turn runs
+    digestIntervalSec: 300            # heartbeat spacing; the first line lands after ~20s, then this interval
     approvalTimeoutSec: 600           # approval timeout -> default deny
     maxMessageChars: 2000             # WeChat bubble cap (protocol limit)
     sendChunkDelayMs: 1500            # throttle between outbound bubbles
@@ -235,7 +235,8 @@ plugins:
     # problemFile: $DSH_HOME/wechat-problems.log   # problem ledger
 
     # ---- gateway tuning (optional) ----
-    # longPollTimeoutMs / apiTimeoutMs / pollIdleDelayMs / retryDelayMs
+    # gateway tuning keys; longPollTimeoutMs also caps the server's suggested long-poll window
+# longPollTimeoutMs / apiTimeoutMs / pollIdleDelayMs / retryDelayMs
     # backoffDelayMs / maxConsecutiveFailures / sessionExpiredPauseMs
     # sendChunkRetries / sendChunkRetryDelayMs
     # rateLimitCircuitOpenMs / rateLimitCircuitWindowMs / rateLimitCircuitThreshold

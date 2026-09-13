@@ -53,6 +53,10 @@ interface PostOptions {
      */
     signal?: AbortSignal;
 }
+/** True once a transport failure has switched requests to fresh connections. */
+export declare function transportUsesDirectConnection(): boolean;
+/** Reset the preference (tests; and a caller that knows the network is back). */
+export declare function resetTransportPreference(): void;
 /** POST one JSON envelope and parse the response object. */
 export declare function postJson<T = Record<string, unknown>>(opts: PostOptions): Promise<T>;
 interface GetOptions {

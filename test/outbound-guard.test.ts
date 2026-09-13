@@ -9,7 +9,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { sanitizeAssistantText } from '../src/node/outbound.ts'
+import { sanitizeAssistantText, scheduleDigests, FIRST_DIGEST_DELAY_MS } from '../src/node/outbound.ts'
 import { MEMORY_CLOSE, MEMORY_OPEN } from '../src/node/memory.ts'
 
 test('an echoed user turn is cut, and the real answer survives', () => {
@@ -82,4 +82,35 @@ test('an unclosed background opener is cut too', () => {
   const { text, echoed } = sanitizeAssistantText(leaked)
   assert.equal(echoed, true)
   assert.equal(text, '行')
+})
+
+test('progress lines start early, keep the interval, and stop when cancelled', (t) => {
+  // Default digestIntervalSec is 300s. Waiting a full interval for the first line
+  // is five minutes of silence on a long turn — indistinguishable from a freeze.
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  let ticks = 0
+  const cancel = scheduleDigests(300, () => { ticks += 1 })
+
+  t.mock.timers.tick(FIRST_DIGEST_DELAY_MS - 1)
+  assert.equal(ticks, 0, '不到 20 秒不该打扰')
+  t.mock.timers.tick(1)
+  assert.equal(ticks, 1, '第一行必须在 20 秒内出现')
+
+  t.mock.timers.tick(300_000 - FIRST_DIGEST_DELAY_MS)
+  assert.equal(ticks, 2, '之后按 digestIntervalSec 的节奏走')
+
+  cancel()
+  t.mock.timers.tick(900_000)
+  assert.equal(ticks, 2, '取消之后一个字都不能再发（回合已结束）')
+  t.mock.timers.reset()
+})
+
+test('a short interval is never stretched by the early line', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
+  let ticks = 0
+  const cancel = scheduleDigests(5, () => { ticks += 1 })
+  t.mock.timers.tick(5_000)
+  assert.equal(ticks, 2, '间隔只有 5 秒时，第一行不能反而更晚')
+  cancel()
+  t.mock.timers.reset()
 })

@@ -143,7 +143,7 @@ node admin/server.ts          # Windows 上也可用 admin/start-admin.bat
 | **控制** | `/model` 与 `/perm` 两步菜单；`/yes` `/no`（或裸 `1` / `2`）审批；`/开灯` `/关灯` 或 `/gear` `/off` `/low` `/mid` `/high` 灯控（`control_esp32_light`） |
 | **主动** | `set_reminder`（按联系人隔离、JSON 持久化、停机后补发）与每日 `/早安` 天气摘要（Open-Meteo，零 LLM 成本） |
 | **邮件** | `send_email` 通过配置好的隐式 TLS SMTP 账号发送纯文本邮件 |
-| **不刷屏** | 摘要式出站：每 `digestIntervalSec` 一条心跳，回复按 `maxMessageChars` 分块限速，回合结束只在出错/中止/截断时提示 |
+| **不刷屏** | 摘要式出站：长回合第一条心跳在约 20 秒时发出，之后每 `digestIntervalSec` 一条，回复按 `maxMessageChars` 分块限速，回合结束只在出错/中止/截断时提示 |
 
 ---
 
@@ -189,7 +189,7 @@ node admin/server.ts          # Windows 上也可用 admin/start-admin.bat
 plugins:
   dsh-chatnode-wechat:
     allowFrom: ["<你的微信ID>@im.wechat"] # 硬白名单，必填，无默认值
-    digestIntervalSec: 300            # 回合中每 N 秒一条进度摘要
+    digestIntervalSec: 300            # 回合中心跳间隔；第一条约 20 秒后就发，之后按这个间隔
     approvalTimeoutSec: 600           # 审批超时 → 默认拒绝
     maxMessageChars: 2000             # 微信单条气泡上限（协议限制）
     sendChunkDelayMs: 1500            # 出站气泡间隔限速
@@ -222,7 +222,8 @@ plugins:
     # problemFile: $DSH_HOME/wechat-problems.log   # 问题台账
 
     # ---- 网关调优（可选）----
-    # longPollTimeoutMs / apiTimeoutMs / pollIdleDelayMs / retryDelayMs
+    # 以下为网关调优键；longPollTimeoutMs 同时是服务端建议长轮询窗口的上限
+# longPollTimeoutMs / apiTimeoutMs / pollIdleDelayMs / retryDelayMs
     # backoffDelayMs / maxConsecutiveFailures / sessionExpiredPauseMs
     # sendChunkRetries / sendChunkRetryDelayMs
     # rateLimitCircuitOpenMs / rateLimitCircuitWindowMs / rateLimitCircuitThreshold

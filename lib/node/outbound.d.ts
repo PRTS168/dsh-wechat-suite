@@ -51,6 +51,23 @@ export declare function markdownToWechat(content: string): string;
  */
 export declare function sendTextToPeer(node: WechatConversationNode, text: string): Promise<boolean>;
 /**
+ * How long a turn may stay silent before the first progress line goes out.
+ *
+ * Waiting a full `digestIntervalSec` (300s by default) means five minutes of
+ * nothing on a long tool-heavy turn, which the owner reads as "it froze" — the
+ * difference between slow and stuck is whether anything arrives meanwhile.
+ */
+export declare const FIRST_DIGEST_DELAY_MS = 20000;
+/**
+ * Schedule the progress lines for an open turn: one early, then every interval.
+ *
+ * Returns the cancel function, which the caller **must** run when the turn ends:
+ * a cancelled-late interval keeps pushing "🔄 仍在处理中" into a chat where
+ * nothing is being processed any more (that leak is why this is a function with
+ * an explicit cancel instead of an interval the caller has to remember).
+ */
+export declare function scheduleDigests(intervalSec: number, tick: () => void, earlyMs?: number): () => void;
+/**
  * Attach the outbound digest pipeline. Listens on `session/event` once and
  * filters to the node's active session, so switching sessions mid-flight is
  * safe (per-session digest state is keyed by session id).

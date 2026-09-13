@@ -54,6 +54,7 @@ import {
   sendFileItemMessage,
   sendTyping as sendTypingRaw,
   sleep,
+  transportUsesDirectConnection,
   uploadCiphertext,
   type UpdatesBatch,
 } from './ilink-client.ts'
@@ -69,6 +70,18 @@ import {
 /** Gateway connection lifecycle, surfaced as `wechat/status` events. */
 /** Pause after an empty poll when the idle delay is disabled (busy-loop guard). */
 export const EMPTY_POLL_PAUSE_MS = 200
+
+/**
+ * Adopt the server's suggested long-poll window, capped by the configured one.
+ *
+ * When the server answers only at the end of a window, that window *is* the
+ * delay between the owner pressing send and the bridge seeing the message — so
+ * the value an operator can actually set has to win over the value the server
+ * suggests. A non-positive suggestion means "no suggestion": keep the current one.
+ */
+export function capLongPollWindow(suggestedMs: number, configuredMs: number): number {
+  return suggestedMs > 0 ? Math.min(suggestedMs, configuredMs) : configuredMs
+}
 
 export type GatewayStatus =
   | 'idle'        // no credentials configured; not polling
@@ -192,6 +205,8 @@ export class WechatGateway extends Service {
   private readonly typingTickets = new Map<string, { ticket: string; at: number }>()
   private rateLimitHits: number[] = []
   private rateLimitUntil = 0
+  /** One log line per transport switch, not one per failed request. */
+  private reportedDirectTransport = false
   /**
    * Aborts the in-flight long poll on shutdown.
    *
@@ -815,7 +830,14 @@ export class WechatGateway extends Service {
         if (this.stopPolling) break
 
         if (typeof batch.raw.longpolling_timeout_ms === 'number' && batch.raw.longpolling_timeout_ms > 0) {
-          timeoutMs = batch.raw.longpolling_timeout_ms
+          // The server suggests how long to hold the poll; `longPollTimeoutMs`
+          // caps it (see capLongPollWindow for why the operator's knob wins).
+          const suggested = batch.raw.longpolling_timeout_ms
+          const capped = capLongPollWindow(suggested, this.c.longPollTimeoutMs)
+          if (capped !== timeoutMs) {
+            timeoutMs = capped
+            this.log(`long poll window: ${capped}ms (server suggested ${suggested}ms)`)
+          }
         }
 
         const ret = batch.raw.ret
@@ -844,6 +866,8 @@ export class WechatGateway extends Service {
 
         consecutiveFailures = 0
         if (batch.syncBuf) this.syncBuf = batch.syncBuf
+        // A pooled request that worked means the transport recovered.
+        if (!transportUsesDirectConnection()) this.reportedDirectTransport = false
         this.setStatus('connected')
         for (const message of batch.messages) {
           this.dispatchInbound(message)
@@ -859,6 +883,13 @@ export class WechatGateway extends Service {
         }
       } catch (error) {
         if (this.stopPolling) break
+        // Say it once: from here on, every request takes a fresh connection
+        // because a transport failure poisoned the pooled one. Without this line
+        // the switch is invisible, and a wedged pool looks like a dead network.
+        if (transportUsesDirectConnection() && !this.reportedDirectTransport) {
+          this.reportedDirectTransport = true
+          this.log('transport failure: switching to fresh connections per request (pooled connection suspected)')
+        }
         // HTTP 403 = the iLink exclusive lock: another poller owns this token.
         if (isHttpStatus(error, 403)) {
           this.setStatus('error')

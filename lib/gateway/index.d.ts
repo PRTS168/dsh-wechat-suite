@@ -26,6 +26,15 @@ import { type RasterImageMediaType } from './media.ts';
 /** Gateway connection lifecycle, surfaced as `wechat/status` events. */
 /** Pause after an empty poll when the idle delay is disabled (busy-loop guard). */
 export declare const EMPTY_POLL_PAUSE_MS = 200;
+/**
+ * Adopt the server's suggested long-poll window, capped by the configured one.
+ *
+ * When the server answers only at the end of a window, that window *is* the
+ * delay between the owner pressing send and the bridge seeing the message — so
+ * the value an operator can actually set has to win over the value the server
+ * suggests. A non-positive suggestion means "no suggestion": keep the current one.
+ */
+export declare function capLongPollWindow(suggestedMs: number, configuredMs: number): number;
 export type GatewayStatus = 'idle' | 'starting' | 'connected' | 'reconnecting' | 'paused' | 'error';
 /** Outcome of one outbound text delivery. */
 export interface SendResult {
@@ -194,6 +203,8 @@ export declare class WechatGateway extends Service {
     private readonly typingTickets;
     private rateLimitHits;
     private rateLimitUntil;
+    /** One log line per transport switch, not one per failed request. */
+    private reportedDirectTransport;
     /**
      * Aborts the in-flight long poll on shutdown.
      *

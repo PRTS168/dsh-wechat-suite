@@ -14,6 +14,8 @@
  */
 
 import { randomBytes } from 'node:crypto'
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import {
   API_TIMEOUT_MS,
   CHANNEL_VERSION,
@@ -108,6 +110,95 @@ interface PostOptions {
   signal?: AbortSignal
 }
 
+/**
+ * Set after a transport-level failure; the *next* request then takes a brand-new
+ * connection instead of the pooled one. See {@link directPostJson}.
+ *
+ * Deliberately a routing preference rather than an immediate retry: iLink sends
+ * are not guaranteed idempotent, and a double-send shows up as a duplicate
+ * WeChat bubble. Failing the in-flight request and taking a fresh path for the
+ * next one costs at most the caller's own retry (which it already does), and it
+ * cannot duplicate a message.
+ */
+let preferDirectConnection = false
+
+/** True once a transport failure has switched requests to fresh connections. */
+export function transportUsesDirectConnection(): boolean {
+  return preferDirectConnection
+}
+
+/** Reset the preference (tests; and a caller that knows the network is back). */
+export function resetTransportPreference(): void {
+  preferDirectConnection = false
+}
+
+/** Aborts we caused ourselves are lifecycle events, not transport failures. */
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+/**
+ * One POST over a **brand-new** `node:http(s)` connection.
+ *
+ * Why this exists — observed on 2026-09-13: the bridge failed *every* request for
+ * 18 straight minutes with
+ * `fetch failed / invalid content-length header / UND_ERR_INVALID_ARG`, ~96
+ * retries inside that process failed identically, and restarting the process
+ * fixed it instantly. That signature is poisoned per-process connection state
+ * (undici's socket pool after a proxy/TUN flap), not a dead network, so the
+ * recovery is a fresh connection rather than another trip through the pool.
+ *
+ * `agent: false` gives the request its own agent, so neither the pooled sockets
+ * nor any dispatcher the host installed globally (a system proxy) can capture
+ * it. The replay is byte-identical: same headers, same body, same
+ * `Content-Length` computed from the same string.
+ */
+function directPostJson(
+  url: string,
+  body: string,
+  headers: Record<string, string>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const send = url.startsWith('https:') ? httpsRequest : httpRequest
+    const payload = Buffer.from(body, 'utf8')
+    let settled = false
+    const done = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener('abort', onAbort)
+      fn()
+    }
+    function onAbort(): void {
+      request.destroy(new Error('direct request aborted'))
+    }
+    const request = send(
+      url,
+      { method: 'POST', agent: false, headers: { ...headers, 'Content-Length': String(payload.byteLength) } },
+      (response) => {
+        const chunks: Buffer[] = []
+        // A body that dies half-way emits 'error' on the RESPONSE, not on the
+        // request; without this listener that is an uncaught exception, which in
+        // this host is fatal.
+        response.on('error', (error) => done(() => reject(error)))
+        response.on('data', (chunk: Buffer) => chunks.push(chunk))
+        response.on('end', () => done(() => resolve({
+          status: response.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString('utf8'),
+        })))
+      },
+    )
+    request.setTimeout(timeoutMs, () => request.destroy(new Error(`direct request timed out after ${timeoutMs}ms`)))
+    request.on('error', (error) => done(() => reject(error)))
+    if (signal) {
+      if (signal.aborted) onAbort()
+      else signal.addEventListener('abort', onAbort, { once: true })
+    }
+    request.end(payload)
+  })
+}
+
 /** POST one JSON envelope and parse the response object. */
 export async function postJson<T = Record<string, unknown>>(opts: PostOptions): Promise<T> {
   const {
@@ -128,10 +219,12 @@ export async function postJson<T = Record<string, unknown>>(opts: PostOptions): 
     else signal.addEventListener('abort', onOuterAbort, { once: true })
   }
   const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
+  const headers = requestHeaders(token, body)
+
+  const viaFetch = async (): Promise<T> => {
     const response = await fetchImpl(url, {
       method: 'POST',
-      headers: requestHeaders(token, body),
+      headers,
       body,
       signal: controller.signal,
     })
@@ -142,6 +235,40 @@ export async function postJson<T = Record<string, unknown>>(opts: PostOptions): 
       throw new IlinkError(`iLink POST ${endpoint} HTTP ${response.status}: ${raw.slice(0, 200)}`, { raw })
     }
     return JSON.parse(raw) as T
+  }
+
+  const viaDirect = async (): Promise<T> => {
+    const { status, body: raw } = await directPostJson(url, body, headers, timeoutMs, controller.signal)
+    if (status < 200 || status >= 300) {
+      throw new IlinkError(`iLink POST ${endpoint} HTTP ${status}: ${raw.slice(0, 200)}`, { raw })
+    }
+    return JSON.parse(raw) as T
+  }
+
+  try {
+    if (preferDirectConnection) {
+      try {
+        const out = await viaDirect()
+        preferDirectConnection = false
+        return out
+      } catch (error) {
+        // The server answered (an IlinkError) → the transport is fine, keep it.
+        if (error instanceof IlinkError || isAbortError(error)) throw error
+        // Otherwise fall through and give the pooled path one more chance.
+      }
+    }
+    try {
+      const out = await viaFetch()
+      preferDirectConnection = false
+      return out
+    } catch (error) {
+      if (error instanceof IlinkError) throw error
+      // A transport failure (or our own timeout) marks the pool suspect: the
+      // next request takes a fresh connection. Not the caller's abort — that is
+      // just the gateway being disposed.
+      if (!signal?.aborted) preferDirectConnection = true
+      throw error
+    }
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener('abort', onOuterAbort)
