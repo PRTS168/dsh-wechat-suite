@@ -904,7 +904,13 @@ export class WechatGateway extends Service {
         const backoff = consecutiveFailures >= this.c.maxConsecutiveFailures
           ? this.c.backoffDelayMs : this.c.retryDelayMs
         this.setStatus(consecutiveFailures >= this.c.maxConsecutiveFailures ? 'reconnecting' : 'connected')
-        this.ctx.emit('wechat/error', error instanceof Error ? error : new Error(String(error)))
+        // Name the call. A bare transport error in the ledger could have come
+        // from anywhere in the gateway, and on 2026-09-13 that ambiguity cost an
+        // hour of guessing whether the poll or the send path was the broken one.
+        this.ctx.emit('wechat/error', new Error(
+          `long poll failed (${consecutiveFailures}/${this.c.maxConsecutiveFailures}): ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
+        ))
         if (consecutiveFailures >= this.c.maxConsecutiveFailures) consecutiveFailures = 0
         await sleep(backoff)
       }

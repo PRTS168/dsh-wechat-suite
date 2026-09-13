@@ -17,6 +17,7 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import {
+  getUpdates,
   postJson,
   resetTransportPreference,
   transportUsesDirectConnection,
@@ -146,4 +147,65 @@ test('the server long-poll suggestion is capped by the configured window', () =>
   assert.equal(capLongPollWindow(-1, 35_000), 35_000)
   // An operator who wants snappier pickup can lower it and it takes effect.
   assert.equal(capLongPollWindow(60_000, 10_000), 10_000)
+})
+
+test('requests carry no hand-made Content-Length', async () => {
+  // The header we used to send was the only one that could disagree with the
+  // transport's own computation for a replayed or aborted copy of the request;
+  // `invalid content-length header / UND_ERR_INVALID_ARG` is exactly that
+  // disagreement, and it took the long poll down once per window (2026-09-13).
+  resetTransportPreference()
+  let sent: Record<string, string> | undefined
+  const capture = (async (_url: string, init: RequestInit) => {
+    sent = init.headers as Record<string, string>
+    return new Response(JSON.stringify({ ret: 0 }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }) as unknown as typeof fetch
+
+  await postJson({
+    baseUrl: 'http://127.0.0.1:1',
+    endpoint: 'probe',
+    payload: { text: '把灯开开吧' },
+    token: 't',
+    fetchImpl: capture,
+  })
+  assert.equal(sent?.['Content-Length'], undefined, 'undici 会按实际字节数设置，不需要我们自己算')
+  assert.equal(sent?.['Content-Type'], 'application/json')
+  assert.equal(sent?.Authorization, 'Bearer t')
+})
+
+test('a long poll that reaches its own window is an empty round, not a failure', async () => {
+  // Reproduces the real race: the window elapses and the peer closes the
+  // connection at the same moment, so undici reports `fetch failed` instead of
+  // an abort. That used to be logged as a transport failure (and announced to
+  // the owner) once per window.
+  resetTransportPreference()
+  let sawAbort = false
+  const racyFetch = ((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+    init.signal?.addEventListener('abort', () => {
+      sawAbort = true
+      reject(new TypeError('fetch failed'))
+    })
+  })) as unknown as typeof fetch
+
+  const out = await getUpdates({
+    baseUrl: 'http://127.0.0.1:1',
+    token: 't',
+    syncBuf: 'cursor',
+    timeoutMs: 60,
+    fetchImpl: racyFetch,
+  })
+  assert.equal(sawAbort, true, '这次中止确实发生了')
+  assert.deepEqual(out.messages, [], '窗口到期应视为空轮询')
+  assert.equal(out.cancelled, undefined, '这不是 dispose 中止，不能标成 cancelled')
+  assert.equal(out.syncBuf, 'cursor', '游标必须保持原值，否则会重放消息')
+})
+
+test('a genuine transport failure still surfaces', async () => {
+  // The normalisation above must not swallow real failures.
+  resetTransportPreference()
+  const failing = (() => { throw new TypeError('fetch failed') }) as unknown as typeof fetch
+  await assert.rejects(
+    () => getUpdates({ baseUrl: 'http://127.0.0.1:1', token: 't', syncBuf: '', timeoutMs: 5_000, fetchImpl: failing }),
+    /fetch failed/,
+  )
 })

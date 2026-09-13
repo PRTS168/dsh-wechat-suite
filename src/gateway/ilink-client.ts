@@ -75,18 +75,44 @@ export class IlinkError extends Error {
 }
 
 /** Headers every iLink request carries. */
-function requestHeaders(token: string | undefined, body: string): Record<string, string> {
+function requestHeaders(token: string | undefined): Record<string, string> {
   const uin = randomBytes(4).toString('base64url')
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     AuthorizationType: 'ilink_bot_token',
-    'Content-Length': String(Buffer.byteLength(body)),
+    // Deliberately no explicit `Content-Length`: undici derives it from the
+    // string body. Sending our own was the only header that could ever disagree
+    // with what the transport computed for a replayed or aborted copy of the
+    // request, and `invalid content-length header / UND_ERR_INVALID_ARG` is
+    // exactly that disagreement — it killed the long poll once per window on
+    // 2026-09-13, twice, with a ⚠️ notice in the owner's chat each time.
     'X-WECHAT-UIN': uin,
     'iLink-App-Id': ILINK_APP_ID,
     'iLink-App-ClientVersion': String(ILINK_APP_CLIENT_VERSION),
   }
   if (token) headers.Authorization = `Bearer ${token}`
   return headers
+}
+
+/**
+ * The canonical shape of "we stopped this request ourselves".
+ *
+ * undici normally rejects an aborted fetch with `DOMException [AbortError]`, but
+ * when our window closes at the same moment the peer closes the connection, the
+ * race surfaces as `TypeError: fetch failed` instead — which the long-poll loop
+ * then reported as a transport failure, once per window, with a notice to the
+ * owner. Normalising it here leaves the caller one shape to test, so "the window
+ * elapsed" and "the request really failed" stop looking alike.
+ */
+function abortError(): Error {
+  const error = new Error('This operation was aborted')
+  error.name = 'AbortError'
+  return error
+}
+
+/** True for both undici's abort and the normalised one above. */
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
 }
 
 function baseInfo(): Record<string, string> {
@@ -130,11 +156,6 @@ export function transportUsesDirectConnection(): boolean {
 /** Reset the preference (tests; and a caller that knows the network is back). */
 export function resetTransportPreference(): void {
   preferDirectConnection = false
-}
-
-/** Aborts we caused ourselves are lifecycle events, not transport failures. */
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === 'AbortError'
 }
 
 /**
@@ -218,8 +239,9 @@ export async function postJson<T = Record<string, unknown>>(opts: PostOptions): 
     if (signal.aborted) controller.abort()
     else signal.addEventListener('abort', onOuterAbort, { once: true })
   }
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  const headers = requestHeaders(token, body)
+  let timedOut = false
+  const timer = setTimeout(() => { timedOut = true; controller.abort() }, timeoutMs)
+  const headers = requestHeaders(token)
 
   const viaFetch = async (): Promise<T> => {
     const response = await fetchImpl(url, {
@@ -263,9 +285,16 @@ export async function postJson<T = Record<string, unknown>>(opts: PostOptions): 
       return out
     } catch (error) {
       if (error instanceof IlinkError) throw error
-      // A transport failure (or our own timeout) marks the pool suspect: the
-      // next request takes a fresh connection. Not the caller's abort — that is
-      // just the gateway being disposed.
+      // Our own window closing is not a failure. When the abort races the peer
+      // closing the connection at the same instant, undici reports it as
+      // `fetch failed` rather than an abort — and the long-poll loop then logged
+      // a transport failure once per window and warned the owner about it. Give
+      // the caller the canonical shape instead, so an elapsed window stays an
+      // ordinary empty round.
+      if (timedOut) throw abortError()
+      // A real transport failure marks the pool suspect: the next request takes
+      // a fresh connection. Not the caller's abort — that is the gateway being
+      // disposed, which is a lifecycle event, not a broken network.
       if (!signal?.aborted) preferDirectConnection = true
       throw error
     }
@@ -338,9 +367,11 @@ export async function getUpdates(opts: {
       raw,
     }
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    if (isAbortError(error)) {
       // A shutdown abort is not a timeout: say which one it was, so a disposed
-      // gateway cannot be mistaken for a quiet long poll in the log.
+      // gateway cannot be mistaken for a quiet long poll in the log. Note this
+      // also catches the normalised abort `postJson` raises when the poll window
+      // elapsed — see `abortError()` for why that one arrives doubly disguised.
       if (signal?.aborted) return { messages: [], syncBuf, raw: { ret: 0, msgs: [] }, cancelled: true }
       return { messages: [], syncBuf, raw: { ret: 0, msgs: [] } }
     }
