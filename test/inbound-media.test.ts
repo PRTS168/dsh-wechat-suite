@@ -50,6 +50,11 @@ function harness(): Harness {
   }
   const logger = { warn: (...args: unknown[]) => warnings.push(format(args)), info: () => {} }
   const node = {
+    // The node reaches its platform through `chat` (see src/platform/index.ts);
+    // the stub answers that accessor as well as the older `ctx.get` lookup.
+    get chat() {
+      return wechat
+    },
     peerId: undefined as string | undefined,
     gatewayAccountId: 'bot@im.bot',
     config: { maxMessageChars: 4000, sendChunkDelayMs: 0 },

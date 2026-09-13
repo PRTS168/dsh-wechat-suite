@@ -11,6 +11,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { type ModelSelectionRef } from '@deepseek-ai/dsh-agent';
 import { SessionId, type Session } from '@deepseek-ai/dsh-session';
+import { type ChatPlatform, type PlatformEvents, type PlatformId } from '../platform/index.ts';
 import type { PendingApproval } from './approvals.ts';
 import { type ContextPolicy } from './context-policy.ts';
 import type { MorningService } from './morning.ts';
@@ -62,6 +63,8 @@ export declare function selectNewestWechat(entries: readonly PersistenceEntry[])
 export interface NodeConfig {
     /** Hard allowlist of WeChat sender ids allowed to drive the agent. REQUIRED. */
     allowFrom: string[];
+    /** Chat platform this node serves; see platform/index.ts. */
+    platform?: PlatformId;
     /** Heartbeat interval for progress digests (seconds; 0 disables). */
     digestIntervalSec: number;
     /** Approval prompt timeout before default-deny (seconds). */
@@ -179,6 +182,19 @@ export declare class WechatConversationNode {
     gatewayStatusAt: string;
     readonly ctx: Context;
     readonly config: NodeConfig;
+    /**
+     * The chat platform this node serves, resolved once from config.
+     *
+     * Everything platform-specific goes through {@link chat}: the gateway is
+     * mounted under this id and emits `<platform>/…` events, so the node never
+     * names a platform itself. Defaults to WeChat, which is what every existing
+     * profile configured by saying nothing.
+     */
+    readonly platform: PlatformId;
+    /** The active platform's service, or undefined while its gateway is unmounted. */
+    get chat(): ChatPlatform | undefined;
+    /** Events of the active platform (`<platform>/message`, `…/error`, …). */
+    get events(): PlatformEvents;
     /**
      * Context-management policy for this conversation (see context-policy.ts).
      * `manual` reproduces the legacy behaviour: the session grows until a human

@@ -37,6 +37,7 @@ export interface ConfigField {
 
 /** All placeholders the bridge accepts, in write order. */
 export const CONFIG_FIELDS: ConfigField[] = [
+  { key: 'platform', label: '聊天平台', group: '必填', placeholder: 'wechat', hint: 'wechat = 微信（默认）；qq = QQ 官方机器人。换平台后请重启宿主。' },
   { key: 'allowFrom', label: '微信白名单 ID', group: '必填', kind: 'list', placeholder: 'xxxxx@im.wechat', hint: '硬白名单；只允许这个微信 ID 与 AI 对话，缺失时桥不会把任何消息交给模型。' },
   { key: 'agentPreset', label: '人设 preset 名', group: '必填', default: 'wechat', hint: '须存在于 $DSH_HOME/.agent-presets/<名>；仓库内不含任何具体人设内容。' },
   { key: 'agentProvider', label: '聊天模型 provider', group: '必填', default: 'deepseek-official' },

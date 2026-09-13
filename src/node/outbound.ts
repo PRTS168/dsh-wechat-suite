@@ -356,23 +356,17 @@ export async function sendTextToPeer(node: WechatConversationNode, text: string)
   const chunks = splitForWechat(text, node.config.maxMessageChars)
   if (chunks.length === 0) return false
 
-  let wechat: { sendTyping(id: string, kind: number): Promise<unknown>; sendText(id: string, text: string): Promise<{ success: boolean; error?: string }> } | undefined
-  try {
-    wechat = node.ctx.get('wechat') as typeof wechat
-  } catch (error) {
-    node.problems.report('outbound', error, { notify: false })
-    return false
-  }
-  if (!wechat) {
+  const chat = node.chat
+  if (!chat) {
     node.problems.report('outbound', new Error('网关服务不可用，消息发不出去'), { notify: false })
     return false
   }
 
   let delivered = true
   try {
-    await wechat.sendTyping(peer, 1).catch(() => {})
+    await chat.sendTyping(peer, 1).catch(() => {})
     for (let i = 0; i < chunks.length; i++) {
-      const result = await wechat.sendText(peer, chunks[i]!)
+      const result = await chat.sendText(peer, chunks[i]!)
       if (!result.success) {
         logQuietly(node, '[dsh-chatnode-wechat] outbound chunk %d/%d failed: %s', i + 1, chunks.length, result.error)
         // The owner is waiting for this bubble. If it did not go out he must be
@@ -393,7 +387,7 @@ export async function sendTextToPeer(node: WechatConversationNode, text: string)
     node.problems.report('outbound', error)
     delivered = false
   } finally {
-    await wechat.sendTyping(peer, 2).catch(() => {})
+    await chat.sendTyping(peer, 2).catch(() => {})
   }
   return delivered
 }

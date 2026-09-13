@@ -18,6 +18,7 @@ import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
+import { chatService, type PlatformId } from '../platform/index.ts'
 
 /** One persisted reminder. */
 export interface Reminder {
@@ -34,6 +35,8 @@ export interface Reminder {
 /** Reminder store + scheduler bound to a cordis context. */
 export class ReminderStore {
   private readonly ctx: Context
+  /** Chat platform whose gateway delivers the alerts. */
+  private readonly platform: PlatformId
   private readonly file: string
   private reminders: Reminder[] = []
   private timer: ReturnType<typeof setTimeout> | undefined
@@ -47,8 +50,9 @@ export class ReminderStore {
   /** Whether the last persist reached the disk. */
   private lastSaveOk = true
 
-  constructor(ctx: Context, file?: string, onProblem?: (kind: string, error: unknown, detail?: string) => void) {
+  constructor(ctx: Context, file?: string, onProblem?: (kind: string, error: unknown, detail?: string) => void, platform: PlatformId = 'wechat') {
     this.ctx = ctx
+    this.platform = platform
     this.file = file ?? defaultReminderFile()
     this.onProblem = onProblem
   }
@@ -244,9 +248,15 @@ export class ReminderStore {
 
   /** Push a reminder to its peer through the gateway (best-effort). */
   private async deliver(reminder: Reminder): Promise<void> {
-    const wechat = this.ctx.wechat
+    const chat = chatService(this.ctx, this.platform)
+    if (!chat) {
+      // A reminder is a promise to the owner: a missing platform must leave the
+      // same trace as any other delivery failure.
+      this.onProblem?.('reminders/deliver', new Error('网关服务不可用，提醒发不出去'), `reminder=#${reminder.id}`)
+      return
+    }
     try {
-      const result = await wechat.sendText(reminder.peerId, `⏰ 提醒：${reminder.text}`)
+      const result = await chat.sendText(reminder.peerId, `⏰ 提醒：${reminder.text}`)
       if (!result.success) {
         // The owner is waiting for exactly this bubble; a log line he never
         // reads is not enough of a trace.

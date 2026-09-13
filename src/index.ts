@@ -63,6 +63,8 @@ export const inject = ['sessions', 'agents', 'approval', 'credentials']
 export interface Config {
   /** Hard allowlist of WeChat sender ids. REQUIRED — no permissive default. */
   allowFrom?: string[]
+  /** Chat platform to serve: `wechat` (default) or `qq`. */
+  platform?: 'wechat' | 'qq'
   /** Heartbeat interval for progress digests (seconds; 0 disables). */
   digestIntervalSec?: number
   /** Approval prompt timeout before default-deny (seconds). */
@@ -181,6 +183,7 @@ export interface Config {
 
 export const Config = z.object({
   allowFrom: z.array(z.string()).default([]),
+  platform: z.union([z.const('wechat'), z.const('qq')]).default('wechat'),
   digestIntervalSec: z.number().default(300),
   approvalTimeoutSec: z.number().default(600),
   maxMessageChars: z.number().default(2000),
@@ -255,6 +258,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.plugin(WechatGateway, gatewayConfig)
   ctx.plugin(wechatConversationNode, {
     allowFrom: config.allowFrom ?? [],
+    platform: config.platform,
     digestIntervalSec: config.digestIntervalSec,
     approvalTimeoutSec: config.approvalTimeoutSec,
     maxMessageChars: config.maxMessageChars,

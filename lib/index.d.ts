@@ -44,6 +44,8 @@ export declare const inject: string[];
 export interface Config {
     /** Hard allowlist of WeChat sender ids. REQUIRED — no permissive default. */
     allowFrom?: string[];
+    /** Chat platform to serve: `wechat` (default) or `qq`. */
+    platform?: 'wechat' | 'qq';
     /** Heartbeat interval for progress digests (seconds; 0 disables). */
     digestIntervalSec?: number;
     /** Approval prompt timeout before default-deny (seconds). */
@@ -161,6 +163,7 @@ export interface Config {
 }
 export declare const Config: z<Schemastery.ObjectS<{
     allowFrom: z<string[], string[]>;
+    platform: z<"wechat" | "qq", "wechat" | "qq">;
     digestIntervalSec: z<number, number>;
     approvalTimeoutSec: z<number, number>;
     maxMessageChars: z<number, number>;
@@ -216,6 +219,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     allowCdnHosts: z<string[], string[]>;
 }>, Schemastery.ObjectT<{
     allowFrom: z<string[], string[]>;
+    platform: z<"wechat" | "qq", "wechat" | "qq">;
     digestIntervalSec: z<number, number>;
     approvalTimeoutSec: z<number, number>;
     maxMessageChars: z<number, number>;
@@ -285,6 +289,7 @@ declare const _default: {
     inject: string[];
     Config: z<Schemastery.ObjectS<{
         allowFrom: z<string[], string[]>;
+        platform: z<"wechat" | "qq", "wechat" | "qq">;
         digestIntervalSec: z<number, number>;
         approvalTimeoutSec: z<number, number>;
         maxMessageChars: z<number, number>;
@@ -340,6 +345,7 @@ declare const _default: {
         allowCdnHosts: z<string[], string[]>;
     }>, Schemastery.ObjectT<{
         allowFrom: z<string[], string[]>;
+        platform: z<"wechat" | "qq", "wechat" | "qq">;
         digestIntervalSec: z<number, number>;
         approvalTimeoutSec: z<number, number>;
         maxMessageChars: z<number, number>;

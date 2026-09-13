@@ -14,11 +14,19 @@
  * @module @dsh-cowork/chatnode-wechat/node
  */
 import type { Context } from '@deepseek-ai/cordis';
+import type { PlatformId } from '../platform/index.ts';
 import z from '@deepseek-ai/schemastery';
 /** Plugin config. `allowFrom` is REQUIRED and validated at apply time. */
 export interface Config {
     /** Hard allowlist of WeChat sender ids. REQUIRED — no permissive default. */
     allowFrom?: string[];
+    /**
+     * Chat platform this node serves. The gateway for that platform is mounted
+     * under the same id and emits `<id>/…` events, so the node never names a
+     * platform itself. Defaults to `wechat`, which is what every profile written
+     * before this key existed meant.
+     */
+    platform?: PlatformId;
     /** Heartbeat interval for progress digests (seconds; 0 disables). */
     digestIntervalSec?: number;
     /** Approval prompt timeout before default-deny (seconds). */
@@ -92,6 +100,7 @@ export interface Config {
 }
 export declare const Config: z<Schemastery.ObjectS<{
     allowFrom: z<string[], string[]>;
+    platform: z<"wechat" | "qq", "wechat" | "qq">;
     digestIntervalSec: z<number, number>;
     approvalTimeoutSec: z<number, number>;
     maxMessageChars: z<number, number>;
@@ -129,6 +138,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     contextPolicy: z<string, string>;
 }>, Schemastery.ObjectT<{
     allowFrom: z<string[], string[]>;
+    platform: z<"wechat" | "qq", "wechat" | "qq">;
     digestIntervalSec: z<number, number>;
     approvalTimeoutSec: z<number, number>;
     maxMessageChars: z<number, number>;
@@ -191,6 +201,7 @@ export declare const wechatConversationNode: {
     inject: string[];
     Config: z<Schemastery.ObjectS<{
         allowFrom: z<string[], string[]>;
+        platform: z<"wechat" | "qq", "wechat" | "qq">;
         digestIntervalSec: z<number, number>;
         approvalTimeoutSec: z<number, number>;
         maxMessageChars: z<number, number>;
@@ -228,6 +239,7 @@ export declare const wechatConversationNode: {
         contextPolicy: z<string, string>;
     }>, Schemastery.ObjectT<{
         allowFrom: z<string[], string[]>;
+        platform: z<"wechat" | "qq", "wechat" | "qq">;
         digestIntervalSec: z<number, number>;
         approvalTimeoutSec: z<number, number>;
         maxMessageChars: z<number, number>;

@@ -15,6 +15,8 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { ChatPlatform } from '../platform/index.ts'
+import type { PlatformId } from '../platform/index.ts'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { MAX_MESSAGE_CHARS } from '../gateway/types.ts'
@@ -28,10 +30,31 @@ import { synthesizeSpeech } from './tts.ts'
 import { sendEmail } from './email.ts'
 import { lightToolDefinition } from './light.ts'
 
+/**
+ * The active platform's service, or a thrown tool error.
+ *
+ * Tool handlers used to reach `ctx.wechat` directly: that property access throws
+ * "cannot get required service … in inactive context" once the scope is torn
+ * down, and on 2026-09-12 an escaped version of exactly that killed the host.
+ * Going through the resolved service keeps the failure inside the tool call.
+ */
+function chatOrThrow(node: { chat?: ChatPlatform }): ChatPlatform {
+  const chat = node.chat
+  if (!chat) throw new Error('网关服务不可用：当前平台没有挂载网关')
+  return chat
+}
+
 /** Plugin config. `allowFrom` is REQUIRED and validated at apply time. */
 export interface Config {
   /** Hard allowlist of WeChat sender ids. REQUIRED — no permissive default. */
   allowFrom?: string[]
+  /**
+   * Chat platform this node serves. The gateway for that platform is mounted
+   * under the same id and emits `<id>/…` events, so the node never names a
+   * platform itself. Defaults to `wechat`, which is what every profile written
+   * before this key existed meant.
+   */
+  platform?: PlatformId
   /** Heartbeat interval for progress digests (seconds; 0 disables). */
   digestIntervalSec?: number
   /** Approval prompt timeout before default-deny (seconds). */
@@ -106,6 +129,7 @@ export interface Config {
 
 export const Config = z.object({
   allowFrom: z.array(z.string()).default([]),
+  platform: z.union([z.const('wechat'), z.const('qq')]).default('wechat'),
   digestIntervalSec: z.number().default(300),
   approvalTimeoutSec: z.number().default(600),
   maxMessageChars: z.number().default(MAX_MESSAGE_CHARS),
@@ -200,7 +224,7 @@ export function apply(ctx: Context, config: Config): void {
   // Registered as tools so the agent can answer natural-language requests
   // ("30 分钟后提醒我喝水") with real tool calls. Persisted to a JSON file so
   // reminders survive restarts; the store pushes due alerts to their peer.
-  const reminderStore = new ReminderStore(ctx, config.reminderFile, report)
+  const reminderStore = new ReminderStore(ctx, config.reminderFile, report, config.platform ?? 'wechat')
   void reminderStore.start().catch((error) => report('reminders/start', error))
   ctx.effect(() => {
     return () => reminderStore.stop()
@@ -211,6 +235,7 @@ export function apply(ctx: Context, config: Config): void {
     onProblem: (kind, error) => report(kind, error),
     file: config.morningFile,
     targets: () => [...(config.allowFrom ?? [])],
+    platform: config.platform ?? 'wechat',
   })
   node.morningService = morningService
   void morningService.start().catch((error) => report('morning/start', error))
@@ -391,7 +416,7 @@ export function apply(ctx: Context, config: Config): void {
             'so the bridge knows who to reply to',
           )
         }
-        const result = await node.ctx.wechat.sendImage(peer, path)
+        const result = await chatOrThrow(node).sendImage(peer, path)
         if (!result.success) throw new Error(`wechat_send_image: ${result.error}`)
         return `✅ 图片已发送到微信: ${path}`
       },
@@ -428,7 +453,7 @@ export function apply(ctx: Context, config: Config): void {
             'so the bridge knows who to reply to',
           )
         }
-        const result = await node.ctx.wechat.sendFile(peer, path)
+        const result = await chatOrThrow(node).sendFile(peer, path)
         if (!result.success) throw new Error(`wechat_send_file: ${result.error}`)
         return `✅ 文件已发送到微信: ${path}`
       },
@@ -468,7 +493,7 @@ export function apply(ctx: Context, config: Config): void {
             'so the bridge knows who to reply to',
           )
         }
-        const result = await node.ctx.wechat.sendFile(peer, path)
+        const result = await chatOrThrow(node).sendFile(peer, path)
         if (!result.success) throw new Error(`wechat_send_video: ${result.error}`)
         return `✅ 视频已发送到微信: ${path}`
       },
@@ -501,14 +526,14 @@ export function apply(ctx: Context, config: Config): void {
         if (!peer) throw new Error('generate_image: no WeChat peer yet — the user must message the bot first')
         const apiKey = config.imageGenApiKey ?? config.ocrApiKey ?? ''
         if (!apiKey) throw new Error('generate_image: no SiliconFlow key configured (set imageGenApiKey or ocrApiKey)')
-        await node.ctx.wechat.sendTyping(peer, 1).catch(() => {})
-        await node.ctx.wechat.sendText(peer, `🎨 正在画图：${prompt.slice(0, 120)}`).catch(() => {})
+        await chatOrThrow(node).sendTyping(peer, 1).catch(() => {})
+        await chatOrThrow(node).sendText(peer, `🎨 正在画图：${prompt.slice(0, 120)}`).catch(() => {})
         const outDir = config.imageGenDir ?? (config.mediaDir ? `${config.mediaDir}/generated` : undefined)
         const result = await generateImage(
           { apiKey, model: config.imageGenModel, outDir, baseUrl: config.ocrBaseUrl },
           prompt,
         )
-        const sendResult = await node.ctx.wechat.sendImage(peer, result.path)
+        const sendResult = await chatOrThrow(node).sendImage(peer, result.path)
         if (!sendResult.success) throw new Error(`图片生成成功但发送失败: ${sendResult.error}`)
         return `✅ 图已生成并发送`
       },
@@ -544,8 +569,8 @@ export function apply(ctx: Context, config: Config): void {
         const apiKey = config.ttsApiKey ?? config.ocrApiKey ?? ''
         const voice = config.ttsVoice ?? ''
         if (!apiKey || !voice) throw new Error('speak: TTS not configured (set ttsApiKey and ttsVoice)')
-        await node.ctx.wechat.sendTyping(peer, 1).catch(() => {})
-        await node.ctx.wechat.sendText(peer, '🎙 正在说话…').catch(() => {})
+        await chatOrThrow(node).sendTyping(peer, 1).catch(() => {})
+        await chatOrThrow(node).sendText(peer, '🎙 正在说话…').catch(() => {})
         // 1) mp3 via SiliconFlow TTS.
         const mp3 = await synthesizeSpeech({ apiKey, model: config.ttsModel, voice, baseUrl: config.ocrBaseUrl }, text)
         // 2) persist mp3 and send as a file attachment (plays on tap).
@@ -556,7 +581,7 @@ export function apply(ctx: Context, config: Config): void {
         const name = `voice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`
         const absPath = join(dir ?? process.cwd(), name)
         await writeFile(absPath, Buffer.from(mp3))
-        const result = await node.ctx.wechat.sendFile(peer, absPath, name)
+        const result = await chatOrThrow(node).sendFile(peer, absPath, name)
         if (!result.success) throw new Error(`语音文件发送失败: ${result.error}`)
         return '✅ 语音文件已发送'
       },

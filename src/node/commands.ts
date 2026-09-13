@@ -181,16 +181,14 @@ export async function routeCommand(node: WechatConversationNode, text: string): 
         await sendTextToPeer(node, '❌ 没有可回复的联系人')
         return true
       }
-      const wechat = node.ctx.get('wechat') as
-        | { sendImage(to: string, path: string): Promise<{ success: boolean; error?: string }> }
-        | undefined
-      if (!wechat?.sendImage) {
+      const chat = node.chat
+      if (!chat) {
         await sendTextToPeer(node, '❌ 网关服务不可用，无法发送图片。')
         return true
       }
       await sendTextToPeer(node, '🖼 正在发送图片…')
       try {
-        const result = await wechat.sendImage(peer, target)
+        const result = await chat.sendImage(peer, target)
         await sendTextToPeer(node, result.success ? '✅ 图片已发送' : `❌ 发送失败: ${result.error}`)
       } catch (error) {
         await sendTextToPeer(node, `❌ 发送失败：${describeError(error)}`)

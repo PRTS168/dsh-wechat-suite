@@ -220,7 +220,7 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
 
   let downloaded: { bytes: Uint8Array; mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' } | null
   try {
-    downloaded = await node.ctx.wechat.downloadImage(imageItem)
+    downloaded = (await node.chat?.downloadImage(imageItem)) ?? null
   } catch (error) {
     node.ctx.logger?.warn?.(
       '[dsh-chatnode-wechat] image download failed from %s: %s',
@@ -342,7 +342,7 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
-  await node.ctx.wechat.sendTyping(sender, 1).catch(() => {})
+  await node.chat?.sendTyping(sender, 1).catch(() => {})
 }
 
 /**
@@ -366,7 +366,7 @@ async function handleInboundVoice(node: WechatConversationNode, sender: string, 
   await sendTextToPeer(node, '🎙 正在听…')
   let bytes: Uint8Array | null = null
   try {
-    bytes = await node.ctx.wechat.downloadVoice(voice)
+    bytes = (await node.chat?.downloadVoice(voice)) ?? null
   } catch (error) {
     node.ctx.logger?.warn?.('[dsh-chatnode-wechat] voice download failed: %s', error instanceof Error ? error.message : String(error))
   }
@@ -406,7 +406,7 @@ async function handleInboundVoice(node: WechatConversationNode, sender: string, 
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
-  await node.ctx.wechat.sendTyping(sender, 1).catch(() => {})
+  await node.chat?.sendTyping(sender, 1).catch(() => {})
 }
 
 /**
@@ -436,7 +436,7 @@ async function handleInboundFile(
 
   let downloaded: { bytes: Uint8Array; fileName?: string } | null
   try {
-    downloaded = await node.ctx.wechat.downloadAttachment(found.item)
+    downloaded = (await node.chat?.downloadAttachment(found.item)) ?? null
   } catch (error) {
     node.ctx.logger?.warn?.(
       '[dsh-chatnode-wechat] attachment download failed: %s',
@@ -493,7 +493,7 @@ async function handleInboundFile(
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
-  await node.ctx.wechat.sendTyping(sender, 1).catch(() => {})
+  await node.chat?.sendTyping(sender, 1).catch(() => {})
 }
 
 /** Handle one inbound iLink message. */
@@ -575,5 +575,5 @@ export async function handleInbound(node: WechatConversationNode, message: Inbou
     source: { kind: 'user' },
   })
   agent.followup(messageValue)
-  await node.ctx.wechat.sendTyping(sender, 1).catch(() => {})
+  await node.chat?.sendTyping(sender, 1).catch(() => {})
 }

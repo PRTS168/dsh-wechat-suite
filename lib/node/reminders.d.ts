@@ -14,6 +14,7 @@
  * @module @dsh-cowork/chatnode-wechat/node/reminders
  */
 import type { Context } from '@deepseek-ai/cordis';
+import { type PlatformId } from '../platform/index.ts';
 /** One persisted reminder. */
 export interface Reminder {
     id: string;
@@ -28,6 +29,8 @@ export interface Reminder {
 /** Reminder store + scheduler bound to a cordis context. */
 export declare class ReminderStore {
     private readonly ctx;
+    /** Chat platform whose gateway delivers the alerts. */
+    private readonly platform;
     private readonly file;
     private reminders;
     private timer;
@@ -40,7 +43,7 @@ export declare class ReminderStore {
     private unreadable;
     /** Whether the last persist reached the disk. */
     private lastSaveOk;
-    constructor(ctx: Context, file?: string, onProblem?: (kind: string, error: unknown, detail?: string) => void);
+    constructor(ctx: Context, file?: string, onProblem?: (kind: string, error: unknown, detail?: string) => void, platform?: PlatformId);
     /** Where a swallowed failure goes; optional so the store works standalone. */
     private readonly onProblem?;
     /** Load persisted reminders and arm the scheduler. */

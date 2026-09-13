@@ -18,6 +18,14 @@ import type { AgentPresets } from '@deepseek-ai/dsh-agent-presets'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
+import {
+  chatService,
+  isPlatformId,
+  platformEvents,
+  type ChatPlatform,
+  type PlatformEvents,
+  type PlatformId,
+} from '../platform/index.ts'
 import type { PendingApproval } from './approvals.ts'
 import { attachApprovalBridge } from './approvals.ts'
 import { attachSessionOutbound, sendTextToPeer } from './outbound.ts'
@@ -89,6 +97,8 @@ function asSessionId(id: string): SessionId {
 export interface NodeConfig {
   /** Hard allowlist of WeChat sender ids allowed to drive the agent. REQUIRED. */
   allowFrom: string[]
+  /** Chat platform this node serves; see platform/index.ts. */
+  platform?: PlatformId
   /** Heartbeat interval for progress digests (seconds; 0 disables). */
   digestIntervalSec: number
   /** Approval prompt timeout before default-deny (seconds). */
@@ -233,6 +243,26 @@ export class WechatConversationNode {
   readonly config: NodeConfig
 
   /**
+   * The chat platform this node serves, resolved once from config.
+   *
+   * Everything platform-specific goes through {@link chat}: the gateway is
+   * mounted under this id and emits `<platform>/…` events, so the node never
+   * names a platform itself. Defaults to WeChat, which is what every existing
+   * profile configured by saying nothing.
+   */
+  readonly platform: PlatformId
+
+  /** The active platform's service, or undefined while its gateway is unmounted. */
+  get chat(): ChatPlatform | undefined {
+    return chatService(this.ctx, this.platform)
+  }
+
+  /** Events of the active platform (`<platform>/message`, `…/error`, …). */
+  get events(): PlatformEvents {
+    return platformEvents(this.platform)
+  }
+
+  /**
    * Context-management policy for this conversation (see context-policy.ts).
    * `manual` reproduces the legacy behaviour: the session grows until a human
    * types `/new`.
@@ -255,6 +285,7 @@ export class WechatConversationNode {
   constructor(ctx: Context, config: NodeConfig) {
     this.ctx = ctx
     this.config = config
+    this.platform = isPlatformId(config.platform) ? config.platform : 'wechat'
     if (!Array.isArray(config.allowFrom) || config.allowFrom.length === 0) {
       throw new Error(
         'dsh-chatnode-wechat: allowFrom is REQUIRED and must list at least one WeChat sender id. ' +
@@ -270,7 +301,7 @@ export class WechatConversationNode {
     this.disposers.push(attachContextRotation(this))
     this.disposers.push(attachGatewayObservability(this))
     this.disposers.push(attachAdminControl(this))
-    const disposer = this.ctx.on('wechat/message', (message: InboundMessage) => {
+    const disposer = this.ctx.on(this.events.message, (message: InboundMessage) => {
       // Same fatal-rejection rule as the credentials boot in src/index.ts: a
       // throw escaping an event handler becomes an unhandled rejection, and the
       // host treats that as a fatal load failure. Handling one chat message must
@@ -363,7 +394,7 @@ export class WechatConversationNode {
 
   /** The gateway's own account id (used for group detection). */
   get gatewayAccountId(): string {
-    return this.ctx.wechat.accountId
+    return this.chat?.accountId ?? ''
   }
 
   /** Switch the active session and reply confirmation to the peer. */
@@ -911,7 +942,7 @@ export function attachGatewayObservability(node: WechatConversationNode): () => 
   const disposers: Array<() => void> = []
 
   disposers.push(
-    node.ctx.on('wechat/status' as never, ((status: string) => {
+    node.ctx.on(node.events.status as never, ((status: string) => {
       const previous = node.gatewayStatus
       node.gatewayStatus = status
       node.gatewayStatusAt = new Date().toISOString()
@@ -924,7 +955,7 @@ export function attachGatewayObservability(node: WechatConversationNode): () => 
   )
 
   disposers.push(
-    node.ctx.on('wechat/error' as never, ((error: unknown) => {
+    node.ctx.on(node.events.error as never, ((error: unknown) => {
       // Poll failures repeat every few seconds while the network is down; the
       // ledger collapses them by signature and the notifier rate limits.
       node.problems.report('gateway', error)
@@ -932,7 +963,7 @@ export function attachGatewayObservability(node: WechatConversationNode): () => 
   )
 
   disposers.push(
-    node.ctx.on('wechat/fatal' as never, ((error: unknown) => {
+    node.ctx.on(node.events.fatal as never, ((error: unknown) => {
       node.gatewayStatus = 'error'
       node.gatewayStatusAt = new Date().toISOString()
       node.problems.report('gateway/fatal', error, { detail: '桥已停止轮询，需要人工处理' })

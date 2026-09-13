@@ -46,24 +46,27 @@ function harness(
   const pluginListeners: Listener[] = []
   const pluginOptions: Array<Record<string, unknown> | undefined> = []
   const peerId = options.peerId === undefined ? 'peer@im.wechat' : options.peerId
+  const wechatStub = {
+    sendText: async (_to: string, text: string) => {
+      sent.push(text)
+      return { success: true }
+    },
+    sendTyping: async () => {},
+  }
   const node = {
     peerId: peerId ?? undefined,
+    // The node reaches its platform through `chat` (see src/platform/index.ts);
+    // the stub answers that accessor as well as the older `ctx.get` lookup.
+    get chat() {
+      return wechatStub
+    },
     activeSessionId: null as string | null,
     config: {
       approvalTimeoutSec: options.timeoutSec ?? 600,
       allowFrom: options.allowFrom ?? ['allow@im.wechat'],
     },
     ctx: {
-      get: (name: string) =>
-        name === 'wechat'
-          ? {
-              sendText: async (_to: string, text: string) => {
-                sent.push(text)
-                return { success: true }
-              },
-              sendTyping: async () => {},
-            }
-          : undefined,
+      get: (name: string) => (name === 'wechat' ? wechatStub : undefined),
       on: (_event: string, listener: Listener, options?: Record<string, unknown>) => {
         pluginListeners.push(listener)
         pluginOptions.push(options)

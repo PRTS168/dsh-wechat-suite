@@ -38,20 +38,22 @@ function stub(
   const approvals: string[] = []
   const pickers: Array<{ kind: string; options: unknown[] }> = []
   const state = { resumes: 0 }
+  const wechatStub = {
+    sendText: async (_to: string, text: string) => {
+      sent.push(text)
+      return { success: true }
+    },
+    sendTyping: async () => {},
+    sendImage: async () => ({ success: true }),
+  }
   const node = {
+    // The node reaches its platform through `chat` (see src/platform/index.ts).
+    get chat() {
+      return wechatStub
+    },
     ctx: {
       logger: { warn: () => {}, info: () => {}, error: () => {} },
-      get: (name: string) =>
-        name === 'wechat'
-          ? {
-              sendText: async (_to: string, text: string) => {
-                sent.push(text)
-                return { success: true }
-              },
-              sendTyping: async () => {},
-              sendImage: async () => ({ success: true }),
-            }
-          : undefined,
+      get: (name: string) => (name === 'wechat' ? wechatStub : undefined),
     },
     peerId: 'peer@im.wechat',
     config: { esp32BaseUrl: baseUrl },

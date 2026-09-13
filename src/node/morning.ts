@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { describeError, directRequest } from './net.ts'
 import type { Context } from '@deepseek-ai/cordis'
+import { chatService, type PlatformId } from '../platform/index.ts'
 
 /** Persisted morning-push configuration. */
 export interface MorningConfig {
@@ -171,11 +172,13 @@ export class MorningService {
   private readonly file: string
   private readonly targets: () => string[]
   private config: MorningConfig = { ...DEFAULT_CONFIG }
+  private readonly platform: PlatformId
   private timer: ReturnType<typeof setTimeout> | undefined
   private loaded = false
 
-  constructor(ctx: Context, opts: { file?: string; targets: () => string[]; onProblem?: (kind: string, error: unknown) => void }) {
+  constructor(ctx: Context, opts: { file?: string; targets: () => string[]; onProblem?: (kind: string, error: unknown) => void; platform?: PlatformId }) {
     this.ctx = ctx
+    this.platform = opts.platform ?? 'wechat'
     this.file = opts.file ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'wechat-morning.json')
     this.targets = opts.targets
     this.onProblem = opts.onProblem
@@ -307,12 +310,12 @@ export class MorningService {
 
   /** Deliver today's greeting to every target peer (best-effort). */
   private async fire(): Promise<void> {
-    const wechat = this.ctx.get('wechat') as { sendText(to: string, text: string): Promise<{ success: boolean }> } | undefined
-    if (!wechat?.sendText) return
+    const chat = chatService(this.ctx, this.platform)
+    if (!chat) return
     const text = await this.pushNow()
     for (const to of this.targets()) {
       try {
-        await wechat.sendText(to, text)
+        await chat.sendText(to, text)
       } catch (error) {
         this.ctx.logger?.warn?.('[dsh-chatnode-wechat] morning push failed to %s: %s', to, error instanceof Error ? error.message : String(error))
       }

@@ -14,6 +14,7 @@
  */
 import { describeError } from './net.ts';
 import type { Context } from '@deepseek-ai/cordis';
+import { type PlatformId } from '../platform/index.ts';
 /** Persisted morning-push configuration. */
 export interface MorningConfig {
     enabled: boolean;
@@ -73,12 +74,14 @@ export declare class MorningService {
     private readonly file;
     private readonly targets;
     private config;
+    private readonly platform;
     private timer;
     private loaded;
     constructor(ctx: Context, opts: {
         file?: string;
         targets: () => string[];
         onProblem?: (kind: string, error: unknown) => void;
+        platform?: PlatformId;
     });
     /**
      * Where a swallowed failure goes so it leaves a trace the owner can read.
