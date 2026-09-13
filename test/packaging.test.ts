@@ -60,8 +60,8 @@ test('the released version matches the release notes that document it', () => {
   assert.match(version, /^\d+\.\d+\.\d+$/, `package.json 的 version 不合法：${version}`)
   assert.ok(repoName.length > 0, 'package.json 的 repository.url 读不出仓库名')
   const major = version.split('.')[0]
-  // v4.0 ships as 4.0.0 with a tag of v4.0 (the tag drops the patch for x.0.0).
-  const tag = version.endsWith('.0.0') ? `v${major}.0` : `v${version}`
+  // A zero patch segment is dropped from the tag: 4.0.0 → v4.0, 4.1.0 → v4.1.
+  const tag = version.endsWith('.0') ? `v${version.split('.').slice(0, 2).join('.')}` : `v${version}`
   const notes = join(root, 'releases', `${tag}-release-notes.md`)
   assert.ok(existsSync(notes), `缺少发行说明：releases/${tag}-release-notes.md`)
   const body = readFileSync(notes, 'utf8')

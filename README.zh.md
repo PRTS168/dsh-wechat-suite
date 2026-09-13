@@ -5,7 +5,7 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-255%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/%E7%A6%BB%E7%BA%BF%E5%8D%95%E6%B5%8B-261%20%E9%A1%B9%E5%85%A8%E7%BB%BF-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
@@ -18,7 +18,7 @@
     <a href="#-命令与工具">命令</a> ·
     <a href="#-独立管理台">管理台</a> ·
     <a href="#-长期记忆">记忆</a> ·
-    <a href="#-v40-重大更新">更新日志</a> ·
+    <a href="#-v41-有什么新东西">更新日志</a> ·
     <a href="README.md">English</a>
   </p>
 </div>
@@ -67,18 +67,20 @@ pnpm setup                                                             # 3 填�
 
 ---
 
-## ✨ v4.0 重大更新
+## ✨ v4.1 有什么新东西
 
-- **上下文管理大改** —— 不再靠"到点换对话"续命：一个会话到底 + 分层记忆，`/context` 直接显示
-  真实占用、压缩触发点、压缩后原样保留多少 token。
-- **长期记忆（新）** —— `MEMORY.md` 跨会话事实文件 + `remember_fact` 工具（说"记一下"立刻落盘）
-  + 每天自动整理一次。
-- **Web 管理台重写** —— 新手 / 高级双模式、8 项体检（每项都说明卡在哪、怎么解决）、配置备份与一键回滚。
-- **问题台账（新）** —— 每次被吞掉的失败都留痕：`/problems` 可查、`/status` 显示网关健康，告警限流。
-- **修掉的真问题** —— `send_email` 一直报"SMTP 未配置"（宿主按 bundle schema 静默丢弃配置）、
-  模型复读消息围栏、心跳定时器泄漏、工具步骤假警报等。
+- **网关传输自愈** —— 连接层出问题时，后续请求自动改走**全新连接**（不经连接池、不受全局
+  代理影响），不再需要重启进程才能恢复。起因是一次连续 **18 分钟发不出消息**的事故
+  （台账 108 条、同一错误重复 96 次、重启才恢复）。
+- **长轮询窗口有了上限** —— 服务端建议的窗口不再能无限顶掉 `longPollTimeoutMs`；取两者较小值，
+  并把两个数字都写进日志。服务端若"窗口到期才回"，这个窗口就是"按下发送 → 桥看见消息"的延迟。
+- **长回合不再静默** —— 第一条进度约 **20 秒**就发（原来要等满 `digestIntervalSec`，默认 300 秒），
+  那五分钟里"慢"和"卡死"本来没有区别。
+- **从 v0.3.x 升上来的必看** —— 灯控**不再有内置默认地址**，需要在 profile 里补
+  `esp32BaseUrl`（详见[发行说明](releases/v4.1-release-notes.md)）。
 
-想细看：[v4.0 发行说明](releases/v4.0-release-notes.md) · 逐条变更：[CHANGELOG.md](CHANGELOG.md) · 更早的版本：[releases/](releases/)
+上一版的重头戏（上下文管理、长期记忆、管理台、问题台账）见
+[v4.0 发行说明](releases/v4.0-release-notes.md)。逐条变更：[CHANGELOG.md](CHANGELOG.md) · 更早的版本：[releases/](releases/)
 
 ---
 
@@ -456,6 +458,22 @@ pnpm setup          # 交互式配置向导
 ## 📚 版本历史
 
 <details open>
+<summary><b>v4.1</b> —— 网关传输自愈 · 长轮询窗口封顶 · 长回合进度提前</summary>
+
+- **传输层自愈**：连接层出问题时，后续请求自动改走全新连接（`node:http`、`agent: false`），
+  不再需要重启进程才能恢复 —— 起因是一次连续 18 分钟发不出消息的事故。
+- **长轮询窗口封顶**：服务端的 `longpolling_timeout_ms` 不再能无限顶掉配置值，取
+  `min(服务端建议, longPollTimeoutMs)`，两个数字都写进日志。
+- **长回合第一条进度约 20 秒就发**（原来等满 `digestIntervalSec`，默认 300 秒）。
+- **修复**：Linux CI 上必红的 `robustness` 用例（`chmod 000` 后回读前没恢复权限）；
+  补齐灯控地址的破坏性变更说明（`esp32BaseUrl` 不再有内置默认值）。
+- 离线单测 261 项（原 255 项）。
+
+见 [`releases/v4.1-release-notes.md`](releases/v4.1-release-notes.md)。
+
+</details>
+
+<details>
 <summary><b>v4.0</b> —— 上下文管理大改 · Web 管理台重写 · 长期记忆</summary>
 
 - **上下文**：默认一个会话到底；`/context` 显示真实占用与压缩触发点；建议把压缩参数写成

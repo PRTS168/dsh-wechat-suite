@@ -3,6 +3,38 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的组织方式，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [v4.1] — 2026-09-13
+
+**小版本：网关传输层加固 + 长回合进度提前。** 完整发行说明见 `releases/v4.1-release-notes.md`。
+
+### Added
+
+- **传输层换路兜底**（`src/gateway/ilink-client.ts`）：传输层失败之后，下一次请求改走全新连接
+  （`node:http(s)` 且 `agent: false`：不经连接池，也不受宿主全局 dispatcher 影响），成功一次即回
+  常规路径；切换时在宿主日志写一行。刻意不做“立即重发”——iLink 发送不保证幂等，重发会让人收到
+  重复气泡。起因：2026-09-13 连续 18 分钟发不出任何消息（台账 108 条 `[gateway]`、同一错误重复
+  96 次、**重启进程**才恢复），指纹是“每个请求同样失败 + 进程内重试全败 + 重启即好”，即连接池
+  状态中毒而非断网
+- **`capLongPollWindow()`**（`src/gateway/index.ts`）：服务端建议的 `longpolling_timeout_ms` 不再
+  无上限顶掉配置值，取 `min(服务端建议, longPollTimeoutMs)`，并把两个数字都写进日志
+- **`scheduleDigests()`**（`src/node/outbound.ts`）：进度排程抽成纯函数并显式返回取消函数；
+  首条进度提前到约 **20 秒**（原为等满 `digestIntervalSec`，默认 300 秒）
+- 测试：`test/gateway-transport.test.ts`（传输失败换路 / 成功后回池 / HTTP 错误不算传输失败 /
+  窗口封顶）+ 进度排程的提前与取消用例
+
+### Fixed
+
+- **Linux CI 上必红的那条用例**：`robustness` 的“配置文件读不出来时拒绝写入”在 `chmod 000`
+  之后没恢复权限就回读，测试自己吃 `EACCES`（Windows 不强制权限位，所以本地一直全绿；
+  v4.0 起连续三次推送的 CI 都是红的）
+- **灯控地址的破坏性变更补进文档**：`light.ts` 里硬编码的设备地址已在 v4.0 随脱敏移除，
+  `esp32BaseUrl` 未配置时 `/开灯` 明确报“灯控还没配置”并给出填法
+
+### Changed
+
+- 长回合第一条进度由“等满一个 `digestIntervalSec`”改为约 20 秒后发出
+- README 中英同步：配置说明与控制台截图；离线单测 255 → **261** 项
+
 ## [v4.0] — 2026-09-13
 
 **大版本：上下文管理大改 · Web 管理台重写 · 长期记忆上线。** 桥从"会回话"变成
@@ -249,6 +281,7 @@ iLink、真人微信往返并触发一次自动轮换，并在连续多次 patch
 ---
 
 [未发布]: 暂无
+[v4.1]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v4.1
 [v4.0]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v4.0
 [v0.3.1]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.1
 [v0.3.0]: https://github.com/PRTS168/dsh-wechat-suite/releases/tag/v0.3.0

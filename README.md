@@ -5,7 +5,7 @@
 
   [![Release](https://img.shields.io/github/v/release/PRTS168/dsh-wechat-suite?style=for-the-badge&label=release&color=07C160)](https://github.com/PRTS168/dsh-wechat-suite/releases)
   [![License](https://img.shields.io/github/license/PRTS168/dsh-wechat-suite?style=for-the-badge&color=1E3A8A)](LICENSE)
-  ![Tests](https://img.shields.io/badge/offline%20tests-255%20passing-2EA043?style=for-the-badge)
+  ![Tests](https://img.shields.io/badge/offline%20tests-261%20passing-2EA043?style=for-the-badge)
   ![Node](https://img.shields.io/badge/node-%E2%89%A5%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
   ![DSH](https://img.shields.io/badge/DSH-0.1.2--rc.1%20%7C%200.1.5--rc.2-4B8BBE?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6E7681?style=for-the-badge)
@@ -18,7 +18,7 @@
     <a href="#-commands-and-tools">Commands</a> ·
     <a href="#-standalone-admin-console">Admin console</a> ·
     <a href="#-long-term-memory">Memory</a> ·
-    <a href="#-v40-highlights">Changelog</a> ·
+    <a href="#-v41-highlights">Changelog</a> ·
     <a href="README.zh.md">中文说明</a>
   </p>
 </div>
@@ -71,20 +71,24 @@ health report names what is missing.
 
 ---
 
-## ✨ v4.0 highlights
+## ✨ v4.1 highlights
 
-- **Context management, reworked** — one session for good, plus layered memory: `/context` reports
-  the real occupancy, the compaction trigger point, and how many tokens survive verbatim.
-- **Long-term memory (new)** — a cross-session `MEMORY.md` fact file, a `remember_fact` tool
-  ("remember this" lands on disk immediately), and a daily consolidation pass.
-- **Web admin console, rewritten** — beginner/advanced modes, an 8-check health report where every
-  failure says how to fix it, config backups, and one-click rollback.
-- **Problem ledger (new)** — every swallowed failure leaves a trace: `/problems` to read it,
-  gateway health in `/status`, and rate-limited notices instead of a flood.
-- **Real bugs fixed** — `send_email` always reporting "SMTP not configured" (the host silently
-  dropped the keys), the model echoing the message fence, a leaking heartbeat timer, false alarms.
+- **The gateway transport self-heals** — after a connection-level failure the next request takes a
+  **brand-new connection** (no pool, no global proxy dispatcher), so recovery no longer needs a
+  process restart. This grew out of a real **18-minute outage** where nothing could be sent
+  (108 ledger entries, the same error 96 times, fixed only by restarting the process).
+- **Long-poll window capped** — the server's suggested window can no longer override
+  `longPollTimeoutMs` without limit; the smaller of the two wins and both numbers are logged. If the
+  server only answers when a window expires, that window *is* the delay between pressing send and the
+  bridge seeing the message.
+- **No more silent long turns** — the first progress line lands in about **20 seconds** (it used to
+  wait a full `digestIntervalSec`, 300s by default), which is the difference between "slow" and "frozen".
+- **Upgrading from v0.3.x?** Light control **no longer ships a built-in address**; add
+  `esp32BaseUrl` to the profile (see the [release notes](releases/v4.1-release-notes.md)).
 
-Read more: [v4.0 release notes](releases/v4.0-release-notes.md) · every change: [CHANGELOG.md](CHANGELOG.md) · older: [releases/](releases/)
+The previous release's headline work (context management, long-term memory, admin console, problem
+ledger) is in the [v4.0 release notes](releases/v4.0-release-notes.md). Every change:
+[CHANGELOG.md](CHANGELOG.md) · older: [releases/](releases/)
 
 ---
 
@@ -485,6 +489,25 @@ pnpm setup          # interactive config wizard
 ## 📚 Version history
 
 <details open>
+<summary><b>v4.1</b> — gateway transport self-heals · long-poll window capped · earlier progress</summary>
+
+- **Transport self-heals**: after a connection-level failure the next request takes a brand-new
+  connection (`node:http`, `agent: false`) instead of the poisoned pool — the fix grew out of an
+  incident where nothing could be sent for 18 straight minutes and only a process restart helped.
+- **Long-poll window capped**: the server's `longpolling_timeout_ms` can no longer override the
+  configured window without limit; it is now `min(server, longPollTimeoutMs)` and both numbers are
+  logged.
+- **First progress line in ~20s** on a long turn (it used to wait a full `digestIntervalSec`, 300s).
+- **Fixed**: the `robustness` test that was red on Linux CI (`chmod 000` then read back without
+  restoring permissions), and the light-control breaking change is now documented
+  (`esp32BaseUrl` no longer has a built-in default).
+- 261 offline unit tests (was 255).
+
+See [`releases/v4.1-release-notes.md`](releases/v4.1-release-notes.md).
+
+</details>
+
+<details>
 <summary><b>v4.0</b> — context rebuild · admin console rewrite · long-term memory</summary>
 
 - **Context**: one session by default; `/context` shows the real usage and the compaction trigger

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-cowork/chatnode-wechat",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "Chat with, monitor, and approve your DSH agents from WeChat — an iLink gateway + conversation node bundle for DeepSeek Harness",
   "keywords": [
     "deepseek-harness",
