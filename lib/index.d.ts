@@ -20,6 +20,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
+import { type PlatformId } from './platform/index.ts';
 export { WechatGateway, Config as GatewayConfig } from './gateway/index.ts';
 export { wechatConversationNode, WechatConversationNode, Config as NodeConfig, } from './node/index.ts';
 export * from './gateway/types.ts';
@@ -46,6 +47,29 @@ export interface Config {
     allowFrom?: string[];
     /** Chat platform to serve: `wechat` (default) or `qq`. */
     platform?: 'wechat' | 'qq';
+    /**
+     * The platform this profile serves, as a list.
+     *
+     * Only ever holds ONE entry (`['wechat']` or `['qq']`); `platform` alone is the
+     * older spelling of the same statement and still works. `platform` is the
+     * **primary**: it owns the session namespace and the default on-disk locations.
+     * An unwritten list means "just `platform`".
+     */
+    platforms?: PlatformId[];
+    /**
+     * Per-platform allowlists, e.g. `{ qq: ['<user_openid>'] }`.
+     *
+     * A platform with its own entry uses it; a platform without one uses
+     * `allowFrom`. An entry that is an **empty list** accepts nobody on that
+     * platform.
+     */
+    allowFromByPlatform?: Record<string, string[]>;
+    /** QQ 机器人 AppID（开放平台）。留空则从 DSH 凭据 QQ_BOT_APP_ID 取。 */
+    qqAppId?: string;
+    /** QQ 机器人 AppSecret。**建议只放 DSH 凭据**，不要写进 profile。 */
+    qqClientSecret?: string;
+    /** QQ 接口域名覆盖：沙箱是 https://sandbox.api.sgroup.qq.com。留空走正式域名。 */
+    qqBaseUrl?: string;
     /** Heartbeat interval for progress digests (seconds; 0 disables). */
     digestIntervalSec?: number;
     /** Approval prompt timeout before default-deny (seconds). */
@@ -164,6 +188,11 @@ export interface Config {
 export declare const Config: z<Schemastery.ObjectS<{
     allowFrom: z<string[], string[]>;
     platform: z<"wechat" | "qq", "wechat" | "qq">;
+    platforms: z<("wechat" | "qq")[], ("wechat" | "qq")[]>;
+    allowFromByPlatform: z<any, Record<string, string[]>>;
+    qqAppId: z<string, string>;
+    qqClientSecret: z<string, string>;
+    qqBaseUrl: z<string, string>;
     digestIntervalSec: z<number, number>;
     approvalTimeoutSec: z<number, number>;
     maxMessageChars: z<number, number>;
@@ -220,6 +249,11 @@ export declare const Config: z<Schemastery.ObjectS<{
 }>, Schemastery.ObjectT<{
     allowFrom: z<string[], string[]>;
     platform: z<"wechat" | "qq", "wechat" | "qq">;
+    platforms: z<("wechat" | "qq")[], ("wechat" | "qq")[]>;
+    allowFromByPlatform: z<any, Record<string, string[]>>;
+    qqAppId: z<string, string>;
+    qqClientSecret: z<string, string>;
+    qqBaseUrl: z<string, string>;
     digestIntervalSec: z<number, number>;
     approvalTimeoutSec: z<number, number>;
     maxMessageChars: z<number, number>;
@@ -282,6 +316,12 @@ export declare const Config: z<Schemastery.ObjectS<{
  * context are visible to child contexts (the conversation node resolves
  * `wechat` fine) but NOT to a direct property access on the apply context
  * itself, so the credentials boot runs inside an injected child scope.
+ *
+ * A profile mounts ONE platform's gateway here (declared by `platforms`, defaulting
+ * to `platform`) and hands the node that platform's conversation. The two
+ * credential sets are independent — WeChat's live in dsh credentials, QQ's in the
+ * AppID/AppSecret pair — so each platform boots through its own injected scope, and
+ * a platform that fails to come up does not hold the other one's boot hostage.
  */
 export declare function apply(ctx: Context, config: Config): void;
 declare const _default: {
@@ -290,6 +330,11 @@ declare const _default: {
     Config: z<Schemastery.ObjectS<{
         allowFrom: z<string[], string[]>;
         platform: z<"wechat" | "qq", "wechat" | "qq">;
+        platforms: z<("wechat" | "qq")[], ("wechat" | "qq")[]>;
+        allowFromByPlatform: z<any, Record<string, string[]>>;
+        qqAppId: z<string, string>;
+        qqClientSecret: z<string, string>;
+        qqBaseUrl: z<string, string>;
         digestIntervalSec: z<number, number>;
         approvalTimeoutSec: z<number, number>;
         maxMessageChars: z<number, number>;
@@ -346,6 +391,11 @@ declare const _default: {
     }>, Schemastery.ObjectT<{
         allowFrom: z<string[], string[]>;
         platform: z<"wechat" | "qq", "wechat" | "qq">;
+        platforms: z<("wechat" | "qq")[], ("wechat" | "qq")[]>;
+        allowFromByPlatform: z<any, Record<string, string[]>>;
+        qqAppId: z<string, string>;
+        qqClientSecret: z<string, string>;
+        qqBaseUrl: z<string, string>;
         digestIntervalSec: z<number, number>;
         approvalTimeoutSec: z<number, number>;
         maxMessageChars: z<number, number>;

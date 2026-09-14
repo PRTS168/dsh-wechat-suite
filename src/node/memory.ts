@@ -39,8 +39,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 
-import { USER_MESSAGE_CLOSE, USER_MESSAGE_OPEN } from './inbound.ts'
+import { USER_MESSAGE_CLOSE_ANY, USER_MESSAGE_OPEN_ANY } from '../platform/index.ts'
 import { describeError } from './net.ts'
+import { platformNamespace, type PlatformId } from '../platform/index.ts'
 
 /** Directory (under `$DSH_HOME`) holding the memory file and its bookkeeping. */
 export const MEMORY_DIR = 'wechat-memory'
@@ -52,7 +53,7 @@ export const MEMORY_LOG = 'memory-log.md'
 export const MEMORY_LOG_LIMIT_BYTES = 256 * 1024
 /** Scheduler bookkeeping (last run, last seen sequence). */
 export const MEMORY_STATE = 'state.json'
-/** Hard cap; past this, new facts are skipped until something is merged away. */
+/** Hard cap; past this, new facts are skipped until something is retired away. */
 export const MEMORY_LIMIT_CHARS = 4000
 /** How many sessions keep their injection bookkeeping before the oldest is dropped. */
 export const MAX_TRACKED_SESSIONS = 64
@@ -113,9 +114,9 @@ export interface MemoryApplyResult {
   skipped: string[]
 }
 
-/** Default location of the facts file. */
-export function defaultMemoryFile(): string {
-  return join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), MEMORY_DIR, MEMORY_FILE)
+/** Default location of the facts file — one memory namespace per platform. */
+export function defaultMemoryFile(platform: PlatformId = 'wechat'): string {
+  return join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), `${platformNamespace(platform)}memory`, MEMORY_FILE)
 }
 
 /** Read the facts file; empty string when missing or unreadable. */
@@ -575,11 +576,13 @@ export interface MemoryUtterance {
  */
 export function extractUtterances(events: readonly unknown[]): MemoryUtterance[] {
   const out: MemoryUtterance[] = []
-  // The closing marker is `<<<微信用户消息结束｜发送于 …>>>`; matching the whole
-  // shape (rather than searching for the bare word) is what keeps the envelope's
-  // own `<<<` out of the captured text — it used to end every fact with "<<".
+  // The closing marker is `<<<微信用户消息结束｜发送于 …>>>` (or the QQ wording); matching
+  // the whole shape (rather than searching for the bare word) is what keeps the
+  // envelope's own `<<<` out of the captured text — it used to end every fact with
+  // "<<". Both platforms' markers are accepted, so one code path reads either
+  // channel's sessions.
   const envelope = new RegExp(
-    `${escapeRegExp(USER_MESSAGE_OPEN)}\\n([\\s\\S]*?)\\n<<<${escapeRegExp(USER_MESSAGE_CLOSE)}｜发送于\\s*([0-9-]+ [0-9:]+)>>>`,
+    `(?:${USER_MESSAGE_OPEN_ANY.join('|')})\\n([\\s\\S]*?)\\n<<<(?:${USER_MESSAGE_CLOSE_ANY.join('|')})｜发送于\\s*([0-9-]+ [0-9:]+)>>>`,
     'g',
   )
   for (const raw of events) {
@@ -605,6 +608,9 @@ export function extractUtterances(events: readonly unknown[]): MemoryUtterance[]
 
 /** Remove the bridge's own fenced background blocks from a message body. */
 function stripBackground(text: string): string {
+  // 和记忆简报同一条消息里注入的背景块（会话交接摘要）也要剥：它里面"最近 N 轮
+  // 原文"读起来和主人自己说话一模一样，没剥干净就会把摘要里的旧话当成刚发生的
+  // 事实记进长期记忆。
   return text
     .replace(new RegExp(`${escapeRegExp(MEMORY_OPEN)}[\\s\\S]*?${escapeRegExp(MEMORY_CLOSE)}`, 'g'), '')
     .replace(/<<<会话交接摘要[^>]*>>>[\s\S]*?<<<会话交接摘要结束>>>/g, '')
@@ -854,7 +860,7 @@ export class MemoryService {
       report.utterances = utterances.length
       if (utterances.length < this.minUtterances) return { ...report, reason: `${reason}: ${utterances.length} < ${this.minUtterances} utterances` }
 
-      const text = await this.ask(llm, route, session, consolidationPrompt(digest, this.read()))
+      const text = await this.ask(route, session, consolidationPrompt(digest, this.read()))
       const patch = parsePatch(text)
       if (!patch) {
         appendMemoryLog(this.file, `整理失败：模型输出不是 JSON（origin=${reason}）`)
@@ -880,41 +886,11 @@ export class MemoryService {
 
   /** One model call, assembled to text. Retries once on failure. */
   private async ask(
-    llm: { stream(options: unknown): AsyncIterable<unknown> },
     route: { provider: string; model: string },
     session: Session,
     prompt: string,
   ): Promise<string> {
-    let lastError: unknown
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const assembler = new BlockAssembler()
-        const options = {
-          provider: route.provider,
-          model: route.model,
-          messages: [
-            createUserMessage({
-              content: [{ type: 'text', text: prompt }],
-              source: { kind: 'plugin', plugin: 'dsh-chatnode-wechat' },
-            }),
-          ],
-          maxTokens: 1024,
-          sessionId: session.id,
-        }
-        for await (const chunk of llm.stream(options)) assembler.push(chunk as never)
-        const text = assembler
-          .blocks()
-          .filter((block) => block.type === 'text')
-          .map((block) => (block as { text?: string }).text ?? '')
-          .join('\n')
-          .trim()
-        if (text) return text
-        lastError = new Error('empty model reply')
-      } catch (error) {
-        lastError = error
-      }
-    }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError))
+    return await askSessionModel(this.ctx, route, String(session.id), prompt)
   }
 
   /** (Re)arm the daily timer for the configured time. */
@@ -1023,4 +999,54 @@ export class MemoryService {
   factCount(): number {
     return factCount(this.file)
   }
+}
+
+/**
+ * One model call outside a turn, assembled to text. Retries once on failure.
+ *
+ * Extracted from {@link MemoryService} so every caller talks to the current
+ * model the **same** way instead of inventing a second one: same `llm.stream`
+ * shape, same plugin-sourced user message, same one-retry-then-throw policy.
+ * `sessionId` is attribution only — a session that is no longer live is a
+ * legitimate value.
+ */
+export async function askSessionModel(
+  ctx: Context,
+  route: { provider: string; model: string },
+  sessionId: string,
+  prompt: string,
+  maxTokens = 1024,
+): Promise<string> {
+  const llm = ctx.get('llm') as { stream(options: unknown): AsyncIterable<unknown> } | undefined
+  if (!llm?.stream) throw new Error('llm service unavailable')
+  let lastError: unknown
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const assembler = new BlockAssembler()
+      const options = {
+        provider: route.provider,
+        model: route.model,
+        messages: [
+          createUserMessage({
+            content: [{ type: 'text', text: prompt }],
+            source: { kind: 'plugin', plugin: 'dsh-chatnode-wechat' },
+          }),
+        ],
+        maxTokens,
+        sessionId,
+      }
+      for await (const chunk of llm.stream(options)) assembler.push(chunk as never)
+      const text = assembler
+        .blocks()
+        .filter((block) => block.type === 'text')
+        .map((block) => (block as { text?: string }).text ?? '')
+        .join('\n')
+        .trim()
+      if (text) return text
+      lastError = new Error('empty model reply')
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }

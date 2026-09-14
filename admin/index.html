@@ -3,14 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>微信桥 · 管理台</title>
+<title>桥管理台</title>
+<link rel="icon" href="data:,">
 <style>
   :root {
     color-scheme: dark;
-    --bg:#0e1013; --panel:#14171c; --panel-2:#181c22; --line:#23272e; --line-2:#2e333c;
-    --fg:#e8eaed; --dim:#8b93a1; --dim-2:#6b7280;
-    --acc:#6ea8fe; --acc-dim:#1e2a3d; --ok:#3fb950; --warn:#d29922; --err:#f85149;
-    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --bg:#0a0d12; --panel:#0f1319; --panel-2:#141924; --panel-3:#0c1015;
+    --line:#1b212b; --line-2:#262e3b;
+    --fg:#e6e9ee; --dim:#98a1b0; --dim-2:#6b7480;
+    --acc:#4c8dff; --acc-dim:#14243d; --acc-line:#2a4a78;
+    --ok:#34c26b; --warn:#e0a63c; --err:#ef5b5b;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     --sans: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
   }
   * { box-sizing: border-box; }
@@ -18,44 +21,65 @@
   body { margin:0; background:var(--bg); color:var(--fg); font:13.5px/1.6 var(--sans); -webkit-font-smoothing:antialiased; }
   a { color:var(--acc); text-decoration:none; }
   code, .mono { font-family:var(--mono); font-size:12.5px; }
+  ::selection { background:rgba(76,141,255,.25); }
 
-  /* ── top bar ─────────────────────────────────────────────────────────── */
-  header { position:sticky; top:0; z-index:20; background:rgba(14,16,19,.94); backdrop-filter:blur(8px);
-           border-bottom:1px solid var(--line); display:flex; align-items:center; gap:14px; padding:0 18px; height:52px; }
-  .brand { font-weight:600; letter-spacing:.02em; }
-  .brand span { color:var(--dim-2); font-weight:400; margin-left:6px; }
+  /* ── top bar ─────────────────────────────────────────────────────── */
+  header { position:sticky; top:0; z-index:20; background:rgba(10,13,18,.92); backdrop-filter:blur(10px);
+           border-bottom:1px solid var(--line); display:flex; align-items:center; gap:16px; padding:0 18px; height:54px; }
+  .brand { display:flex; align-items:baseline; gap:8px; font-weight:650; letter-spacing:.01em; white-space:nowrap; }
+  .brand .mark { font-family:var(--mono); font-size:11px; letter-spacing:.14em; color:var(--acc); border:1px solid var(--acc-line);
+                 border-radius:4px; padding:1px 6px; font-weight:600; }
+  .brand span.sub { color:var(--dim-2); font-weight:400; font-size:12.5px; margin-left:2px; }
+
+  /* platform switcher */
+  .switcher { display:flex; align-items:center; gap:4px; background:var(--panel-3); border:1px solid var(--line-2);
+              border-radius:8px; padding:3px; }
+  .switcher button { display:inline-flex; align-items:center; gap:7px; background:transparent; color:var(--dim);
+                     border:0; border-radius:6px; padding:5px 12px; font:inherit; font-size:13px; cursor:pointer;
+                     transition:background .12s, color .12s; }
+  .switcher button:hover { color:var(--fg); }
+  .switcher button.on { background:var(--acc-dim); color:#dce7ff; box-shadow:inset 0 0 0 1px var(--acc-line); }
+  .switcher .pdot { width:7px; height:7px; border-radius:50%; background:var(--dim-2); flex:none; }
+  .switcher .pdot.ok { background:var(--ok); box-shadow:0 0 0 3px rgba(52,194,107,.12); }
+  .switcher .pdot.warn { background:var(--warn); box-shadow:0 0 0 3px rgba(224,166,60,.12); }
+  .switcher .pdot.bad { background:var(--err); box-shadow:0 0 0 3px rgba(239,91,91,.14); }
+
   .spacer { flex:1; }
   .modes { display:flex; border:1px solid var(--line-2); border-radius:7px; overflow:hidden; }
   .modes button { background:transparent; color:var(--dim); border:0; padding:5px 13px; font:inherit; cursor:pointer; }
   .modes button + button { border-left:1px solid var(--line-2); }
   .modes button.on { background:var(--acc-dim); color:#dce9ff; }
-  .pill { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--dim); }
+  .pill { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--dim); white-space:nowrap; }
   .dot { width:7px; height:7px; border-radius:50%; background:var(--dim-2); flex:none; }
-  .dot.ok { background:var(--ok); box-shadow:0 0 0 3px rgba(63,185,80,.14); }
-  .dot.warn { background:var(--warn); box-shadow:0 0 0 3px rgba(210,153,34,.14); }
-  .dot.bad { background:var(--err); box-shadow:0 0 0 3px rgba(248,81,73,.16); }
+  .dot.ok { background:var(--ok); box-shadow:0 0 0 3px rgba(52,194,107,.12); }
+  .dot.warn { background:var(--warn); box-shadow:0 0 0 3px rgba(224,166,60,.12); }
+  .dot.bad { background:var(--err); box-shadow:0 0 0 3px rgba(239,91,91,.14); }
 
-  /* ── shell ───────────────────────────────────────────────────────────── */
-  .shell { display:grid; grid-template-columns:186px 1fr; min-height:calc(100vh - 52px); }
-  nav { border-right:1px solid var(--line); padding:14px 10px; position:sticky; top:52px; align-self:start; height:calc(100vh - 52px); overflow:auto; }
-  nav .group { color:var(--dim-2); font-size:11px; letter-spacing:.09em; text-transform:uppercase; padding:12px 8px 6px; }
+  /* ── shell ───────────────────────────────────────────────────────── */
+  .shell { display:grid; grid-template-columns:200px 1fr; min-height:calc(100vh - 54px); }
+  nav { border-right:1px solid var(--line); padding:14px 10px; position:sticky; top:54px; align-self:start;
+        height:calc(100vh - 54px); overflow:auto; }
+  nav .group { color:var(--dim-2); font-size:11px; letter-spacing:.1em; text-transform:uppercase; padding:14px 10px 6px; }
   nav button { display:block; width:100%; text-align:left; background:transparent; color:var(--dim); border:0;
-               border-left:2px solid transparent; padding:7px 9px; font:inherit; cursor:pointer; border-radius:0 6px 6px 0; }
+               border-left:2px solid transparent; padding:7px 10px; font:inherit; cursor:pointer; border-radius:0 6px 6px 0; }
   nav button:hover { color:var(--fg); background:var(--panel); }
   nav button.on { color:#dce9ff; background:var(--acc-dim); border-left-color:var(--acc); }
-  main { padding:20px 22px 96px; max-width:1000px; }
+  main { padding:22px 26px 100px; max-width:1020px; width:100%; }
   section { display:none; } section.on { display:block; }
-  h2 { font-size:15px; margin:0 0 4px; font-weight:600; }
-  .lead { color:var(--dim); margin:0 0 16px; max-width:70ch; }
+  h2 { font-size:15px; margin:0 0 4px; font-weight:650; }
+  .lead { color:var(--dim); margin:0 0 16px; max-width:72ch; }
+  .platform-tag { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11.5px;
+                  color:var(--dim); border:1px solid var(--line-2); border-radius:5px; padding:1px 7px; margin-left:8px;
+                  vertical-align:2px; }
 
-  /* ── blocks ──────────────────────────────────────────────────────────── */
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:15px 16px; margin-bottom:12px; }
+  /* ── blocks ──────────────────────────────────────────────────────── */
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:16px 18px; margin-bottom:12px; }
   .card > .head { display:flex; align-items:baseline; gap:10px; margin-bottom:12px; }
   .card > .head strong { font-size:13.5px; }
   .card > .head .hint { color:var(--dim); font-size:12px; }
-  .rule { height:1px; background:var(--line); margin:14px -16px; }
+  .rule { height:1px; background:var(--line); margin:14px -18px; }
 
-  .field { display:grid; grid-template-columns:170px 1fr; gap:6px 14px; padding:9px 0; align-items:start; }
+  .field { display:grid; grid-template-columns:180px 1fr; gap:6px 16px; padding:10px 0; align-items:start; }
   .field + .field { border-top:1px solid var(--line); }
   .field > .label { color:var(--dim); padding-top:6px; }
   .field > .label b { display:block; color:var(--fg); font-weight:500; }
@@ -64,74 +88,76 @@
   .hint { color:var(--dim); font-size:12px; margin-top:5px; max-width:62ch; }
   .hint.warn { color:var(--warn); }
   input[type=text], input[type=number], textarea, select {
-    background:#0b0d10; color:var(--fg); border:1px solid var(--line-2); border-radius:6px;
-    padding:6px 9px; font:inherit; min-width:0; }
-  input[type=text], input[type=number], select { width:100%; max-width:420px; }
+    background:#0a0e13; color:var(--fg); border:1px solid var(--line-2); border-radius:6px;
+    padding:6px 10px; font:inherit; min-width:0; }
+  input[type=text], input[type=number], select { width:100%; max-width:430px; }
   input.mono, textarea.mono { font-family:var(--mono); font-size:12.5px; }
   textarea { width:100%; resize:vertical; }
   input:focus, textarea:focus, select:focus, button:focus-visible { outline:1px solid var(--acc); outline-offset:1px; border-color:var(--acc); }
   input:disabled, select:disabled { opacity:.55; }
   label.check { display:inline-flex; align-items:center; gap:7px; color:var(--fg); }
 
-  button.act { background:var(--acc); color:#08111f; border:0; border-radius:6px; padding:7px 14px; font:inherit; font-weight:500; cursor:pointer; }
+  button.act { background:var(--acc); color:#081120; border:0; border-radius:6px; padding:7px 15px; font:inherit; font-weight:550; cursor:pointer; }
+  button.act:hover { filter:brightness(1.08); }
   button.act:disabled { opacity:.5; cursor:not-allowed; }
-  button.ghost { background:var(--panel-2); color:var(--fg); border:1px solid var(--line-2); border-radius:6px; padding:6px 11px; font:inherit; cursor:pointer; }
+  button.ghost { background:var(--panel-2); color:var(--fg); border:1px solid var(--line-2); border-radius:6px; padding:6px 12px; font:inherit; cursor:pointer; }
   button.ghost:hover { border-color:var(--acc); color:#dce9ff; }
-  button.mini { background:transparent; color:var(--dim); border:1px solid var(--line-2); border-radius:5px; padding:3px 8px; font:inherit; font-size:12px; cursor:pointer; }
+  button.mini { background:transparent; color:var(--dim); border:1px solid var(--line-2); border-radius:5px; padding:3px 9px; font:inherit; font-size:12px; cursor:pointer; }
   button.mini:hover { color:var(--fg); border-color:var(--acc); }
-  button.danger { color:var(--err); border-color:#43272a; }
+  button.danger { color:var(--err); border-color:#40262a; }
   button.danger:hover { color:#ffb4ae; border-color:var(--err); }
 
   .tag { display:inline-block; padding:1px 7px; border-radius:4px; border:1px solid var(--line-2); font-size:11.5px; color:var(--dim); }
   .ok { color:var(--ok); } .warn { color:var(--warn); } .err { color:var(--err); }
   .dim { color:var(--dim); } .dim2 { color:var(--dim-2); }
 
-  pre { white-space:pre-wrap; word-break:break-word; background:#0b0d10; border:1px solid var(--line);
-        border-radius:7px; padding:11px 12px; max-height:460px; overflow:auto; font-family:var(--mono); font-size:12.5px; margin:0; }
+  pre { white-space:pre-wrap; word-break:break-word; background:#0a0e13; border:1px solid var(--line);
+        border-radius:7px; padding:12px 14px; max-height:460px; overflow:auto; font-family:var(--mono); font-size:12.5px; margin:0; }
   table { width:100%; border-collapse:collapse; font-size:12.5px; }
-  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
-  th { color:var(--dim-2); font-weight:500; font-size:11.5px; letter-spacing:.03em; text-transform:uppercase; }
+  th, td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--dim-2); font-weight:500; font-size:11.5px; letter-spacing:.04em; text-transform:uppercase; }
   tbody tr { cursor:default; }
   tbody tr.sel td { background:var(--acc-dim); }
   tbody tr.pick { cursor:pointer; }
   tbody tr.pick:hover td { background:var(--panel-2); }
 
-  .statusline { display:flex; align-items:center; gap:11px; font-size:15px; font-weight:500; }
+  .statusline { display:flex; align-items:center; gap:11px; font-size:15px; font-weight:550; }
   .checks { display:grid; gap:0; margin-top:12px; }
-  .check { display:grid; grid-template-columns:14px 132px 1fr; gap:12px; padding:9px 0; border-top:1px solid var(--line); align-items:start; }
+  .check { display:grid; grid-template-columns:14px 140px 1fr; gap:12px; padding:9px 0; border-top:1px solid var(--line); align-items:start; }
   .check .what { color:var(--dim); }
   .check .why { color:var(--fg); font-size:12.5px; }
   .check .fix { color:var(--warn); font-size:12px; margin-top:3px; }
 
   .choices { display:grid; gap:9px; }
-  .choice { border:1px solid var(--line-2); border-radius:8px; padding:11px 13px; cursor:pointer; background:var(--panel-2); }
-  .choice:hover { border-color:#3c4657; }
+  .choice { border:1px solid var(--line-2); border-radius:8px; padding:11px 14px; cursor:pointer; background:var(--panel-2); }
+  .choice:hover { border-color:#3c4c66; }
   .choice.on { border-color:var(--acc); background:var(--acc-dim); }
   .choice b { display:block; font-weight:600; margin-bottom:3px; }
   .choice span { color:var(--dim); font-size:12.5px; }
 
-  .savebar { position:fixed; left:186px; right:0; bottom:0; z-index:30; display:none; align-items:center; gap:12px;
-             padding:11px 22px; background:rgba(20,23,28,.97); border-top:1px solid var(--line-2); backdrop-filter:blur(8px); }
+  .savebar { position:fixed; left:200px; right:0; bottom:0; z-index:30; display:none; align-items:center; gap:12px;
+             padding:11px 26px; background:rgba(15,19,25,.97); border-top:1px solid var(--line-2); backdrop-filter:blur(10px); }
   .savebar.on { display:flex; }
   #toast { position:fixed; right:18px; bottom:70px; background:var(--panel-2); border:1px solid var(--line-2);
-           padding:10px 14px; border-radius:8px; display:none; max-width:58ch; z-index:40; box-shadow:0 8px 26px rgba(0,0,0,.45); }
-  .banner { border:1px solid #43272a; background:#1d1416; color:#ffb4ae; border-radius:8px; padding:10px 13px; margin-bottom:12px; font-size:12.5px; }
+           padding:10px 15px; border-radius:8px; display:none; max-width:58ch; z-index:40; box-shadow:0 8px 28px rgba(0,0,0,.5); }
+  .banner { border:1px solid #3c2427; background:#1a1214; color:#ffb4ae; border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:12.5px; }
   .grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:10px; }
-  .stat { background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:11px 13px; }
-  .stat .k { color:var(--dim-2); font-size:11.5px; letter-spacing:.04em; text-transform:uppercase; }
-  .stat .v { font-size:19px; font-family:var(--mono); margin-top:3px; }
-  .kbd { font-family:var(--mono); font-size:12px; background:#0b0d10; border:1px solid var(--line-2); border-radius:4px; padding:1px 5px; }
+  .stat { background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+  .stat .k { color:var(--dim-2); font-size:11.5px; letter-spacing:.05em; text-transform:uppercase; }
+  .stat .v { font-size:20px; font-family:var(--mono); margin-top:3px; }
+  .kbd { font-family:var(--mono); font-size:12px; background:#0a0e13; border:1px solid var(--line-2); border-radius:4px; padding:1px 6px; }
 </style>
 </head>
 <body>
 
 <header>
-  <div class="brand">微信桥<span>管理台</span></div>
+  <div class="brand"><span class="mark">BRIDGE</span>桥管理台<span class="sub">微信 · QQ</span></div>
+  <div class="switcher" id="switcher"></div>
+  <div class="spacer"></div>
   <div class="modes" id="modes">
     <button data-mode="simple">新手模式</button>
     <button data-mode="advanced">高级模式</button>
   </div>
-  <div class="spacer"></div>
   <span class="pill" id="healthPill"><span class="dot" id="healthDot"></span><span id="healthText">体检中…</span></span>
   <span class="pill" id="patchPill" title="配置文件"></span>
 </header>
@@ -151,24 +177,88 @@
 <div id="toast"></div>
 
 <script>
-// ── plumbing ────────────────────────────────────────────────────────────────
-const TOKEN = new URLSearchParams(location.search).get('token') || '__ADMIN_TOKEN__';
+// ── plumbing ────────────────────────────────────────────────────────────
+const params = new URLSearchParams(location.search);
+const TOKEN = params.get('token') || '__ADMIN_TOKEN__';
 const H = { 'content-type': 'application/json', 'x-admin-token': TOKEN, 'x-wechat-admin': '1' };
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const toast = (html) => { const t = $('#toast'); t.innerHTML = html; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 6500); };
 
+/** 平台标签：wechat → 微信，qq → QQ。 */
+const PLATFORM_LABEL = { wechat: '微信', qq: 'QQ' };
+const platformLabel = (p) => PLATFORM_LABEL[p] || p;
+
+// 当前平台：URL ?platform= 优先 → localStorage → 后端默认
+let P = params.get('platform') || localStorage.getItem('bridge-admin-platform') || '';
+let PLATFORMS = [];          // [{id,label,patchExists}]
+let PLATFORM_HEALTH = {};    // id -> {ok, summary}
+
 async function api(path, opts) {
-  const r = await fetch(path, { headers: H, ...opts });
+  const sep = path.includes('?') ? '&' : '?';
+  const url = path + sep + 'platform=' + encodeURIComponent(P);
+  const r = await fetch(url, { headers: H, ...opts });
   const j = await r.json().catch(() => ({ ok: false, error: 'bad json' }));
-  if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  if (j.ok === false && j.error) throw new Error(j.error);
   return j;
 }
-const S = { data: null, health: null, problems: null, memory: null, models: null, backups: null, dirty: {}, section: 'overview' };
+const S = { data: null, health: null, problems: null, memory: null, models: null, backups: null, dirty: {}, section: 'overview', mode: 'simple' };
 const isAdvanced = () => S.mode === 'advanced';
 
-// ── sections ────────────────────────────────────────────────────────────────
-// nav is generated from this table so the two modes can never drift apart.
+// ── 平台加载与切换 ──────────────────────────────────────────────────────
+async function loadPlatforms() {
+  const r = await fetch('/api/platforms?platform=' + encodeURIComponent(P), { headers: H });
+  const j = await r.json().catch(() => null);
+  PLATFORMS = j?.platforms ?? [{ id: P || 'wechat', label: platformLabel(P || 'wechat'), patchExists: true }];
+  if (!P || !PLATFORMS.some((pl) => pl.id === P)) P = PLATFORMS[0]?.id || 'wechat';
+  if (!PLATFORMS.some((pl) => pl.id === P)) PLATFORMS.push({ id: P, label: platformLabel(P), patchExists: true });
+  localStorage.setItem('bridge-admin-platform', P);
+  renderSwitcher();
+}
+
+async function loadPlatformHealth() {
+  const settled = await Promise.allSettled(PLATFORMS.map((pl) =>
+    fetch('/api/health?platform=' + encodeURIComponent(pl.id), { headers: H }).then((r) => r.json())
+  ));
+  PLATFORM_HEALTH = {};
+  PLATFORMS.forEach((pl, i) => {
+    const j = settled[i];
+    if (j.status === 'fulfilled' && j.value?.ok !== false && j.value?.summary) {
+      PLATFORM_HEALTH[pl.id] = { ok: j.value.ok, summary: j.value.summary };
+    } else {
+      PLATFORM_HEALTH[pl.id] = { ok: null, summary: '体检中…' };
+    }
+  });
+  renderSwitcher();
+  renderHeaderPills();
+}
+
+function renderSwitcher() {
+  $('#switcher').innerHTML = PLATFORMS.map((pl) => {
+    const h = PLATFORM_HEALTH[pl.id];
+    const cls = h ? (h.ok === null ? '' : h.ok ? 'ok' : 'bad') : '';
+    return `<button data-pl="${esc(pl.id)}" class="${pl.id === P ? 'on' : ''}" title="${esc(pl.label)}：${esc(h?.summary || '体检中…')}">
+      <span class="pdot ${cls}"></span>${esc(pl.label)}</button>`;
+  }).join('');
+  $('#switcher').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => setPlatform(b.dataset.pl)));
+}
+
+function setPlatform(id) {
+  if (id === P) return;
+  if (Object.keys(S.dirty).length > 0 && !confirm('当前平台有未保存的修改，切换平台将丢弃这些修改。')) return;
+  P = id;
+  localStorage.setItem('bridge-admin-platform', P);
+  const url = new URL(location.href);
+  url.searchParams.set('platform', P);
+  history.replaceState(null, '', url.pathname + url.search);
+  S.dirty = {};
+  updateSaveBar();
+  renderSwitcher();
+  loadAll();
+}
+
+// ── sections ────────────────────────────────────────────────────────────
 const SECTIONS = [
   { id:'overview',    label:'概览',        both:true,  render: renderOverview },
   { id:'connect',     label:'谁能跟我说话', adv:'连接与凭据', render: renderConnect },
@@ -204,12 +294,11 @@ function go(id) {
   window.scrollTo({ top: 0 });
 }
 
-// ── config fields (the single source of truth is the server's CONFIG_FIELDS) ─
+// ── config fields ───────────────────────────────────────────────────────
 const F = (key) => (S.data?.fields ?? []).find((f) => f.key === key) || { key, label:key };
 const rawValue = (key) => (S.data?.plainValues ?? {})[key] ?? '';
 const shownValue = (key) => (F(key).secret ? (S.data?.values ?? {})[key] ?? '' : rawValue(key));
 
-/** A control bound to one config key; changes are collected, not written. */
 function field(key, opts = {}) {
   const f = F(key);
   const secret = !!f.secret;
@@ -244,12 +333,8 @@ function field(key, opts = {}) {
   </div>`;
 }
 
-/** Bind the controls just rendered: collect edits into S.dirty. */
 function bindFields(root = document) {
   root.querySelectorAll('[data-key]').forEach((el) => {
-    // Idempotent: sections re-render and re-bind, and a second bind would reset
-    // the baseline (dataset.original) to the edited value, which silently makes
-    // a real change look like "no change" to the save bar.
     if (el.dataset.bound === '1') return;
     el.dataset.bound = '1';
     const key = el.dataset.key;
@@ -260,15 +345,12 @@ function bindFields(root = document) {
       if (!b) return;
       const tag = b.querySelector('.tag');
       if (dirty && !tag) b.insertAdjacentHTML('beforeend', ' <span class="tag warn">已改</span>');
-      // The tag has to come off again when the value returns to the original,
-      // or the field keeps claiming a change the counter no longer counts.
       if (!dirty && tag) tag.remove();
     };
     const collect = () => {
       let v;
       if (el.type === 'checkbox') v = el.checked ? 'on' : '';
       else v = el.value.trim();
-      // The "custom…" sentinel is a UI affordance, never a value.
       if (v === '__custom__') { delete S.dirty[key]; mark(false); updateSaveBar(); return; }
       const original = el.type === 'checkbox'
         ? (el.dataset.originalChecked === '1' ? 'on' : '')
@@ -290,7 +372,6 @@ function bindFields(root = document) {
   });
 }
 
-/** Which fields exist only in advanced mode — used to explain hidden changes. */
 const ADVANCED_ONLY = ['cwd','mediaDir','agentProvider','imageInput','imageInputModel','memoryFile','problemFile','contextPolicy','imageInput','ocrApiKey','ocrModel','ocrBaseUrl','imageGenApiKey','imageGenModel','imageGenDir','sttApiKey','sttModel','ttsApiKey','ttsModel','ttsVoice','smtpHost','smtpPort','smtpUsername','smtpPassword','smtpFromName','esp32BaseUrl','digestIntervalSec','approvalTimeoutSec','maxMessageChars','sendChunkDelayMs','reminderFile','morningFile'];
 
 function updateSaveBar() {
@@ -313,8 +394,6 @@ async function save() {
       toast(`<span class="err">${esc(f.label)} 只能填整数（留空 = 用默认值）</span>`);
       return;
     }
-    // HH:MM is the one free-text value whose typos fail silently: the bridge
-    // treats an unparsable time as "off", so the daily run just never happens.
     if (key === 'memoryConsolidateTime' && value !== '' && !/^\d{1,2}:\d{2}$/.test(value)) {
       $('#saveMsg').innerHTML = `<span class="err">整理时间要写成 HH:MM，收到「${esc(value)}」</span>`;
       return;
@@ -323,13 +402,11 @@ async function save() {
   }
   if (Object.keys(updates).length === 0) return;
   const names = Object.keys(updates).map((k) => F(k).label || k);
-  // This profile is patchReload: live — saving reloads the plugin — so the click
-  // says what it is about to do before doing it.
-  if (isAdvanced() && !confirm(`保存并写入 profile 配置？\n\n将修改 ${names.length} 项：\n${names.join('、')}\n\n这个 profile 是热重载：写盘后桥会立即重新加载。`)) return;
+  if (isAdvanced() && !confirm(`保存并写入 ${platformLabel(P)} profile 配置？\n\n将修改 ${names.length} 项：\n${names.join('、')}\n\n这个 profile 是热重载：写盘后桥会立即重新加载。`)) return;
   const btn = $('#saveBtn');
   btn.disabled = true; btn.textContent = '保存中…';
   try {
-    const j = await api('/api/config', { method: 'POST', body: JSON.stringify({ updates }) });
+    const j = await api('/api/config', { method: 'POST', body: JSON.stringify({ updates, platform: P }) });
     $('#saveMsg').innerHTML = `<span class="ok">已保存</span> ${j.changed.length} 项 · 备份 ${esc(String(j.backup || '').split(/[\\/]/).pop())}`;
     toast('已保存。改动会在桥下次重载时生效（本 profile 是热重载，通常几秒内）。');
     S.dirty = {};
@@ -342,18 +419,19 @@ async function save() {
   }
 }
 
-// ── 概览 ────────────────────────────────────────────────────────────────────
+// ── 概览 ────────────────────────────────────────────────────────────────
 function renderOverview(root) {
   const h = S.health;
   const e = S.data?.environment ?? {};
   const mem = S.memory ?? { facts: 0 };
   const lines = S.problems?.lines ?? [];
   const convs = S.data?.conversations?.length ?? 0;
+  const PL = platformLabel(P);
   root.innerHTML = `
-    <h2>${isAdvanced() ? '概览' : '现在能不能用'}</h2>
+    <h2>${isAdvanced() ? '概览' : '现在能不能用'}<span class="platform-tag">${esc(P)}</span></h2>
     <p class="lead">${isAdvanced()
       ? '桥的健康状况、最近的失败记录与关键计数。左边是配置，需要改哪里点哪里。'
-      : '先看这一行。绿灯就表示已经能用了——直接在微信里给它发消息即可。红灯会告诉你缺什么、去哪儿填。'}</p>
+      : `先看这一行。绿灯就表示已经能用了——直接在${PL}里给它发消息即可。红灯会告诉你缺什么、去哪儿填。`}</p>
 
     <div class="card">
       <div class="statusline"><span class="dot ${h ? (h.ok ? 'ok' : 'bad') : ''}"></span>
@@ -370,14 +448,14 @@ function renderOverview(root) {
     </div>
 
     <div class="grid2">
-      <div class="stat"><div class="k">微信对话</div><div class="v">${convs}</div><div class="dim2">个会话在磁盘上</div></div>
+      <div class="stat"><div class="k">${esc(PL)} 对话</div><div class="v">${convs}</div><div class="dim2">个会话在磁盘上</div></div>
       <div class="stat"><div class="k">记得的事</div><div class="v">${mem.facts ?? 0}</div><div class="dim2">条长期记忆</div></div>
       <div class="stat"><div class="k">最近的问题</div><div class="v ${lines.length ? 'warn' : ''}">${lines.length}</div><div class="dim2">条失败记录</div></div>
       <div class="stat"><div class="k">人设</div><div class="v" style="font-size:15px">${esc(e.preset || '—')}</div><div class="dim2">${e.presetExists ? '已就位' : '缺失'}</div></div>
     </div>
 
     <div class="card" style="margin-top:12px">
-      <div class="head"><strong>在微信里怎么用它</strong><span class="hint">直接发消息就行；下面这些命令是给"改设置/查状态"用的</span></div>
+      <div class="head"><strong>在${esc(PL)}里怎么用它</strong><span class="hint">直接发消息就行；下面这些命令是给"改设置/查状态"用的</span></div>
       <table><tbody>
         <tr><td style="width:150px"><span class="kbd">/status</span></td><td class="dim">看它现在活着没有、网关通不通</td></tr>
         <tr><td><span class="kbd">/context</span></td><td class="dim">看这段对话用了多少上下文、什么时候会自动压缩</td></tr>
@@ -389,30 +467,31 @@ function renderOverview(root) {
   $('#recheck').addEventListener('click', async () => { await loadHealth(); go('overview'); toast('已重新体检'); });
 }
 
-// ── 连接 ────────────────────────────────────────────────────────────────────
+// ── 连接 ────────────────────────────────────────────────────────────────
 function renderConnect(root) {
   const e = S.data?.environment ?? {};
+  const PL = platformLabel(P);
   root.innerHTML = `
-    <h2>${isAdvanced() ? '连接与凭据' : '谁能跟它说话'}</h2>
+    <h2>${isAdvanced() ? '连接与凭据' : '谁能跟它说话'}<span class="platform-tag">${esc(P)}</span></h2>
     <p class="lead">${isAdvanced()
       ? '白名单、人设 preset、工作目录、媒体落盘位置，以及宿主凭据的自检结果。'
-      : '这一页决定"谁能让它回话"。只有你填在这里的微信号，它才会理——别人的消息它直接忽略。'}</p>
+      : `这一页决定"谁能让它回话"。只有你填在这里的${PL}账号，它才会理——别人的消息它直接忽略。`}</p>
     ${S.data?.unreadable ? `<div class="banner">配置文件存在但读不出来：${esc(S.data.unreadable)}。页面显示的不是真实配置，保存会被拒绝——先解决文件权限。</div>` : ''}
     <div class="card">
       <div class="head"><strong>白名单</strong><span class="hint">填错了它就完全不回话，改完记得保存</span></div>
       ${field('allowFrom', {
-        label:'你的微信 ID', sub:'一行一个。以 @im.wechat 结尾的那串就是。',
+        label:`你的${PL} ID`, sub:`一行一个。${P === 'qq' ? 'QQ 官方机器人收到消息时的 openid 就是。' : '以 @im.wechat 结尾的那串就是。'}`,
         rows: 3,
-        after: `<div class="hint">不知道自己的 ID？在微信里问它一句「我的 ID 是什么」——它回话时用的就是那个号。空着的话桥不会启动。</div>`,
+        after: `<div class="hint">不知道自己的 ID？在${esc(PL)}里问它一句「我的 ID 是什么」——它回话时用的就是那个号。空着的话桥不会启动。</div>`,
       })}
       ${field('agentPreset', { label:'人设', sub:'它叫 $DSH_HOME/.agent-presets/<名字>/agent.cordis.yml，改名字要保证那个文件存在。' })}
       ${isAdvanced() ? field('cwd', { label:'新会话工作目录', sub:'/new 时 agent 的工作目录（影响它能直接读写哪些文件）。' }) : ''}
       ${isAdvanced() ? field('mediaDir', { label:'媒体落盘目录', sub:'收到的图片/文件/视频存哪儿。' }) : ''}
     </div>
     <div class="card">
-      <div class="head"><strong>宿主凭据</strong><span class="hint">这些不在桥的配置里，是 DSH 自己的凭据库</span></div>
+      <div class="head"><strong>宿主凭据</strong><span class="hint">微信走 DSH 凭据库；QQ 机器人的 AppID/AppSecret 直接写在 profile 配置里</span></div>
       <table><tbody>
-        <tr><td>微信登录</td><td>${e.weixinCredentials ? '<span class="ok">已配置</span>' : '<span class="warn">没找到 WEIXIN_*</span>'}</td></tr>
+        <tr><td>${P === 'qq' ? 'QQ 机器人凭据' : '微信登录'}</td><td>${e.platformCredential ? '<span class="ok">已配置</span>' : `<span class="warn">${P === 'qq' ? '没配 qqAppId / qqClientSecret' : '没找到 WEIXIN_*'}</span>`}</td></tr>
         <tr><td>硅基流动 Key</td><td>${e.siliconflowCredential ? '<span class="ok">已配置</span>' : '<span class="warn">没配（只聊天可以不管）</span>'}</td></tr>
         <tr><td>DSH home</td><td class="mono">${esc(e.dshHome || '')}</td></tr>
         <tr><td>配置文件</td><td class="mono">${esc(e.patchFile || '')} <span class="tag">${e.patchExists ? '存在' : '不存在'}</span></td></tr>
@@ -421,12 +500,12 @@ function renderConnect(root) {
   bindFields(root);
 }
 
-// ── 模型 ────────────────────────────────────────────────────────────────────
+// ── 模型 ────────────────────────────────────────────────────────────────
 function renderModel(root) {
   const m = S.models ?? { provider:'deepseek-official', models:[], relays:[], current:{} };
   const options = (m.models ?? []).map((id) => ({ value: id, label: id }));
   root.innerHTML = `
-    <h2>${isAdvanced() ? '模型' : '用哪个大脑'}</h2>
+    <h2>${isAdvanced() ? '模型' : '用哪个大脑'}<span class="platform-tag">${esc(P)}</span></h2>
     <p class="lead">${isAdvanced()
       ? '聊天用的 provider/model 路由。第三方中转的 provider id 由适配器注册，这里只列名字，需要时手工填写。'
       : '选它用哪个大脑。不懂就保持默认——默认这个又快又够用。'}</p>
@@ -445,7 +524,6 @@ function renderModel(root) {
       ${field('imageInputModel', { label:'图片专用模型', sub:'留空 = 跟随聊天模型。格式 provider/model。' })}
     </div>` : ''}`;
   bindFields(root);
-  // "自定义…" swaps the select for a text box, so a hand-typed id stays possible.
   root.querySelectorAll('select[data-key]').forEach((sel) => sel.addEventListener('change', () => {
     if (sel.value !== '__custom__') return;
     const key = sel.dataset.key;
@@ -460,12 +538,12 @@ function renderModel(root) {
   root.querySelectorAll('select[data-key]').forEach((sel) => { sel.dataset.lastReal = sel.value; });
 }
 
-// ── 记忆 ────────────────────────────────────────────────────────────────────
+// ── 记忆 ────────────────────────────────────────────────────────────────
 function renderMemory(root) {
   const mem = S.memory ?? { exists:false, facts:0, text:'', file:'' };
   const time = rawValue('memoryConsolidateTime') || '04:30';
   root.innerHTML = `
-    <h2>${isAdvanced() ? '长期记忆' : '它记不记得住'}</h2>
+    <h2>${isAdvanced() ? '长期记忆' : '它记不记得住'}<span class="platform-tag">${esc(P)}</span></h2>
     <p class="lead">${isAdvanced()
       ? 'MEMORY.md 是跨会话的事实文件：每天自动整理一次，把当天你说过的长期事实挑出来写进去；换会话时它带着走。'
       : '它会把你亲口说过的重要事情记下来（住哪、习惯、设备、答应过的事），换了对话也还记得。记的是事实，不是聊天记录。'}</p>
@@ -482,13 +560,13 @@ function renderMemory(root) {
         after: `<div class="hint">出厂默认 04:30。要求：距当天最后一条消息 2 小时以上、且当天至少有 5 句"你说的话"，否则跳过（不浪费模型调用）。</div>`,
       })}
       ${field('memoryInjectEvery', { label:'多久提醒它一次', sub:'每 N 条消息把记忆作为背景重新注入一次。改了记忆或换了会话时会立刻注入。' })}
-      ${isAdvanced() ? field('memoryFile', { label:'记忆文件路径', sub:'默认 $DSH_HOME/wechat-memory/MEMORY.md。' }) : ''}
+      ${isAdvanced() ? field('memoryFile', { label:'记忆文件路径', sub:'默认 $DSH_HOME/<platform>-memory/MEMORY.md。' }) : ''}
     </div>`;
   bindFields(root);
   $('#reloadMem').addEventListener('click', async () => { await loadMemory(); renderMemory(root); });
 }
 
-// ── 上下文方案 ──────────────────────────────────────────────────────────────
+// ── 上下文方案 ──────────────────────────────────────────────────────────
 const SCHEME_PLAIN = {
   manual: { who:'simple', title:'一直用同一个对话', body:'不自动换对话。它记得的东西全在，也不会"聊着聊着换人"。上下文满了由 DSH 自动压缩（保留最近一大段原文）。' },
   'rotate-turns': { who:'simple', title:'聊久了自动开新对话', body:'每 20 轮、且你不在等回复时，自动开一段新对话并告诉你一声。旧的还在，/sessions 能切回去。' },
@@ -501,7 +579,7 @@ function renderContext(root) {
   const simple = ['manual', 'rotate-turns'];
   const shown = isAdvanced() ? schemes : schemes.filter((s) => simple.includes(s.id));
   root.innerHTML = `
-    <h2>${isAdvanced() ? '上下文方案' : '聊久了怎么办'}</h2>
+    <h2>${isAdvanced() ? '上下文方案' : '聊久了怎么办'}<span class="platform-tag">${esc(P)}</span></h2>
     <p class="lead">${isAdvanced()
       ? '上下文方案决定会话何时轮换（换 = 开新会话，旧会话仍在磁盘上）。点卡片立即按默认参数应用，或展开参数自己调。'
       : '对话太长会变慢变贵，所以有个"什么时候开新对话"的选择。不确定就选第一个。'}</p>
@@ -534,17 +612,13 @@ function renderContext(root) {
   if (isAdvanced()) {
     bindFields(root);
     renderKnobs();
-    // The raw JSON field shows what is actually stored. It used to be
-    // overwritten with the newly clicked scheme, which made it differ from the
-    // baseline bindFields() had just recorded: a phantom "unsaved change" that
-    // would apply the scheme on the next save without the user asking.
   }
   $('#applyScheme').addEventListener('click', async () => {
     const id = S.selectedScheme ?? active;
     if (!id) { toast('先点一个方案'); return; }
     const overrides = isAdvanced() ? readKnobs() : undefined;
     try {
-      const j = await api('/api/scheme', { method: 'POST', body: JSON.stringify({ scheme: id, overrides }) });
+      const j = await api('/api/scheme', { method: 'POST', body: JSON.stringify({ scheme: id, overrides, platform: P }) });
       $('#schemeMsg').innerHTML = `<span class="ok">已应用</span> ${esc(JSON.stringify(j.policy))}`;
       toast('已应用上下文方案');
       await loadAll();
@@ -559,12 +633,10 @@ const KNOB_META = {
   pressureRatio:{ type:'number', label:'上下文占比', min:0.05, max:1, step:0.05, hint:'占窗口的百分比，0–1' },
   idleHours:    { type:'number', label:'空闲小时', min:1, hint:'多久没说话才算空闲' },
   handoff:      { type:'boolean', label:'生成要点交接', hint:'换对话前让旧对话产出一段要点，多一次模型调用' },
-  announce:     { type:'boolean', label:'在微信里播报', hint:'换对话时告诉你一声' },
+  announce:     { type:'boolean', label:'在平台里播报', hint:'换对话时告诉你一声' },
   idleOnly:     { type:'boolean', label:'只在空闲时换（推荐）', hint:'正在处理任务时不换，避免把活切成两半' },
 };
 function renderKnobs() {
-  // Knob edits are remembered per scheme, so switching cards to compare them
-  // does not silently throw away what was already typed.
   S.knobs ??= {};
   const box = $('#knobs');
   const label = $('#knobFor');
@@ -584,8 +656,6 @@ function renderKnobs() {
     return `<div class="stat"><div class="k">${esc(meta.label)}${remembered === undefined ? '' : ' <span class="tag warn">已改</span>'}</div><div style="margin-top:5px">${control}</div>
       <div class="dim2" style="margin-top:4px">${esc(meta.hint || '')}</div></div>`;
   }).join('');
-  // Collect as the user types so the values survive a re-render and the apply
-  // button always sends what is on screen.
   box.querySelectorAll('[data-knob]').forEach((el) => el.addEventListener('change', () => {
     const id2 = scheme.id;
     S.knobs[id2] ??= {};
@@ -602,12 +672,13 @@ function readKnobs() {
   return out;
 }
 
-// ── 对话 ────────────────────────────────────────────────────────────────────
+// ── 对话 ────────────────────────────────────────────────────────────────
 function renderChat(root) {
   const convs = S.data?.conversations ?? [];
+  const PL = platformLabel(P);
   root.innerHTML = `
-    <h2>对话</h2>
-    <p class="lead">磁盘上的微信会话。删除 = 移入回收站（可手动恢复），并让宿主进程解绑它。</p>
+    <h2>对话<span class="platform-tag">${esc(P)}</span></h2>
+    <p class="lead">磁盘上的${esc(PL)}会话。删除 = 移入回收站（可手动恢复），并让宿主进程解绑它。</p>
     <div class="card">
       <div class="head"><strong>会话</strong><span class="hint">${convs.length} 个</span>
         <span class="spacer"></span><button class="mini" id="reloadConv">刷新</button></div>
@@ -641,7 +712,7 @@ function renderChat(root) {
     try {
       const t = await api('/api/transcript?id=' + encodeURIComponent(tr.dataset.id));
       $('#transcript').innerHTML = t.messages.length === 0 ? '（无可显示消息）' : t.messages.map((m) =>
-        `<div><b class="${m.role === 'user' ? 'ok' : 'dim'}">${m.role === 'user' ? '微信用户' : '助手'}：</b>${esc(m.text)}</div>`).join('');
+        `<div><b class="${m.role === 'user' ? 'ok' : 'dim'}">${m.role === 'user' ? esc(PL + '用户') : '助手'}：</b>${esc(m.text)}</div>`).join('');
     } catch (e) { $('#transcript').textContent = '读取失败：' + e.message; }
   }));
   root.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => forget(b.dataset.del)));
@@ -650,7 +721,7 @@ function renderChat(root) {
   $('#newSession').addEventListener('click', async () => {
     const prompt = $('#newPrompt').value.trim();
     try {
-      await api('/api/session/new', { method: 'POST', body: JSON.stringify({ prompt }) });
+      await api('/api/session/new', { method: 'POST', body: JSON.stringify({ prompt, platform: P }) });
       $('#newMsg').innerHTML = '<span class="ok">已排队</span>';
       toast('已排队，桥会在 ≤2 秒内新建会话');
       setTimeout(async () => { await loadState(); await loadReports(); renderChat(root); }, 3000);
@@ -662,7 +733,7 @@ function renderChat(root) {
 async function forget(id) {
   if (!confirm(`删除会话 ${id}？\n\n会移入 $DSH_HOME/sessions-trash/（可手动恢复），并让桥解绑。`)) return;
   try {
-    const j = await api('/api/session/forget', { method: 'POST', body: JSON.stringify({ sessionId: id }) });
+    const j = await api('/api/session/forget', { method: 'POST', body: JSON.stringify({ sessionId: id, platform: P }) });
     toast(`已删除 ${esc(id)} → ${esc(j.trash || '回收站')}`);
     await loadState(); go('chat');
   } catch (e) { toast('<span class="err">' + esc(e.message) + '</span>'); }
@@ -678,12 +749,12 @@ async function loadReports() {
   } catch { box.textContent = '（读取失败）'; }
 }
 
-// ── 全部配置项（高级） ──────────────────────────────────────────────────────
+// ── 全部配置项（高级） ──────────────────────────────────────────────────
 function renderFields(root) {
   const groups = {};
   for (const f of S.data?.fields ?? []) (groups[f.group] ||= []).push(f);
   root.innerHTML = `
-    <h2>全部配置项</h2>
+    <h2>全部配置项<span class="platform-tag">${esc(P)}</span></h2>
     <p class="lead">桥能读到的每一个键。带「已改」的项会在保存时写进 profile patch；留空 = 从配置里删掉该键（回到默认值）。密码类字段显示为掩码，点"显示"才读取明文。</p>
     ${Object.entries(groups).map(([g, fields]) => `<div class="card">
       <div class="head"><strong>${esc(g)}</strong><span class="hint">${fields.length} 项</span></div>
@@ -692,14 +763,14 @@ function renderFields(root) {
   bindFields(root);
 }
 
-// ── 诊断 ────────────────────────────────────────────────────────────────────
+// ── 诊断 ────────────────────────────────────────────────────────────────
 function renderDiag(root) {
   const p = S.problems ?? { lines:[], file:'', exists:false, rotated:false };
   const e = S.data?.environment ?? {};
   const backups = S.backups?.backups ?? [];
   const lines = p.lines ?? [];
   root.innerHTML = `
-    <h2>${isAdvanced() ? '诊断与备份' : '出问题了'}</h2>
+    <h2>${isAdvanced() ? '诊断与备份' : '出问题了'}<span class="platform-tag">${esc(P)}</span></h2>
     <p class="lead">${isAdvanced()
       ? '桥把每一次被吞掉的失败都写进了问题日志（它是"有痕迹"的落点）。这里能看原文、能回滚配置。'
       : '它出问题时不会装作没事——都会记在这个文件里。想让它修好，先把这里的报错发给我。'}</p>
@@ -719,7 +790,7 @@ function renderDiag(root) {
         <tr><td>patch 文件</td><td class="mono">${esc(e.patchFile || '')} <span class="tag">${e.patchExists ? '存在' : '不存在'}</span></td></tr>
         <tr><td>preset</td><td class="mono">${esc(e.preset || '')} <span class="${e.presetExists ? 'ok' : 'err'}">${e.presetExists ? '已就位' : '缺失'}</span></td></tr>
         <tr><td>白名单</td><td>${(e.allowFrom ?? []).map(esc).join('、') || '<span class="warn">空</span>'}</td></tr>
-        <tr><td>微信凭据</td><td>${e.weixinCredentials ? '<span class="ok">已配置</span>' : '<span class="warn">未找到</span>'}</td></tr>
+        <tr><td>平台凭据</td><td>${e.platformCredential ? '<span class="ok">已配置</span>' : '<span class="warn">未配置</span>'}</td></tr>
       </tbody></table>
     </div>
 
@@ -741,14 +812,14 @@ function renderDiag(root) {
   root.querySelectorAll('[data-restore]').forEach((b) => b.addEventListener('click', async () => {
     if (!confirm(`回滚到 ${b.dataset.restore}？\n\n当前配置会先自动备份一份。`)) return;
     try {
-      const j = await api('/api/rollback', { method: 'POST', body: JSON.stringify({ name: b.dataset.restore }) });
+      const j = await api('/api/rollback', { method: 'POST', body: JSON.stringify({ name: b.dataset.restore, platform: P }) });
       toast(`已回滚到 ${esc(j.restored)}（当前状态存为 ${esc(j.safety)}）`);
       await loadAll(); go('diag');
     } catch (e) { toast('<span class="err">' + esc(e.message) + '</span>'); }
   }));
 }
 
-// ── loaders ─────────────────────────────────────────────────────────────────
+// ── loaders ─────────────────────────────────────────────────────────────
 async function loadState() { S.data = await api('/api/state'); renderHeaderPills(); }
 async function loadHealth() { S.health = await api('/api/health'); renderHeaderPills(); }
 async function loadProblems() { try { S.problems = await api('/api/problems?limit=300'); } catch { S.problems = { lines:[], file:'' }; } }
@@ -764,8 +835,6 @@ function renderHeaderPills() {
 }
 
 async function loadAll() {
-  // Individually guarded: one failing endpoint must not blank the whole console,
-  // because the endpoint most likely to fail is the one that explains why.
   const results = await Promise.allSettled([loadState(), loadHealth(), loadProblems(), loadMemory(), loadModels(), loadBackups()]);
   const failed = results.filter((r) => r.status === 'rejected');
   if (!S.data) {
@@ -781,19 +850,13 @@ async function loadAll() {
   else go('overview');
 }
 
-// ── mode + boot ─────────────────────────────────────────────────────────────
-// `?mode=advanced|simple` and `?section=<id>` deep-link the view (the README
-// screenshots use them, and both are handy for bookmarking); otherwise the
-// remembered choice wins and the overview is shown.
-const params = new URLSearchParams(location.search);
+// ── boot ────────────────────────────────────────────────────────────────
 const modeParam = params.get('mode');
 S.mode = modeParam === 'advanced' || modeParam === 'simple'
   ? modeParam
   : (localStorage.getItem('wechat-admin-mode') === 'advanced' ? 'advanced' : 'simple');
 const sectionParam = params.get('section');
 if (sectionParam && SECTIONS.some((s) => s.id === sectionParam)) S.section = sectionParam;
-// An advanced-only panel has no nav entry in simple mode; fall back rather than
-// render a panel the reader cannot navigate away from.
 if (!isAdvanced() && SECTIONS.find((s) => s.id === S.section)?.only) S.section = 'overview';
 
 function renderModes() {
@@ -811,14 +874,19 @@ $('#saveBtn').addEventListener('click', save);
 $('#revertBtn').addEventListener('click', async () => { S.dirty = {}; await loadAll(); updateSaveBar(); toast('已放弃未保存的修改'); });
 window.addEventListener('beforeunload', (e) => { if (Object.keys(S.dirty).length > 0) { e.preventDefault(); e.returnValue = ''; } });
 
-renderModes();
-renderNav();
-loadAll().catch((e) => {
-  const hint = /forbidden/i.test(e.message)
-    ? '令牌不对：请用管理台启动时打印的那个带 token 的地址打开，或直接访问 http://127.0.0.1:8790/（只允许本机打开）。'
-    : '确认管理台进程还在跑，然后刷新本页。';
-  $('#main').innerHTML = `<div class="banner">加载失败：${esc(e.message)}<br>${esc(hint)}</div>`;
-});
+(async function boot() {
+  try {
+    await loadPlatforms();
+    await Promise.all([loadPlatformHealth(), loadAll()]);
+  } catch (e) {
+    const hint = /forbidden/i.test(e.message)
+      ? '令牌不对：请用管理台启动时打印的那个带 token 的地址打开，或直接访问 http://127.0.0.1:8790/（只允许本机打开）。'
+      : '确认管理台进程还在跑，然后刷新本页。';
+    $('#main').innerHTML = `<div class="banner">加载失败：${esc(e.message)}<br>${esc(hint)}</div>`;
+  }
+  renderModes();
+  renderNav();
+})();
 </script>
 </body>
 </html>

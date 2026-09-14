@@ -20,10 +20,21 @@
  * @module @dsh-cowork/chatnode-wechat/node/admin-control
  */
 import type { WechatConversationNode } from './core.ts';
+import { type PlatformId } from '../platform/index.ts';
 /** One queued instruction from the admin page. */
 export interface ControlCommand {
     /** What to do. */
     op: 'new-session' | 'switch-session' | 'forget-session';
+    /**
+     * Which platform the page was showing when this was queued.
+     *
+     * Both profiles run their own node, and both poll their own queue directory —
+     * but a command queued from the WeChat page must never be executed by the QQ
+     * bridge (it would create/switch a session in the wrong platform). Absent means
+     * "the only platform this profile serves", which is how older console builds
+     * behaved.
+     */
+    platform?: PlatformId;
     /** `new-session`: optional first prompt (empty = an empty new session). */
     prompt?: string;
     /** `switch-session` / `forget-session`: the target session id. */
@@ -31,8 +42,14 @@ export interface ControlCommand {
     /** `new-session`: suppress the chat announcement (default: announce). */
     announce?: boolean;
 }
-/** Where the queue lives (shared with the admin page). */
-export declare function adminControlDir(): string;
+/**
+ * Where this platform's queue lives (shared with the admin page).
+ *
+ * Namespaced per platform: one shared `wechat-admin/queue` with two profiles
+ * polling it meant "whoever ticks first executes it", so a command issued on the
+ * QQ page could be run by the WeChat bridge and its receipt read by both.
+ */
+export declare function adminControlDir(platform?: PlatformId): string;
 /**
  * Poll the queue and execute commands. Returns a disposer (clears the timer).
  *

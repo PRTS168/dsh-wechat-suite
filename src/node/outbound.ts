@@ -18,8 +18,9 @@
 import type { AssistantMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { MAX_MESSAGE_CHARS } from '../gateway/types.ts'
-import type { WechatConversationNode } from './core.ts'
+import type { OutboundTarget, WechatConversationNode } from './core.ts'
 import { sessionBadge } from './labels.ts'
+import { platformLabel, USER_MESSAGE_OPEN_ANY, type ChatPlatform, type PlatformId } from '../platform/index.ts'
 
 // ---------------------------------------------------------------------------
 // Chunking (port of hermes-agent `_split_text_for_weixin_delivery`, compact)
@@ -331,7 +332,45 @@ function stripInline(line: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Send text to the current peer, chunked and throttled.
+ * The minimum a caller must offer to have a destination resolved: the real node,
+ * or one of the light stand-ins the older tests build (which have `peerId`,
+ * `platform` and `chat` but none of the node's own target bookkeeping).
+ */
+export interface TargetCapable {
+  peerId?: string | null
+  platform?: PlatformId
+  chat?: ChatPlatform
+  config?: { allowFrom?: string[] }
+  currentTarget?: () => OutboundTarget | undefined
+}
+
+/**
+ * Where this message goes: the target platform and peer, with that platform's
+ * gateway.
+ *
+ * The node owns the real answer (queue head → last peer that spoke → the primary
+ * platform's first allowlisted id, see `core.ts`). The fallback below exists for
+ * the stand-ins: they have exactly one platform, so `peerId` **is** the target.
+ * Both branches obey the same rule — a missing service means "cannot send", never
+ * "send it on the other platform", because an answer arriving on the wrong
+ * channel is worse than one that visibly failed.
+ */
+export function resolveOutboundTarget(node: TargetCapable): OutboundTarget | undefined {
+  if (typeof node.currentTarget === 'function') {
+    const target = node.currentTarget()
+    if (target) return target
+  }
+  const peerId = node.peerId ?? node.config?.allowFrom?.[0]
+  if (!peerId) return undefined
+  return {
+    platform: node.platform ?? 'wechat',
+    peerId,
+    ...(node.chat ? { chat: node.chat } : {}),
+  }
+}
+
+/**
+ * Send text to the turn's target, chunked and throttled.
  *
  * This is the single choke point for outbound chat traffic, and it is called
  * from eight places as `void sendTextToPeer(...)`. It therefore must NEVER
@@ -343,24 +382,34 @@ function stripInline(line: string): string {
  * So the service is read through `ctx.get()` — property access throws on a
  * torn-down context, `get()` returns undefined — and every remaining failure is
  * swallowed after a best-effort log.
+ *
+ * The target is resolved **synchronously, before the first await**: a `turn/end`
+ * elsewhere dequeues the target, and an in-flight send must keep the destination
+ * it was dispatched for.
  */
 export async function sendTextToPeer(node: WechatConversationNode, text: string): Promise<boolean> {
-  const peer = node.peerId
-  if (!peer) {
-    // No peer yet (nothing inbound since boot): a rotation notice or an admin
-    // announcement goes nowhere. Recorded without bothering anyone, because
-    // there is literally nobody to bother.
+  const target = resolveOutboundTarget(node)
+  if (!target) {
+    // No peer anywhere (nothing inbound since boot and an empty allowlist): a
+    // rotation notice or an admin announcement goes nowhere. Recorded without
+    // bothering anyone, because there is literally nobody to bother.
     node.problems.report('outbound', new Error('还没有收到过消息，这条没地方发'), { notify: false })
     return false
   }
   const chunks = splitForWechat(text, node.config.maxMessageChars)
   if (chunks.length === 0) return false
 
-  const chat = node.chat
+  const chat = target.chat
   if (!chat) {
-    node.problems.report('outbound', new Error('网关服务不可用，消息发不出去'), { notify: false })
+    // The target platform's service is not mounted. Say which one: "网关服务不可用"
+    // alone cannot be acted on when the profile has two of them.
+    node.problems.report('outbound', new Error(`${platformLabel(target.platform)}网关服务不可用，消息发不出去`), {
+      notify: false,
+      detail: `platform=${target.platform}`,
+    })
     return false
   }
+  const peer = target.peerId
 
   let delivered = true
   try {
@@ -373,7 +422,7 @@ export async function sendTextToPeer(node: WechatConversationNode, text: string)
         // able to find out why — silence here is indistinguishable from being
         // ignored.
         node.problems.report('outbound', new Error(result.error ?? 'sendText returned success=false'), {
-          detail: `chunk=${i + 1}/${chunks.length}`,
+          detail: `platform=${target.platform} chunk=${i + 1}/${chunks.length}`,
         })
         delivered = false
         break
@@ -502,11 +551,11 @@ export function attachSessionOutbound(node: WechatConversationNode): () => void 
   }
 
   const onEvent = (session: Session, event: SessionEvent): void => {
-    // Only ever bridge WeChat sessions: the host process runs the Web GUI
-    // against the same SessionStore, and without this guard a web session's
-    // events (matching an accidentally-web activeSessionId) would be pushed
-    // to the WeChat peer.
-    if (!String(session.id).startsWith('wechat-')) return
+    // Only ever bridge this platform's sessions: the host process runs the Web GUI
+    // against the same SessionStore (and the other platform's profile shares it
+    // too), and without this guard a web session's events would be pushed to the
+    // chat peer.
+    if (!node.isOwnSessionId(session.id)) return
     if (event.type === 'turn/end') retireIfAbandoned(session)
     if (!isActive(session)) {
       // An answer produced after the conversation moved on has nowhere to go.
@@ -519,6 +568,9 @@ export function attachSessionOutbound(node: WechatConversationNode): () => void 
           detail: `session=${String(session.id)}`,
         })
       }
+      // The turn this session was running is over, so its outbound target must
+      // leave the queue even though nothing is being delivered for it any more.
+      if (event.type === 'turn/end') node.endTurnTarget()
       return
     }
     const state = digestState.get(session.id) ?? { startedTurns: new Set<number>(), heartbeating: false, sawText: false }
@@ -598,6 +650,11 @@ export function attachSessionOutbound(node: WechatConversationNode): () => void 
           detail: `session=${String(session.id)} turn=${String(event.data.turn ?? '?')}`,
         })
       }
+      // LAST, and deliberately after every line above: those lines are this
+      // turn's own messages and must keep its target. Dequeueing first would hand
+      // them to whatever message arrived from the other platform meanwhile — the
+      // exact misdelivery the queue exists to prevent.
+      node.endTurnTarget()
       return
     }
   }
@@ -663,7 +720,13 @@ export function sanitizeAssistantText(text: string): { text: string; echoed: boo
 }
 
 /** Prefixes of every fence the bridge itself puts into a conversation. */
-const FENCE_PREFIXES = ['<<<微信用户消息', '<<<关于主人的长期记忆', '<<<会话交接摘要', '<<<长期记忆结束']
+const FENCE_PREFIXES = [
+  // 「<<<微信用户消息」/「<<<QQ用户消息」——两种都在，两个平台各自一条渠道。
+  ...USER_MESSAGE_OPEN_ANY.map((open) => open.replace(/>>>$/, '')),
+  '<<<关于主人的长期记忆',
+  '<<<会话交接摘要',
+  '<<<长期记忆结束',
+]
 
 /**
  * Index of the first fence marker that is NOT inside a ``` block, or -1.

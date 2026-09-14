@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { describeError, directRequest } from './net.ts'
 import type { Context } from '@deepseek-ai/cordis'
-import { chatService, type PlatformId } from '../platform/index.ts'
+import { chatService, platformNamespace, type PlatformId } from '../platform/index.ts'
 
 /** Persisted morning-push configuration. */
 export interface MorningConfig {
@@ -176,10 +176,13 @@ export class MorningService {
   private timer: ReturnType<typeof setTimeout> | undefined
   private loaded = false
 
-  constructor(ctx: Context, opts: { file?: string; targets: () => string[]; onProblem?: (kind: string, error: unknown) => void; platform?: PlatformId }) {
+  constructor(ctx: Context, opts: { file?: string; targets: () => string[]; onProblem?: (kind: string, error: unknown, detail?: string) => void; platform?: PlatformId }) {
     this.ctx = ctx
     this.platform = opts.platform ?? 'wechat'
-    this.file = opts.file ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'wechat-morning.json')
+    this.file = opts.file ?? join(
+      process.env.DSH_HOME ?? join(homedir(), '.dsh'),
+      `${platformNamespace(this.platform)}morning.json`,
+    )
     this.targets = opts.targets
     this.onProblem = opts.onProblem
   }
@@ -188,7 +191,7 @@ export class MorningService {
    * Where a swallowed failure goes so it leaves a trace the owner can read.
    * Optional: the service must work (and stay silent-but-logged) without it.
    */
-  private readonly onProblem?: (kind: string, error: unknown) => void
+  private readonly onProblem?: (kind: string, error: unknown, detail?: string) => void
 
   /** Load persisted config and arm the scheduler. */
   async start(): Promise<void> {
@@ -243,8 +246,22 @@ export class MorningService {
         ...(typeof parsed.lon === 'number' ? { lon: parsed.lon } : {}),
         ...(typeof parsed.place === 'string' ? { place: parsed.place } : {}),
       }
-    } catch {
-      this.config = { ...DEFAULT_CONFIG }
+    } catch (error) {
+      // 文件不存在是**正常**的首次运行：保持默认值，什么都不用记。
+      if ((error as { code?: string }).code === 'ENOENT') {
+        this.config = { ...DEFAULT_CONFIG }
+        return
+      }
+      // 读不出来 ≠ 没配过。这里曾经静默 `this.config = {...DEFAULT_CONFIG}`（enabled
+      // 变 false），于是一次半写坏的文件就把功能永久关掉，且不留任何痕迹；用户只会
+      // 觉得推送"某天起自己消失了"。保持旧值 + 记一笔，和 reminders.ts 里同场景的
+      // 处置保持一致。
+      this.onProblem?.('morning/load', error, `file=${this.file}`)
+      this.ctx.logger?.warn?.(
+        '[dsh-chatnode-wechat] morning config unreadable (%s): %s',
+        this.file,
+        error instanceof Error ? error.message : String(error),
+      )
     }
   }
 
@@ -311,13 +328,23 @@ export class MorningService {
   /** Deliver today's greeting to every target peer (best-effort). */
   private async fire(): Promise<void> {
     const chat = chatService(this.ctx, this.platform)
-    if (!chat) return
+    if (!chat) {
+      // 网关不在（节点挂上了、平台服务却没起来）：这条推送连一次都没尝试过。
+      // 从前这里是裸 `return`，于是"功能关了"和"网关死了"在数据上完全一样。
+      this.onProblem?.('morning/gateway', new Error(`平台 ${this.platform} 的网关不在，今日问候未发送`))
+      return
+    }
     const text = await this.pushNow()
     for (const to of this.targets()) {
       try {
-        await chat.sendText(to, text)
+        const result = await chat.sendText(to, text)
+        // SendResult 里的 success=false 也是失败：从前它被直接丢弃，于是限流、
+        // 会话过期、QQ 主动消息被拒……全都无声。
+        if (!result.success) {
+          this.onProblem?.('morning/send', new Error(result.error ?? 'sendText 返回失败'), `to=${to}`)
+        }
       } catch (error) {
-        this.ctx.logger?.warn?.('[dsh-chatnode-wechat] morning push failed to %s: %s', to, error instanceof Error ? error.message : String(error))
+        this.onProblem?.('morning/send', error, `to=${to}`)
       }
     }
   }

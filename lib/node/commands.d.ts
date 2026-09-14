@@ -27,6 +27,6 @@ export declare function routeCommand(node: WechatConversationNode, text: string)
  * when the message was consumed by a picker.
  */
 export declare function routePickerReply(node: WechatConversationNode, text: string): Promise<boolean>;
-/** Default session id prefix for /new-created sessions. */
+/** Default session id prefix for /new-created sessions — this platform's. */
 export declare function newSessionId(node: WechatConversationNode): SessionId;
 //# sourceMappingURL=commands.d.ts.map

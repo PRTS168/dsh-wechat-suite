@@ -18,7 +18,7 @@ import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
-import { chatService, type PlatformId } from '../platform/index.ts'
+import { chatService, platformNamespace, type PlatformId } from '../platform/index.ts'
 
 /** One persisted reminder. */
 export interface Reminder {
@@ -50,15 +50,32 @@ export class ReminderStore {
   /** Whether the last persist reached the disk. */
   private lastSaveOk = true
 
-  constructor(ctx: Context, file?: string, onProblem?: (kind: string, error: unknown, detail?: string) => void, platform: PlatformId = 'wechat') {
+  constructor(
+    ctx: Context,
+    file?: string,
+    onProblem?: (kind: string, error: unknown, detail?: string) => void,
+    platform: PlatformId = 'wechat',
+    /**
+     * Which platform a stored peer belongs to. A reminder is a proactive push:
+     * no turn is open, so there is no turn target to read, and the persisted
+     * record carries only a peer id. The node answers this from its per-platform
+     * allowlists; without it (single-platform profiles, standalone tests) the
+     * fixed `platform` above is the answer.
+     */
+    platformFor?: (peerId: string) => PlatformId,
+  ) {
     this.ctx = ctx
     this.platform = platform
-    this.file = file ?? defaultReminderFile()
+    this.platformFor = platformFor
+    this.file = file ?? defaultReminderFile(platform)
     this.onProblem = onProblem
   }
 
   /** Where a swallowed failure goes; optional so the store works standalone. */
   private readonly onProblem?: (kind: string, error: unknown, detail?: string) => void
+
+  /** Which platform a stored peer id belongs to (see the constructor). */
+  private readonly platformFor?: (peerId: string) => PlatformId
 
   /** Load persisted reminders and arm the scheduler. */
   async start(): Promise<void> {
@@ -246,13 +263,21 @@ export class ReminderStore {
     this.timer.unref?.()
   }
 
-  /** Push a reminder to its peer through the gateway (best-effort). */
+  /** Push a reminder to its peer through the right gateway (best-effort). */
   private async deliver(reminder: Reminder): Promise<void> {
-    const chat = chatService(this.ctx, this.platform)
+    // Deliver back to the channel the reminder was asked for. The record itself
+    // is untouched (its format is an existing on-disk contract); the platform is
+    // re-derived from who the peer is.
+    const platform = this.platformFor?.(reminder.peerId) ?? this.platform
+    const chat = chatService(this.ctx, platform)
     if (!chat) {
       // A reminder is a promise to the owner: a missing platform must leave the
       // same trace as any other delivery failure.
-      this.onProblem?.('reminders/deliver', new Error('网关服务不可用，提醒发不出去'), `reminder=#${reminder.id}`)
+      this.onProblem?.(
+        'reminders/deliver',
+        new Error('网关服务不可用，提醒发不出去'),
+        `reminder=#${reminder.id} platform=${platform}`,
+      )
       return
     }
     try {
@@ -270,7 +295,7 @@ export class ReminderStore {
   }
 }
 
-/** Default reminder file under $DSH_HOME (mirrors the media-dir default). */
-function defaultReminderFile(): string {
-  return join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'wechat-reminders.json')
+/** Default reminder file under $DSH_HOME (one per platform, like the media dir). */
+export function defaultReminderFile(platform: PlatformId = 'wechat'): string {
+  return join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), `${platformNamespace(platform)}reminders.json`)
 }

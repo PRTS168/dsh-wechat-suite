@@ -3,6 +3,51 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 的组织方式，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [v5.0] — 2026-09-15
+
+**大版本：QQ 接入为第二个平台 · 一个控制台管两边 · 管理台路径护栏。** 完整发行说明见 `releases/v5.0-release-notes.md`。
+
+### Added
+
+- **QQ 平台**（`src/qq/*`）：官方机器人 API v2 的单聊网关、AppID/AppSecret 鉴权与 access token 续期、
+  `user_openid` 白名单
+- **平台接缝**（`src/platform/index.ts`）：会话命名空间、围栏、每平台文件位置、能力差异集中在
+  **一处**推导 —— 节点里七处"这条会话是不是我的"不再各自硬编码 `'wechat-'`
+- **每平台独立的上下文**：`<platform>-memory/MEMORY.md`、`<platform>-problems.log`、
+  `<platform>-admin/queue|done`、`allowFromByPlatform`；**两条渠道绝不共用一段上下文**
+- **多平台管理台**：`--profiles wechat,qq` 在一个网址下服务多个 profile；所有 `/api/*` 接受
+  `?platform=`；新增 `/api/platforms`
+- 测试：`platform-isolation`（平台之间不会互相认领会话）、`qq-gateway`（线格式与鉴权）、
+  `user-fence`（两种围栏各自成对）、`admin-platform-guard`（真进程 + 真 HTTP 的管理台安全用例）
+
+### Fixed
+
+- **控制台用 profile 名当平台 id**，导致四个页面同时"数据都在、界面说没有"：会话列表恒为 0 段
+  （找 `web-*` 而非 `wechat-*`）、长期记忆显示"还没有"（找 `web-memory/`）、问题台账恒空、
+  以及控制台发出的命令桥**收不到**（写进 `web-admin/queue`）。现在平台 id 由每个 profile
+  自己的配置推出，与节点同一处规则
+- **管理台 `?platform=` 未校验**（`validPlatform()` 定义了却从未被调用）：可读 `profiles/` 之外
+  任意路径下的 `cordis.patch.yml`，也可经 `POST /api/config` 写入 —— 而桥是热重载，等于配置注入。
+  现在名单字符集校验 + 路径围栏 + 一处收口，未知平台一律 4xx
+- **字符串型数字被写成裸 YAML 数字**：`qqAppId: "1234567890"` 保存后变成 `qqAppId: 1234567890`，
+  下次启动被 schema 拒绝（`expected string but got …`），而保存当时看起来是成功的。
+  `scalarLine` 现在按字段 `kind` 判断是否加引号
+- **前端改动要重启才生效**：`admin/index.html` 改为每次请求读盘（此前启动时读进内存，
+  "改了没反应"与"改动无效"从外面看完全一样 —— 本项目反复踩过这个坑）
+- `--port 0` 时启动日志打印的是**请求端口**而非实际监听端口，把读者引向一个不可能工作的 URL
+
+### Changed
+
+- `platforms` 配置键语义收敛为"这个 profile 挂哪个平台"（恒一项）；`--profiles` 里的名字必须是
+  `[A-Za-z0-9_-]+`，非法名**拒绝启动**（退出码 2）
+- 管理台页面缓存去掉；`no-store` 保持
+
+### Removed
+
+- **合并模式整块移除**：`src/node/merge.ts`、`merge-fences.ts`、`session-archive.ts` 及其测试与
+  `/api/merge*` 接口、管理台合并面板。理由见发行说明 §七：两条渠道各自独立是这一版的立场
+- 灯控不再有内置设备地址（承接 v4.1 的破坏性变更说明）
+
 ## [v4.1] — 2026-09-13
 
 **小版本：网关传输层加固 + 长回合进度提前。** 完整发行说明见 `releases/v4.1-release-notes.md`。
@@ -12,9 +57,9 @@
 - **传输层换路兜底**（`src/gateway/ilink-client.ts`）：传输层失败之后，下一次请求改走全新连接
   （`node:http(s)` 且 `agent: false`：不经连接池，也不受宿主全局 dispatcher 影响），成功一次即回
   常规路径；切换时在宿主日志写一行。刻意不做“立即重发”——iLink 发送不保证幂等，重发会让人收到
-  重复气泡。针对的故障形态：出站请求连续十几分钟全部失败、进程内重试全部无效、**只有重启
-  进程才能恢复** —— 指纹指向连接池状态失效，而不是断网（真正的断网，重启也修不好）；装了系统
-  代理或处于 TUN 模式的机器更容易撞上
+  重复气泡。起因：2026-09-13 连续 18 分钟发不出任何消息（台账 108 条 `[gateway]`、同一错误重复
+  96 次、**重启进程**才恢复），指纹是“每个请求同样失败 + 进程内重试全败 + 重启即好”，即连接池
+  状态中毒而非断网
 - **`capLongPollWindow()`**（`src/gateway/index.ts`）：服务端建议的 `longpolling_timeout_ms` 不再
   无上限顶掉配置值，取 `min(服务端建议, longPollTimeoutMs)`，并把两个数字都写进日志
 - **`scheduleDigests()`**（`src/node/outbound.ts`）：进度排程抽成纯函数并显式返回取消函数；

@@ -558,8 +558,9 @@ test('an echoed user turn never reaches WeChat', async () => {
     step: 1,
     message: createAssistantMessage({
       // The shape seen in production: the real answer, then the model writing
-      // the owner's next message and answering it.
-      content: [{ type: 'text', text: '记下了，主邮箱 a@b.com\n\nuser<<<微信用户消息>>>\n先放着\n<<<微信用户消息结束｜发送于 2026-09-13 14:15>>>\n\n好' }],
+      // the owner's next message and answering it. Wording and timestamp are
+      // synthetic.
+      content: [{ type: 'text', text: '记下了，主邮箱 a@b.com\n\nuser<<<微信用户消息>>>\n先放着\n<<<微信用户消息结束｜发送于 2026-01-01 09:00>>>\n\n好' }],
       provider: 'test',
       model: 'test-model',
     }),

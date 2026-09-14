@@ -21,7 +21,8 @@
  *
  * @module @dsh-cowork/chatnode-wechat/node/problems
  */
-/** Append-only problem log (one line per occurrence). */
+import { type PlatformId } from '../platform/index.ts';
+/** Append-only problem log (the historical WeChat name; QQ gets `qq-problems.log`). */
 export declare const PROBLEM_FILE = "wechat-problems.log";
 /** Rotate once the log passes this size; one previous file is kept. */
 export declare const PROBLEM_LOG_LIMIT_BYTES: number;
@@ -29,8 +30,8 @@ export declare const PROBLEM_LOG_LIMIT_BYTES: number;
 export declare const PROBLEM_MEMORY_LIMIT = 50;
 /** How many occurrences of one signature the memory keeps counting. */
 export declare const PROBLEM_OCCURRENCE_CAP = 9999;
-/** Default location of the problem log. */
-export declare function defaultProblemFile(): string;
+/** Default location of the problem log — one ledger per platform. */
+export declare function defaultProblemFile(platform?: PlatformId): string;
 /** One distinct problem, with how often and how recently it fired. */
 export interface ProblemRecord {
     /** Stable category, e.g. `inbound/media`, `model`, `memory`, `gateway`. */

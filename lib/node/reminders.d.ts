@@ -43,9 +43,19 @@ export declare class ReminderStore {
     private unreadable;
     /** Whether the last persist reached the disk. */
     private lastSaveOk;
-    constructor(ctx: Context, file?: string, onProblem?: (kind: string, error: unknown, detail?: string) => void, platform?: PlatformId);
+    constructor(ctx: Context, file?: string, onProblem?: (kind: string, error: unknown, detail?: string) => void, platform?: PlatformId, 
+    /**
+     * Which platform a stored peer belongs to. A reminder is a proactive push:
+     * no turn is open, so there is no turn target to read, and the persisted
+     * record carries only a peer id. The node answers this from its per-platform
+     * allowlists; without it (single-platform profiles, standalone tests) the
+     * fixed `platform` above is the answer.
+     */
+    platformFor?: (peerId: string) => PlatformId);
     /** Where a swallowed failure goes; optional so the store works standalone. */
     private readonly onProblem?;
+    /** Which platform a stored peer id belongs to (see the constructor). */
+    private readonly platformFor?;
     /** Load persisted reminders and arm the scheduler. */
     start(): Promise<void>;
     /** Stop the scheduler (called on plugin dispose). */
@@ -79,7 +89,9 @@ export declare class ReminderStore {
     private save;
     /** (Re)arm a timer for the nearest future reminder; deliver anything due. */
     private arm;
-    /** Push a reminder to its peer through the gateway (best-effort). */
+    /** Push a reminder to its peer through the right gateway (best-effort). */
     private deliver;
 }
+/** Default reminder file under $DSH_HOME (one per platform, like the media dir). */
+export declare function defaultReminderFile(platform?: PlatformId): string;
 //# sourceMappingURL=reminders.d.ts.map

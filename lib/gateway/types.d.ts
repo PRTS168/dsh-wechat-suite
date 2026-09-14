@@ -127,6 +127,14 @@ export interface InboundMessage {
     item_list?: WireItem[];
     [key: string]: unknown;
 }
+/**
+ * 网关连接状态。
+ *
+ * 两个平台共用同一条状态轴：节点只把它当字符串转述给 `/status` 与台账，平台各说各的
+ * 只会让 `/status` 需要分支。定义放在这一层（而不是某个平台里），正因为它属于平台之间的
+ * 契约。
+ */
+export type GatewayStatus = 'idle' | 'starting' | 'connected' | 'reconnecting' | 'paused' | 'error';
 /** getUpdates response envelope. */
 export interface GetUpdatesResponse {
     ret?: number;

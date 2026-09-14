@@ -34,7 +34,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { createHash, randomBytes } from 'node:crypto'
 import { copyFileSync, existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, renameSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, dirname, basename } from 'node:path'
+import { join, dirname, basename, resolve, sep } from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 
@@ -47,6 +47,7 @@ import {
   applyPatchConfig,
 } from '../src/node/patch-config.ts'
 import { pruneBackups } from '../src/node/memory.ts'
+import { isPlatformId, platformNamespace, type PlatformId } from '../src/platform/index.ts'
 
 // ---------------------------------------------------------------------------
 // Paths and token
@@ -65,8 +66,152 @@ function argValue(flag: string): string | undefined {
 }
 
 const PORT = Number(argValue('--port') ?? process.env.WECHAT_ADMIN_PORT ?? 8790)
-const PROFILE = argValue('--profile') ?? process.env.WECHAT_ADMIN_PROFILE ?? 'web'
-const PATCH = argValue('--patch') ?? join(dshHome(), 'profiles', PROFILE, 'cordis.patch.yml')
+
+/**
+ * Platforms this console serves. Multi-platform mode (`--profiles wechat,qq`)
+ * hosts both bridges under ONE url; the legacy single-platform mode
+ * (`--profile <p>`) and the historical default (`web`) keep working unchanged.
+ *
+ * Only ids made of `[A-Za-z0-9_-]` are accepted. That is not cosmetic: a profile
+ * name reaches `patchFor()` and becomes a filesystem path, so a name carrying `/`,
+ * `\` or `..` would let a caller address files outside `profiles/`. Rejecting here
+ * means the rest of this file can treat a profile name as an id rather than as
+ * user input. (Not an allowlist of `wechat|qq`: the historical `web` profile and
+ * any hand-made test profile must keep working.)
+ */
+const PROFILE_ID = /^[A-Za-z0-9_-]+$/
+
+function parseProfiles(): string[] {
+  const multi = argValue('--profiles')
+  const raw = multi
+    ? multi.split(',').map((s) => s.trim()).filter(Boolean)
+    : [argValue('--profile') ?? process.env.WECHAT_ADMIN_PROFILE ?? 'web']
+  const bad = raw.filter((p) => !PROFILE_ID.test(p))
+  if (bad.length > 0) {
+    console.error(`[x] 非法的 profile 名：${bad.join('、')}（只允许字母、数字、下划线、连字符）`)
+    process.exit(2)
+  }
+  return raw
+}
+
+const PROFILES = parseProfiles()
+const MAIN_PROFILE = PROFILES[0] ?? 'web'
+const PATCH = argValue('--patch') ?? patchFor(MAIN_PROFILE)
+
+/**
+ * The patch file of one profile, with the path kept inside `profiles/`.
+ *
+ * Two independent fences, because this function is the one place where a profile
+ * name turns into a filesystem path:
+ *   1. the name must be on the list this console was started with;
+ *   2. the resolved path must still be under the profiles root.
+ * The second one is what actually stops `..` / absolute paths; the first is what
+ * stops "read a profile the operator never asked me to serve".
+ */
+function patchFor(p: string): string {
+  if (!validPlatform(p)) throw new Error(`未知 platform：${p}`)
+  const root = resolve(dshHome(), 'profiles')
+  const target = resolve(root, p, 'cordis.patch.yml')
+  if (target !== join(root, p, 'cordis.patch.yml') || !target.startsWith(root + sep)) {
+    throw new Error(`platform 名越界：${p}`)
+  }
+  return target
+}
+
+function platformLabel(p: string): string {
+  if (p === 'wechat') return '微信'
+  if (p === 'qq') return 'QQ'
+  return p
+}
+
+/** Whether a request-named platform is one this console actually serves. */
+function validPlatform(p: string): boolean {
+  return PROFILES.includes(p) && PROFILE_ID.test(p)
+}
+
+/**
+ * The platform an API call targets: query, then body, then the main profile.
+ *
+ * Validated HERE rather than at each of the seventeen call sites: a name that is
+ * not one of this console's profiles is a client error, and it must never reach a
+ * path builder. (An earlier version had `validPlatform()` defined and never
+ * called, so `?platform=..` reached `patchFor()` and walked out of `profiles/`.)
+ * Throwing is what turns that into a 4xx at the request boundary.
+ */
+function platformFrom(url: URL, body?: { platform?: string } | Record<string, unknown>): string {
+  const b = body as { platform?: string } | undefined
+  const asked = url.searchParams.get('platform') ?? b?.platform
+  if (asked === undefined || asked === null || asked === '') return MAIN_PROFILE
+  if (typeof asked !== 'string' || !validPlatform(asked)) {
+    throw new PlatformError(String(asked))
+  }
+  return asked
+}
+
+/** A request named a platform this console does not serve. */
+class PlatformError extends Error {
+  readonly asked: string
+
+  // Written out long-hand on purpose: Node runs this file with type-stripping
+  // only, which rejects a constructor parameter property
+  // (`constructor(readonly asked: string)`) with ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX
+  // — and that failure happens at import time, so the whole console would fail to
+  // start rather than merely misbehave.
+  constructor(asked: string) {
+    super(`未知 platform：${asked}（本管理台只服务 ${PROFILES.join('、')}）`)
+    this.name = 'PlatformError'
+    this.asked = asked
+  }
+}
+
+/**
+ * The PLATFORM id a profile serves — not its profile name.
+ *
+ * These two are not the same thing and the difference is not cosmetic. A profile
+ * may be called `web` while its config says nothing about `platform`, in which case
+ * the bridge mounts WeChat and names everything it owns `wechat-…`:
+ *
+ *     sessions/…/  wechat-mtzfrlge-4c9mwq      ← the owner's real conversation
+ *     wechat-memory/MEMORY.md                  ← the owner's long-term memory
+ *     wechat-problems.log                      ← the problem ledger
+ *     wechat-admin/queue|done                  ← the command queue
+ *
+ * The console used the PROFILE NAME for all four, so a `web` profile looked for
+ * `web-*` and found nothing: every session list, the memory page and the problem
+ * page rendered empty while the data sat on disk the whole time. Read the platform
+ * from the profile's own patch, exactly as the node does (`platform` key, default
+ * WeChat), so the two cannot drift apart.
+ *
+ * Resolved once per profile at startup: a profile's platform is a restart-level
+ * fact — the node reads it once too, and a mid-run change would need a bridge
+ * restart anyway.
+ */
+const PLATFORM_OF = new Map<string, PlatformId>(
+  PROFILES.map((p) => [p, resolvePlatform(p)]),
+)
+
+function resolvePlatform(profileName: string): PlatformId {
+  try {
+    // `parsePatch().current[key].value` is the flat view of the patch — the same
+    // key the node reads, so the two cannot disagree.
+    const parsed = parsePatch(readFileSync(patchFor(profileName), 'utf8'))
+    const value = parsed.current.platform?.value
+    if (isPlatformId(value)) return value
+  } catch {
+    // No patch yet (or unreadable): fall through to the name.
+  }
+  // A profile called `wechat` or `qq` is its own platform; anything else (the
+  // historical `web`) serves WeChat, which is what the node defaults to.
+  return isPlatformId(profileName) ? profileName : 'wechat'
+}
+
+function platformIdFor(p: string): PlatformId {
+  return PLATFORM_OF.get(p) ?? (isPlatformId(p) ? p : 'wechat')
+}
+
+function prefixFor(p: string): string {
+  return platformNamespace(platformIdFor(p))
+}
 
 function token(): string {
   if (process.env.WECHAT_ADMIN_TOKEN) return process.env.WECHAT_ADMIN_TOKEN
@@ -147,8 +292,8 @@ const SCHEMES: Scheme[] = [
   },
 ]
 
-async function currentScheme(): Promise<string> {
-  const { patch } = await readPatchFile(PATCH)
+async function currentScheme(p: string): Promise<string> {
+  const { patch } = await readPatchFile(patchFor(p))
   const raw = patch.values.contextPolicy
   if (!raw) return 'manual'
   try {
@@ -203,7 +348,7 @@ interface Conversation {
   transcriptPath: string
 }
 
-function listConversations(): Conversation[] {
+function listConversations(prefix: string): Conversation[] {
   const root = join(dshHome(), 'sessions')
   const out: Conversation[] = []
   let dirs: string[] = []
@@ -213,7 +358,7 @@ function listConversations(): Conversation[] {
     let sessions: string[] = []
     try { sessions = readdirSync(cwdPath) } catch { continue }
     for (const id of sessions) {
-      if (!id.startsWith('wechat-')) continue
+      if (!id.startsWith(prefix)) continue
       const dir = join(cwdPath, id)
       const candidates = ['session.jsonl.zstd', 'session.v3.jsonl.zstd']
       const file = candidates.map((n) => join(dir, n)).find((p) => existsSync(p))
@@ -254,8 +399,8 @@ function listConversations(): Conversation[] {
   return out.sort((a, b) => (a.lastActivity < b.lastActivity ? 1 : -1))
 }
 
-function transcript(id: string, limit: number): { role: string; text: string }[] {
-  const found = listConversations().find((c) => c.id === id)
+function transcript(id: string, limit: number, prefix: string): { role: string; text: string }[] {
+  const found = listConversations(prefix).find((c) => c.id === id)
   if (!found) return []
   const lines = readZstdFrames(found.transcriptPath).split('\n').filter(Boolean)
   const messages: { role: string; text: string }[] = []
@@ -283,19 +428,20 @@ function transcript(id: string, limit: number): { role: string; text: string }[]
 // Environment self-check (what the bridge will see at its next start)
 // ---------------------------------------------------------------------------
 
-async function environment(): Promise<Record<string, unknown>> {
-  const { exists, patch } = await readPatchFile(PATCH)
-  const presetDir = join(dshHome(), '.agent-presets', patch.values.agentPreset || 'wechat')
+async function environment(p: string): Promise<Record<string, unknown>> {
+  const { exists, patch } = await readPatchFile(patchFor(p))
+  const presetDir = join(dshHome(), '.agent-presets', patch.values.agentPreset || p)
   let credentials = ''
   try { credentials = readFileSync(join(dshHome(), '.credentials.yaml'), 'utf8') } catch { /* none */ }
   return {
     dshHome: dshHome(),
-    profile: PROFILE,
-    patchFile: PATCH,
+    profile: p,
+    patchFile: patchFor(p),
     patchExists: exists,
-    preset: patch.values.agentPreset || 'wechat',
+    preset: patch.values.agentPreset || p,
     presetExists: existsSync(join(presetDir, 'agent.cordis.yml')),
     weixinCredentials: /WEIXIN_BOT_TOKEN/.test(credentials),
+    platformCredential: p === 'qq' ? Boolean(patch.values.qqAppId && patch.values.qqClientSecret) : /WEIXIN_BOT_TOKEN/.test(credentials),
     // Name-agnostic on purpose: the credential file belongs to the operator and
     // its key names differ per setup. A SiliconFlow key is recognised by either a
     // siliconflow-ish name or the `sk-` value shape, so the console tells the
@@ -309,12 +455,17 @@ async function environment(): Promise<Record<string, unknown>> {
 // Control queue (the executing half lives in src/node/admin-control.ts)
 // ---------------------------------------------------------------------------
 
-function queueDir(): string {
-  return join(dshHome(), 'wechat-admin', 'queue')
+// Control queue (the executing half lives in src/node/admin-control.ts).
+// Keyed by PLATFORM id: the node looks in `${platform}-admin/…`, so a `web`
+// profile that serves WeChat must read and write `wechat-admin/…`. Keyed by the
+// profile name the console queued commands into a directory the bridge never
+// polled — the request looked accepted and nothing ever happened.
+function queueDir(p: string): string {
+  return join(dshHome(), `${platformIdFor(p)}-admin`, 'queue')
 }
 
-function doneDir(): string {
-  return join(dshHome(), 'wechat-admin', 'done')
+function doneDir(p: string): string {
+  return join(dshHome(), `${platformIdFor(p)}-admin`, 'done')
 }
 
 function trashDir(): string {
@@ -322,24 +473,24 @@ function trashDir(): string {
 }
 
 /** Drop one command for the bridge to execute on its next poll (≤2s). */
-function enqueue(command: Record<string, unknown>): string {
-  mkdirSync(queueDir(), { recursive: true })
+function enqueue(command: Record<string, unknown>, p: string): string {
+  mkdirSync(queueDir(p), { recursive: true })
   const name = `${Date.now()}-${randomBytes(3).toString('hex')}.json`
-  writeFileSync(join(queueDir(), name), JSON.stringify(command, null, 2))
+  writeFileSync(join(queueDir(p), name), JSON.stringify(command, null, 2))
   return name
 }
 
 /** Recent command outcomes, newest first. */
-function recentReports(limit = 10): unknown[] {
+function recentReports(p: string, limit = 10): unknown[] {
   try {
-    return readdirSync(doneDir())
+    return readdirSync(doneDir(p))
       .filter((name) => name.endsWith('.result.json'))
       .sort()
       .slice(-limit)
       .reverse()
       .map((name) => {
         try {
-          return JSON.parse(readFileSync(join(doneDir(), name), 'utf8')) as unknown
+          return JSON.parse(readFileSync(join(doneDir(p), name), 'utf8')) as unknown
         } catch {
           return { file: name, unparsable: true }
         }
@@ -360,7 +511,11 @@ function recentReports(limit = 10): unknown[] {
  * log no longer exists.
  */
 function trashSession(sessionId: string): { ok: boolean; detail: string; trash?: string; alreadyGone?: boolean } {
-  if (!sessionId.startsWith('wechat-')) return { ok: false, detail: '只允许操作微信会话（wechat- 前缀）' }
+  // Ownership is decided by the sessions this console actually serves — their
+  // PLATFORM prefixes, not their profile names. Using `${pp}-` here refused the
+  // owner's own `wechat-…` session whenever the profile was called something else
+  // (`web`), i.e. it made every legitimate session look foreign.
+  if (!PROFILES.some((pp) => sessionId.startsWith(prefixFor(pp)))) return { ok: false, detail: '只允许操作本管理台托管的会话（' + PROFILES.map(prefixFor).join('、') + ' 前缀）' }
   const sessionsRoot = join(dshHome(), 'sessions')
   let found: string | undefined
   try {
@@ -436,8 +591,6 @@ function authorized(req: IncomingMessage, url: URL, mutating: boolean): boolean 
   return true
 }
 
-const PAGE = readFileSync(join(HERE, 'index.html'), 'utf8')
-
 /**
  * The page with this run's token already embedded.
  *
@@ -446,9 +599,18 @@ const PAGE = readFileSync(join(HERE, 'index.html'), 'utf8')
  * DNS-rebinding page (an attacker domain resolving to 127.0.0.1) is refused —
  * and every `/api/*` route still demands the token, which a cross-origin page
  * cannot read anyway. Anyone who could abuse this can already read the files.
+ *
+ * Read from disk on EVERY request. It used to be read once at startup, which
+ * meant an edited `index.html` did not appear until the console was restarted —
+ * indistinguishable, from the reader's side, from "the change did nothing".
+ * Repeatedly, and it is the exact bug this project keeps rediscovering: the page
+ * is ~56 KB, so re-reading costs nothing worth caching.
  */
 function pageWithToken(): string {
-  return PAGE.replace('__ADMIN_TOKEN__', TOKEN)
+  // Anchored to the quoted literal: the unquoted words appear in a comment
+  // explaining this very substitution, and a plain string replace would rewrite
+  // the comment and leave the assignment holding the placeholder.
+  return readFileSync(join(HERE, 'index.html'), 'utf8').replace("'__ADMIN_TOKEN__'", JSON.stringify(TOKEN))
 }
 
 /** Whether the request addressed a loopback authority (rebinding fence). */
@@ -462,15 +624,19 @@ function loopbackHost(req: IncomingMessage): boolean {
 // ---------------------------------------------------------------------------
 
 /** `$DSH_HOME/wechat-problems.log` — every failure the bridge swallowed. */
-function problemLogFile(): string {
+function problemLogFile(p: string): string {
   // The bridge reads problemFile from config, so a configured path must win over
   // the default here too: otherwise the console reports an empty log forever.
-  return configuredPath('problemFile', join(dshHome(), 'wechat-problems.log'))
+  // The default is keyed by PLATFORM id — see PLATFORM_OF above.
+  return configuredPath('problemFile', join(dshHome(), `${platformIdFor(p)}-problems.log`), p)
 }
 
 /** `$DSH_HOME/wechat-memory/MEMORY.md` — the long-term facts file. */
-function memoryFile(): string {
-  return configuredPath('memoryFile', join(dshHome(), 'wechat-memory', 'MEMORY.md'))
+function memoryFile(p: string): string {
+  // Keyed by PLATFORM id, not the profile name: the bridge writes
+  // `wechat-memory/MEMORY.md` for a `web` profile that serves WeChat, so asking
+  // for `web-memory/…` reported "no memory yet" over a file full of facts.
+  return configuredPath('memoryFile', join(dshHome(), `${platformIdFor(p)}-memory`, 'MEMORY.md'), p)
 }
 
 /**
@@ -481,9 +647,9 @@ function memoryFile(): string {
  * an operator set either one, the console pointed at an empty file and
  * cheerfully reported "no problems" / "no memories yet".
  */
-function configuredPath(key: string, fallback: string): string {
+function configuredPath(key: string, fallback: string, p: string): string {
   try {
-    const parsed = parsePatch(readFileSync(PATCH, 'utf8'))
+    const parsed = parsePatch(readFileSync(patchFor(p), 'utf8'))
     const value = parsed.current[key]?.value
     if (typeof value !== 'string' || !value.trim()) return fallback
     // `$DSH_HOME/...` is the documented placeholder form; expand it.
@@ -634,13 +800,14 @@ interface HealthCheck {
  * failure carries the plain-language fix, because knowing that `allowFrom` is
  * empty is useless without knowing where to type the WeChat id.
  */
-async function health(): Promise<{ ok: boolean; summary: string; checks: HealthCheck[] }> {
-  const { exists, patch, unreadable } = await readPatchFile(PATCH)
+async function health(p: string): Promise<{ ok: boolean; summary: string; checks: HealthCheck[] }> {
+  const { exists, patch, unreadable } = await readPatchFile(patchFor(p))
   const allowFrom = patch.allowFrom
-  const preset = patch.values.agentPreset || 'wechat'
+  const preset = patch.values.agentPreset || p
   const presetFile = join(dshHome(), '.agent-presets', preset, 'agent.cordis.yml')
+  const qqCred = p === 'qq' ? Boolean(patch.values.qqAppId && patch.values.qqClientSecret) : false
   const credentials = readCorpusSafe(['WEIXIN_BOT_TOKEN', 'WEIXIN_BOT_ID', 'WEIXIN_ACCOUNT_ID'])
-  const problems = tailLines(problemLogFile(), 400)
+  const problems = tailLines(problemLogFile(p), 400)
   // The ledger writes a second line when it told the owner about a problem
   // ("已告知主人：…"). Counting those doubles every number and can surface a
   // notice as if it were the failure itself.
@@ -649,14 +816,14 @@ async function health(): Promise<{ ok: boolean; summary: string; checks: HealthC
     const at = Date.parse(line.slice(0, 24))
     return Number.isFinite(at) && Date.now() - at < 24 * 60 * 60 * 1000
   })
-  const memory = readMemoryText()
+  const memory = readMemoryText(p)
 
   const checks: HealthCheck[] = []
   checks.push({
     id: 'patch',
     label: '配置文件',
     state: unreadable ? 'bad' : exists ? 'ok' : 'warn',
-    detail: unreadable ? `读不出来：${unreadable}` : exists ? PATCH : '还没有这个文件（第一次保存时会创建）',
+    detail: unreadable ? `读不出来：${unreadable}` : exists ? patchFor(p) : '还没有这个文件（第一次保存时会创建）',
     ...(unreadable ? { fix: '检查文件权限；读不出来时保存会被拒绝，以免覆盖其它配置' } : {}),
   })
   checks.push({
@@ -673,7 +840,13 @@ async function health(): Promise<{ ok: boolean; summary: string; checks: HealthC
     detail: existsSync(presetFile) ? `${preset} · 已就位` : `${preset} · 找不到这个 preset`,
     ...(existsSync(presetFile) ? {} : { fix: `确认 $DSH_HOME/.agent-presets/${preset}/agent.cordis.yml 存在` }),
   })
-  checks.push({
+  checks.push(p === 'qq' ? {
+    id: 'platform-cred',
+    label: 'QQ 机器人凭据',
+    state: qqCred ? 'ok' : 'warn',
+    detail: qqCred ? '已配置 AppID 与 ClientSecret' : '没配 qqAppId / qqClientSecret',
+    ...(qqCred ? {} : { fix: '在下面的「谁能跟我说话」里填 QQ 机器人的 AppID 与 ClientSecret' }),
+  } : {
     id: 'weixin',
     label: '微信登录凭据',
     state: credentials.found.includes('WEIXIN_BOT_TOKEN') ? 'ok' : 'warn',
@@ -725,8 +898,8 @@ async function health(): Promise<{ ok: boolean; summary: string; checks: HealthC
   return { ok: bad.length === 0, summary, checks }
 }
 
-function readMemoryText(): { exists: boolean; text: string; facts: number; file: string } {
-  const file = memoryFile()
+function readMemoryText(p: string): { exists: boolean; text: string; facts: number; file: string } {
+  const file = memoryFile(p)
   let text = ''
   try {
     text = readFileSync(file, 'utf8')
@@ -737,9 +910,9 @@ function readMemoryText(): { exists: boolean; text: string; facts: number; file:
 }
 
 /** Patch backups, newest first (the admin page keeps only the last few). */
-function listBackups(): Array<{ name: string; path: string; at: string; bytes: number }> {
-  const dir = dirname(PATCH)
-  const prefix = `${basename(PATCH)}.bak-`
+function listBackups(patchPath: string): Array<{ name: string; path: string; at: string; bytes: number }> {
+  const dir = dirname(patchPath)
+  const prefix = `${basename(patchPath)}.bak-`
   try {
     const rows: Array<{ name: string; path: string; at: string; bytes: number }> = []
     for (const name of readdirSync(dir)) {
@@ -789,33 +962,46 @@ const server = createServer((req, res) => {
     }
 
     try {
+      if (url.pathname === '/api/platforms' && !mutating) {
+        const platforms = await Promise.all(PROFILES.map(async (p) => {
+          const { exists } = await readPatchFile(patchFor(p))
+          return { id: p, label: platformLabel(p), patchExists: exists }
+        }))
+        json(res, 200, { ok: true, platforms, active: MAIN_PROFILE })
+        return
+      }
+
       if (url.pathname === '/api/health' && !mutating) {
-        json(res, 200, { ok: true, ...(await health()) })
+        const p = platformFrom(url)
+        json(res, 200, { ...(await health(p)) })
         return
       }
 
       if (url.pathname === '/api/problems' && !mutating) {
+        const p = platformFrom(url)
         const limit = Math.min(Number(url.searchParams.get('limit') ?? 200) || 200, 1000)
-        const lines = tailLines(problemLogFile(), limit)
+        const lines = tailLines(problemLogFile(p), limit)
         json(res, 200, {
           ok: true,
-          file: problemLogFile(),
-          exists: lines.length > 0 || existsSync(problemLogFile()),
+          file: problemLogFile(p),
+          exists: lines.length > 0 || existsSync(problemLogFile(p)),
           lines,
-          rotated: existsSync(`${problemLogFile()}.1`),
+          rotated: existsSync(`${problemLogFile(p)}.1`),
         })
         return
       }
 
       if (url.pathname === '/api/memory' && !mutating) {
-        const memory = readMemoryText()
+        const p = platformFrom(url)
+        const memory = readMemoryText(p)
         json(res, 200, { ok: true, ...memory })
         return
       }
 
       if (url.pathname === '/api/models' && !mutating) {
+        const p = platformFrom(url)
         const catalog = readModelCatalog()
-        const { patch } = await readPatchFile(PATCH)
+        const { patch } = await readPatchFile(patchFor(p))
         json(res, 200, {
           ok: true,
           ...catalog,
@@ -825,14 +1011,16 @@ const server = createServer((req, res) => {
       }
 
       if (url.pathname === '/api/backups' && !mutating) {
-        json(res, 200, { ok: true, file: PATCH, backups: listBackups().slice(0, 20) })
+        const p = platformFrom(url)
+        json(res, 200, { ok: true, file: patchFor(p), backups: listBackups(patchFor(p)).slice(0, 20) })
         return
       }
 
       if (url.pathname === '/api/rollback' && mutating) {
         const body = (await readBody(req)) as { name?: string }
+        const p = platformFrom(url, body)
         const name = String(body.name ?? '')
-        const target = listBackups().find((entry) => entry.name === name)
+        const target = listBackups(patchFor(p)).find((entry) => entry.name === name)
         if (!target) {
           json(res, 400, { ok: false, error: `找不到这个备份：${name}` })
           return
@@ -844,24 +1032,25 @@ const server = createServer((req, res) => {
           json(res, 400, { ok: false, error: '拒绝：这个备份里的白名单是空的（恢复后桥起不来）' })
           return
         }        // Keep the current state recoverable before overwriting it.
-        const safety = `${PATCH}.bak-${Date.now()}`
+        const safety = `${patchFor(p)}.bak-${Date.now()}`
         try {
-          copyFileSync(PATCH, safety)
+          copyFileSync(patchFor(p), safety)
         } catch (error) {
           json(res, 500, { ok: false, error: `回滚前没能备份当前配置：${error instanceof Error ? error.message : String(error)}` })
           return
         }
-        writeFileSync(PATCH, content, 'utf8')
-        pruneBackups(PATCH, 5)
+        writeFileSync(patchFor(p), content, 'utf8')
+        pruneBackups(patchFor(p), 5)
         json(res, 200, { ok: true, restored: name, safety: basename(safety) })
         return
       }
 
       if (url.pathname === '/api/state' && !mutating) {
-        const { patch, unreadable } = await readPatchFile(PATCH)
+        const p = platformFrom(url)
+        const { patch, unreadable } = await readPatchFile(patchFor(p))
         json(res, 200, {
           ok: true,
-          environment: await environment(),
+          environment: await environment(p),
           fields: CONFIG_FIELDS,
           values: Object.fromEntries(CONFIG_FIELDS.filter((f) => f.secret).map((f) => [f.key, maskSecret(patch.values[f.key] ?? '')])),
           plainValues: {
@@ -875,14 +1064,15 @@ const server = createServer((req, res) => {
           // say so instead of showing an empty config that is not the truth.
           ...(unreadable ? { unreadable } : {}),
           schemes: SCHEMES,
-          activeScheme: await currentScheme(),
-          conversations: listConversations().slice(0, 50),
+          activeScheme: await currentScheme(p),
+          conversations: listConversations(prefixFor(p)).slice(0, 50),
         })
         return
       }
 
       if (url.pathname === '/api/config' && mutating) {
         const body = (await readBody(req)) as { updates?: Record<string, string | null> }
+        const p = platformFrom(url, body)
         const updates = body.updates ?? {}
         // A no-op save must not rewrite the patch: this profile runs with
         // `patchReload: live`, so every rewrite is a live plugin reload, and the
@@ -897,10 +1087,10 @@ const server = createServer((req, res) => {
             return
           }
         }
-        const before = await readPatchFile(PATCH)
+        const before = await readPatchFile(patchFor(p))
         let result
         try {
-          result = await applyPatchConfig(PATCH, updates)
+          result = await applyPatchConfig(patchFor(p), updates)
         } catch (error) {
           // A rejected value is the caller's mistake, not a server fault. This
           // guard exists because a bad number written into the patch makes the
@@ -908,7 +1098,7 @@ const server = createServer((req, res) => {
           json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) })
           return
         }
-        const after = await readPatchFile(PATCH)
+        const after = await readPatchFile(patchFor(p))
         // Refuse a state the bridge cannot boot from: the node throws on an
         // empty allowlist, and the profile then fails to load entirely.
         if (after.patch.allowFrom.length === 0) {
@@ -916,8 +1106,8 @@ const server = createServer((req, res) => {
           // back to, so undoing means removing what we just created — reading
           // `result.backup` blindly threw a TypeError instead and left the
           // profile sitting at `allowFrom: []`.
-          if (result.backup) writeFileSync(PATCH, readFileSync(result.backup, 'utf8'))
-          else if (!before.exists) rmSync(PATCH, { force: true })
+          if (result.backup) writeFileSync(patchFor(p), readFileSync(result.backup, 'utf8'))
+          else if (!before.exists) rmSync(patchFor(p), { force: true })
           json(res, 400, { ok: false, error: '已拒绝：白名单会变空（桥将无法启动），已撤销本次写入' })
           return
         }
@@ -926,18 +1116,20 @@ const server = createServer((req, res) => {
       }
 
       if (url.pathname === '/api/reveal' && !mutating) {
+        const p = platformFrom(url)
         const key = url.searchParams.get('key') ?? ''
         if (!KNOWN_KEYS.has(key) || !CONFIG_FIELDS.find((f) => f.key === key)?.secret) {
           json(res, 400, { ok: false, error: 'not a secret field' })
           return
         }
-        const { patch } = await readPatchFile(PATCH)
+        const { patch } = await readPatchFile(patchFor(p))
         json(res, 200, { ok: true, key, value: patch.values[key] ?? '' })
         return
       }
 
       if (url.pathname === '/api/scheme' && mutating) {
         const body = (await readBody(req)) as { scheme?: string; overrides?: SchemeKnobs }
+        const p = platformFrom(url, body)
         const scheme = SCHEMES.find((s) => s.id === body.scheme)
         if (!scheme) {
           json(res, 400, { ok: false, error: `unknown scheme: ${String(body.scheme)}` })
@@ -954,64 +1146,83 @@ const server = createServer((req, res) => {
           else if (typeof expected === 'number' && typeof value === 'number' && Number.isFinite(value)) overrides[key] = value
         }
         const policy = { scheme: scheme.id, ...scheme.knobs, ...overrides }
-        const result = await applyPatchConfig(PATCH, { contextPolicy: JSON.stringify(policy) })
+        const result = await applyPatchConfig(patchFor(p), { contextPolicy: JSON.stringify(policy) })
         json(res, 200, { ok: true, policy, backup: result.backup })
         return
       }
 
       if (url.pathname === '/api/conversations' && !mutating) {
-        json(res, 200, { ok: true, conversations: listConversations() })
+        const p = platformFrom(url)
+        json(res, 200, { ok: true, conversations: listConversations(prefixFor(p)) })
         return      }
 
       if (url.pathname === '/api/transcript' && !mutating) {
+        const p = platformFrom(url)
         const id = url.searchParams.get('id') ?? ''
         const limit = Math.min(Number(url.searchParams.get('limit') ?? 60) || 60, 400)
-        json(res, 200, { ok: true, id, messages: transcript(id, limit) })
+        json(res, 200, { ok: true, id, messages: transcript(id, limit, prefixFor(p)) })
         return
       }
 
       // ── session control: the host executes, this process only queues ───────
       if (url.pathname === '/api/session/new' && mutating) {
         const body = (await readBody(req)) as { prompt?: string; announce?: boolean }
+        const p = platformFrom(url, body)
         const name = enqueue({
           op: 'new-session',
           prompt: typeof body.prompt === 'string' ? body.prompt : '',
           announce: body.announce !== false,
-        })
+        }, p)
         json(res, 202, { ok: true, queued: name, note: '桥会在下一次轮询（≤2 秒）执行，稍后刷新会话列表' })
         return
       }
 
       if (url.pathname === '/api/session/forget' && mutating) {
         const body = (await readBody(req)) as { sessionId?: string }
+        const p = platformFrom(url, body)
         const sessionId = String(body.sessionId ?? '')
         const moved = trashSession(sessionId)
         if (!moved.ok) {
           json(res, 400, { ok: false, error: moved.detail })
           return
         }
-        const name = enqueue({ op: 'forget-session', sessionId })
+        const name = enqueue({ op: 'forget-session', sessionId }, p)
         json(res, 200, { ok: true, queued: name, trash: moved.trash, detail: moved.detail })
         return
       }
 
       if (url.pathname === '/api/session/box' && !mutating) {
-        json(res, 200, { ok: true, reports: recentReports(10) })
+        const p = platformFrom(url)
+        json(res, 200, { ok: true, reports: recentReports(p, 10) })
         return
       }
 
       json(res, 404, { ok: false, error: `no route ${req.method} ${url.pathname}` })
     } catch (error) {
-      json(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
+      // A request that named a platform this console does not serve is the
+      // caller's mistake: 400, not 500. Anything else reaching here is a real
+      // fault and keeps its 500.
+      const status = error instanceof PlatformError ? 400 : 500
+      json(res, status, { ok: false, error: error instanceof Error ? error.message : String(error) })
     }
   })()
 })
 
+/** The port actually bound — equal to PORT except when PORT is 0 (let the OS pick). */
+function boundPort(): number {
+  const address = server.address()
+  return typeof address === 'object' && address !== null ? address.port : PORT
+}
+
 server.listen(PORT, '127.0.0.1', () => {
   const fingerprint = createHash('sha256').update(PATCH).digest('hex').slice(0, 8)
-  console.log(`wechat-admin  http://127.0.0.1:${PORT}/`)
-  console.log(`  token url http://127.0.0.1:${PORT}/?token=${TOKEN}`)
-  console.log(`  profile   ${PROFILE}   (patch ${fingerprint})`)
-  console.log(`  patch     ${PATCH}`)
+  // The REAL port, not the requested one: `--port 0` is how a test (or a second
+  // console on a busy machine) asks for a free port, and printing "0" there would
+  // send the reader to a URL that cannot work.
+  const port = boundPort()
+  console.log(`bridge-admin  http://127.0.0.1:${port}/`)
+  console.log(`  token url http://127.0.0.1:${port}/?token=${TOKEN}`)
+  console.log(`  profiles   ${PROFILES.join(', ')}`)
   console.log(`  dsh home  ${dshHome()}`)
+  void fingerprint
 })

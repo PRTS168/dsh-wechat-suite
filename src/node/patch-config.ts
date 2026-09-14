@@ -29,7 +29,7 @@ export interface ConfigField {
   /** Secrets are masked in every API/CLI response. */
   secret?: boolean
   /** 'list' = a YAML sequence (allowFrom); 'number' = numeric scalar. */
-  kind?: 'string' | 'number' | 'list'
+  kind?: 'string' | 'number' | 'list' | 'boolean'
   default?: string
   placeholder?: string
   hint?: string
@@ -37,24 +37,39 @@ export interface ConfigField {
 
 /** All placeholders the bridge accepts, in write order. */
 export const CONFIG_FIELDS: ConfigField[] = [
-  { key: 'platform', label: '聊天平台', group: '必填', placeholder: 'wechat', hint: 'wechat = 微信（默认）；qq = QQ 官方机器人。换平台后请重启宿主。' },
-  { key: 'allowFrom', label: '微信白名单 ID', group: '必填', kind: 'list', placeholder: 'xxxxx@im.wechat', hint: '硬白名单；只允许这个微信 ID 与 AI 对话，缺失时桥不会把任何消息交给模型。' },
-  { key: 'agentPreset', label: '人设 preset 名', group: '必填', default: 'wechat', hint: '须存在于 $DSH_HOME/.agent-presets/<名>；仓库内不含任何具体人设内容。' },
+    { key: 'platform', label: '聊天平台', group: '必填', placeholder: 'wechat', hint: '只能填 wechat 或 qq（写别的值整个 profile 会起不来）。换平台等于换网关、换凭据名，建议各建一个 profile。' },
+    // 同时挂哪几个渠道（`wechat` + `qq` 各挂一个网关，各自一段上下文）。写两个就是双平台
+    // profile：微信与 QQ 分别订阅、各自应答，不会串到同一段上下文里。
+    // 它是**普通字段**（kind: 'list'），走和其它配置一样的写入路径——那条路径在"配置里有
+    // 多个条目"的情况下已经被验证是安全的；管理台不该为它另写一套插入逻辑。
+    {
+      key: 'platforms',
+      label: '同时挂哪几个渠道',
+      group: '必填',
+      kind: 'list',
+      placeholder: 'wechat, qq',
+      hint: '留空 = 只挂 platform 那一个。写 wechat 和 qq 两个就是双平台：两条渠道各自独立运行（各有各的会话与白名单），消息不会进同一段上下文。',
+    },
+    { key: 'qqAppId', label: 'QQ 机器人 AppID', group: '连接', placeholder: '1234567890', hint: 'QQ 开放平台「开发设置」里的 AppID；只在 platform = qq 时使用。' },
+    { key: 'qqClientSecret', label: 'QQ 机器人 AppSecret', group: '连接', secret: true, hint: 'AppSecret。写在这里会以明文落在 profile 里 —— 长期建议放 DSH 凭据 QQ_BOT_APP_ID / QQ_BOT_CLIENT_SECRET。' },
+    { key: 'qqBaseUrl', label: 'QQ 接口域名', group: '连接', placeholder: 'https://api.bot.qq.com', hint: '沙箱调试填 https://sandbox.api.sgroup.qq.com；留空走正式域名。' },
+    { key: 'allowFrom', label: '对话白名单 ID', group: '必填', kind: 'list', placeholder: 'xxxxx@im.wechat 或 QQ user_openid', hint: '硬白名单；只允许这些 ID 与 AI 对话，缺失时桥不会把任何消息交给模型。微信填以 @im.wechat 结尾的串；QQ 填 user_openid —— 不确定时先随便发一条，非白名单的那条消息会被记进台账，从那里抄。' },
+    { key: 'agentPreset', label: '人设 preset 名', group: '必填', default: 'wechat', hint: '须存在于 $DSH_HOME/.agent-presets/<名>；仓库内不含任何具体人设内容。' },
   { key: 'agentProvider', label: '聊天模型 provider', group: '必填', default: 'deepseek-official' },
   { key: 'agentModel', label: '聊天模型', group: '必填', default: 'deepseek-v4-flash' },
-  { key: 'cwd', label: '/new 工作目录', group: '可选', placeholder: 'D:\\your\\workspace' },
-  { key: 'mediaDir', label: '媒体落盘目录', group: '可选', placeholder: '$DSH_HOME/attachments/wechat', hint: '入站图片/文件/视频与生成媒体的保存位置。' },
-  { key: 'reminderFile', label: '提醒持久化文件', group: '可选', placeholder: '$DSH_HOME/wechat-reminders.json' },
-  { key: 'morningFile', label: '早安配置持久化文件', group: '可选', placeholder: '$DSH_HOME/wechat-morning.json' },
-  { key: 'esp32BaseUrl', label: 'ESP32 灯控地址', group: '可选', placeholder: 'http://192.168.1.10:80' },
+    { key: 'cwd', label: '/new 工作目录', group: '可选', placeholder: 'D:\\your\\workspace' },
+    { key: 'mediaDir', label: '媒体落盘目录', group: '可选', placeholder: '$DSH_HOME/attachments/wechat', hint: '入站图片/文件/视频与生成媒体的保存位置。' },
+    { key: 'reminderFile', label: '提醒持久化文件', group: '可选', placeholder: '$DSH_HOME/wechat-reminders.json' },
+    { key: 'morningFile', label: '早安配置持久化文件', group: '可选', placeholder: '$DSH_HOME/wechat-morning.json' },
+    { key: 'esp32BaseUrl', label: 'ESP32 灯控地址', group: '可选', placeholder: 'http://192.168.1.10:80' },
   { key: 'digestIntervalSec', label: '心跳间隔（秒）', group: '可选', kind: 'number', placeholder: '300', hint: '长回合第一条约 20 秒后发出，之后按这个间隔；0 = 关闭。' },
-  { key: 'approvalTimeoutSec', label: '审批超时（秒）', group: '可选', kind: 'number', placeholder: '600' },
-  { key: 'maxMessageChars', label: '单条气泡上限', group: '可选', kind: 'number', placeholder: '2000' },
-  { key: 'sendChunkDelayMs', label: '分块发送间隔（毫秒）', group: '可选', kind: 'number', placeholder: '1500' },
-  { key: 'ocrApiKey', label: 'SiliconFlow API Key', group: '媒体模型', secret: true, placeholder: 'sk-...', hint: 'OCR/生图/STT/TTS 共用；仅本地保存。' },
+    { key: 'approvalTimeoutSec', label: '审批超时（秒）', group: '可选', kind: 'number', placeholder: '600' },
+    { key: 'maxMessageChars', label: '单条气泡上限', group: '可选', kind: 'number', placeholder: '2000' },
+    { key: 'sendChunkDelayMs', label: '分块发送间隔（毫秒）', group: '可选', kind: 'number', placeholder: '1500' },
+    { key: 'ocrApiKey', label: 'SiliconFlow API Key', group: '媒体模型', secret: true, placeholder: 'sk-...', hint: 'OCR/生图/STT/TTS 共用；仅本地保存。' },
   { key: 'ocrModel', label: 'OCR 模型', group: '媒体模型', default: 'deepseek-ai/DeepSeek-OCR' },
-  { key: 'imageInput', label: '图片输入模式', group: '媒体模型', placeholder: 'auto', hint: 'auto=按模型声明的模态自动选；native=强制原生图片；ocr=只走文字识别。' },
-  { key: 'imageInputModel', label: '图片专用模型', group: '媒体模型', placeholder: 'provider/model', hint: '留空 = 跟随聊天模型。' },
+    { key: 'imageInput', label: '图片输入模式', group: '媒体模型', placeholder: 'auto', hint: 'auto=按模型声明的模态自动选；native=强制原生图片；ocr=只走文字识别。' },
+    { key: 'imageInputModel', label: '图片专用模型', group: '媒体模型', placeholder: 'provider/model', hint: '留空 = 跟随聊天模型。' },
   { key: 'ocrBaseUrl', label: 'OCR 端点', group: '媒体模型', default: 'https://api.siliconflow.cn/v1' },
   { key: 'imageGenApiKey', label: '生图 API Key', group: '媒体模型', secret: true, placeholder: '留空则用 OCR Key' },
   { key: 'imageGenModel', label: '生图模型', group: '媒体模型', default: 'Kwai-Kolors/Kolors' },
@@ -68,34 +83,34 @@ export const CONFIG_FIELDS: ConfigField[] = [
   // hand: the tool existed, the config existed, and the console had no field.
   {
     key: 'smtpHost',
-    label: 'SMTP 服务器',
+        label: 'SMTP 服务器',
     group: '邮件',
     placeholder: 'smtp.qq.com',
     hint: 'send_email 工具需要 host + 用户名 + 密码三项齐全；用隐式 TLS（465）。',
   },
   { key: 'smtpPort', label: 'SMTP 端口', group: '邮件', kind: 'number', placeholder: '465' },
-  { key: 'smtpUsername', label: 'SMTP 用户名', group: '邮件', placeholder: 'you@qq.com', hint: '同时作为发件人地址。' },
-  { key: 'smtpPassword', label: 'SMTP 密码/授权码', group: '邮件', secret: true, placeholder: '邮箱授权码' },
-  { key: 'smtpFromName', label: '发件人显示名', group: '邮件', placeholder: '留空则用用户名' },
+    { key: 'smtpUsername', label: 'SMTP 用户名', group: '邮件', placeholder: 'you@qq.com', hint: '同时作为发件人地址。' },
+    { key: 'smtpPassword', label: 'SMTP 密码/授权码', group: '邮件', secret: true, placeholder: '邮箱授权码' },
+    { key: 'smtpFromName', label: '发件人显示名', group: '邮件', placeholder: '留空则用用户名' },
   // Context-management scheme, owned by the standalone admin page
   // (admin/server.ts) and consumed by the conversation node. JSON so a scheme
   // can carry its own knobs without a schema change per knob:
   //   {"scheme":"rotate-turns","turns":20,"idleOnly":true,"announce":true,"handoff":false}
   // Schemes: manual | rotate-turns | rotate-turns+handoff | rotate-pressure | daily
-  { key: 'contextPolicy', label: '上下文管理方案（JSON）', group: '可选', placeholder: '{"scheme":"manual"}', hint: '由管理台一键切换；桥按此决定何时轮换/交接会话。' },
+    { key: 'contextPolicy', label: '上下文管理方案（JSON）', group: '可选', placeholder: '{"scheme":"manual"}', hint: '由管理台一键切换；桥按此决定何时轮换/交接会话。' },
   {
     key: 'memoryFile',
     label: '长期记忆文件',
     group: '可选',
     placeholder: '$DSH_HOME/wechat-memory/MEMORY.md',
-    hint: '跨会话的长期事实（关于主人）；每天自动整理一次，可用 /memory 查看。',
+        hint: '跨会话的长期事实（关于主人）；每天自动整理一次，可用 /memory 查看。',
   },
   {
     key: 'problemFile',
     label: '问题日志文件',
     group: '可选',
     placeholder: '$DSH_HOME/wechat-problems.log',
-    hint: '被吞掉的失败都会写一行到这里；/problems 可查看。',
+        hint: '被吞掉的失败都会写一行到这里；/problems 可查看。',
   },  {
     key: 'memoryInjectEvery',
     label: '记忆注入间隔（条）',
@@ -139,6 +154,14 @@ function unquote(s: string): string {
   return t
 }
 
+/**
+ * One YAML scalar, always quoted.
+ *
+ * Quoting unconditionally is the safe default: a WeChat id (`…@im.wechat`) or a
+ * key (`sk-…`) is never a plain YAML scalar, and the writer has no business
+ * guessing which strings are. Booleans and numbers that must stay bare go through
+ * the `kind`-aware helpers (`scalarLine` / `nestedScalar`), which bypass this.
+ */
 export function yamlStr(value: string): string {
   return JSON.stringify(String(value))
 }
@@ -184,16 +207,24 @@ export function parsePatch(text: string): ParsedPatch {
       if (!m) continue
       const key = m[1]!
       const inline = m[2]!.trim()
-      if (key === 'allowFrom') {
+      if (key === 'allowFrom' || key === 'platforms') {
         const items: string[] = []
-        let j = i + 1
-        while (j < entryEnd && leading(lines[j]!) > indent) {
-          const li = lines[j]!.trim()
-          if (li.startsWith('-')) items.push(unquote(li.slice(1).trim()))
-          j++
+        if (inline.startsWith('[')) {
+          // `platforms: [wechat, qq]` — the inline form the engine also accepts.
+          for (const piece of inline.replace(/^\[|\]$/g, '').split(',')) {
+            const value = unquote(piece)
+            if (value) items.push(value)
+          }
+        } else {
+          let j = i + 1
+          while (j < entryEnd && leading(lines[j]!) > indent) {
+            const li = lines[j]!.trim()
+            if (li.startsWith('-')) items.push(unquote(li.slice(1).trim()))
+            j++
+          }
+          i = j - 1
         }
         current[key] = { indent, list: items }
-        i = j - 1
       } else if (inline) {
         current[key] = { indent, value: unquote(inline) }
       }
@@ -216,6 +247,9 @@ export function extractValues(parsed: ParsedPatch): PatchValues {
     // through the wizard / web page, so they never enter the value set.
     if (key === 'allowFrom' || !KNOWN_KEYS.has(key)) continue
     if (entry.value !== undefined) values[key] = entry.value
+    // A list-shaped field (`platforms`) reaches the console as one entry per line,
+    // the same shape `allowFrom` uses.
+    else if (entry.list !== undefined) values[key] = entry.list.join('\n')
   }
   return { values, allowFrom: parsed.current.allowFrom?.list ?? [] }
 }
@@ -251,7 +285,7 @@ export class PatchUnreadableError extends Error {
   readonly reason: string
 
   constructor(file: string, reason: string) {
-    super(`配置文件存在但读不出来，已放弃写入以免覆盖：${file}（${reason}）`)
+        super(`配置文件存在但读不出来，已放弃写入以免覆盖：${file}（${reason}）`);
     this.name = 'PatchUnreadableError'
     this.file = file
     this.reason = reason
@@ -270,7 +304,7 @@ export class PatchValueError extends Error {
   readonly value: string
 
   constructor(key: string, value: string, expected: string) {
-    super(`${key} 需要${expected}，收到「${value}」`)
+        super(`${key} 需要${expected}，收到「${value}」`);
     this.name = 'PatchValueError'
     this.key = key
     this.value = value
@@ -287,7 +321,18 @@ export class PatchValueError extends Error {
  */
 export function validateUpdate(key: string, value: string): void {
   const field = CONFIG_FIELDS.find((f) => f.key === key)
-  if (!field || field.kind !== 'number') return
+  if (!field) return
+    // 平台名是**枚举**：bundle schema 只收 wechat|qq，写错一个字母整个 profile 起不来
+    // （宿主进 safe mode）。其他字段都由各自的 kind 约束，这一条要单独把住。
+  if (key === 'platform' && value !== 'wechat' && value !== 'qq') {
+        throw new PatchValueError(key, value, 'wechat 或 qq');
+  }
+  // 布尔键同样要卡死：YAML 里 `someFlag: "yes"` 是个字符串，
+  // 而 bundle schema 只收 true/false —— 写错一个词整个 profile 起不来（safe mode）。
+  if (field.kind === 'boolean' && value !== 'true' && value !== 'false') {
+    throw new PatchValueError(key, value, 'true 或 false')
+  }
+  if (field.kind !== 'number') return
   if (/^-?\d+$/.test(value)) return
   throw new PatchValueError(key, value, '整数')
 }
@@ -307,7 +352,7 @@ export async function applyPatchConfig(file: string, updates: Record<string, str
   } catch (error) {
     const code = (error as { code?: string }).code
     if (code !== 'ENOENT') {
-      // Writing here would replace a file we could not read — losing every other
+            // Writing here would replace a file we could not read — losing every other
       // entry in the profile patch. Refuse loudly instead.
       throw new PatchUnreadableError(file, error instanceof Error ? error.message : String(error))
     }
@@ -324,9 +369,19 @@ export async function applyPatchConfig(file: string, updates: Record<string, str
   function valueFor(key: string): string | null {
     if (key in updates) {
       const v = updates[key]
-      return v === undefined || v === null || v === '' ? null : String(v)
+      if (v === undefined || v === null || v === '') return null
+      return String(v)
     }
+    return valueForRaw(key)
+  }
+
+  /** Same, but WITHOUT consulting this run's updates — the value on disk. */
+  function valueForRaw(key: string): string | null {
     if (key === 'allowFrom') return before.allowFrom[0] ?? null
+    // `platforms` is a LIST, and the console shows it one entry per line — the
+    // scalar path would drop everything but the first channel, which is exactly how
+    // a two-channel profile would silently become a single-channel one on the next save.
+    if (key === 'platforms') return (before.values.platforms ?? '').trim() === '' ? null : before.values.platforms!
     const cur = before.values[key]
     return cur === undefined ? null : cur
   }
@@ -358,7 +413,38 @@ export async function applyPatchConfig(file: string, updates: Record<string, str
     }
   }
 
-  const scalarLine = (key: string, v: string): string => `${ind}${key}: ${/^-?\d+$/.test(v) ? v : yamlStr(v)}`
+  /**
+   * Which channels this bridge mounts, as a list.
+   *
+   * Same shape rules as the allowlist: one entry per line, commas accepted. An
+   * empty result writes nothing rather than `platforms: []` — the engine reads an
+   * empty list as "just `platform`", and leaving the key out entirely keeps a
+   * profile that never mounted a second channel byte-identical to one that cleared it.
+   */
+  function platformList(): string[] | null {
+    if ('platforms' in updates) {
+      const raw = updates.platforms
+      if (raw === undefined || raw === null || raw === '') return null
+      return String(raw)
+        .split(/[\n,]/)
+        .map((entry) => entry.trim().replace(/^-\s*/, '').replace(/^\[|\]$/g, '').trim())
+        .filter(Boolean)
+    }
+    return before.values.platforms ? before.values.platforms.split('\n').map((entry) => entry.trim()).filter(Boolean) : null
+  }
+
+  /** One `platforms:` block, or nothing when it is empty. */
+  function pushPlatforms(target: string[]): void {
+    const list = platformList()
+    if (list && list.length > 0) target.push(`${ind}platforms:`, ...list.map((entry) => `${itemInd}- ${yamlStr(entry)}`))
+  }
+
+  const scalarLine = (key: string, v: string): string => {
+    const field = CONFIG_FIELDS.find((f) => f.key === key)
+    const bare = field?.kind === 'number' || field?.kind === 'boolean'
+    return `${ind}${key}: ${bare ? v : yamlStr(v)}`
+  }
+
   const outBlock: string[] = []
 
   if (parsed.found) {
@@ -379,12 +465,13 @@ export async function applyPatchConfig(file: string, updates: Record<string, str
         const m = /^([\w-]+):\s*(.*)$/.exec(trimmed)
         if (!m) { outBlock.push(line); i++; continue }
         const key = m[1]!
-        if (key === 'allowFrom') {
+        if (key === 'allowFrom' || key === 'platforms') {
           let end = i + 1
           while (end < childLines.length && leading(childLines[end]!) > indent) end++
-          if (!emitted.has('allowFrom')) {
-            emitted.add('allowFrom')
-            pushAllowFrom(outBlock)
+          if (!emitted.has(key)) {
+            emitted.add(key)
+            if (key === 'allowFrom') pushAllowFrom(outBlock)
+            else pushPlatforms(outBlock)
           }
           i = end
           continue
@@ -408,13 +495,18 @@ export async function applyPatchConfig(file: string, updates: Record<string, str
         pushAllowFrom(outBlock)
         continue
       }
+      if (field.key === 'platforms') {
+        pushPlatforms(outBlock)
+        continue
+      }
       const v = valueFor(field.key)
       if (v !== null) outBlock.push(scalarLine(field.key, v))
     }
   } else {
     pushAllowFrom(outBlock)
+    pushPlatforms(outBlock)
     for (const field of CONFIG_FIELDS) {
-      if (field.key === 'allowFrom') continue
+      if (field.key === 'allowFrom' || field.key === 'platforms') continue
       const fv = valueFor(field.key)
       if (fv !== null) outBlock.push(scalarLine(field.key, fv))
     }
@@ -449,6 +541,10 @@ export async function applyPatchConfig(file: string, updates: Record<string, str
     // Saving repeatedly from the admin page used to leave one backup per save.
     pruneBackups(file, 5)
   }
+  // Trailing blank lines are not content: dropping them keeps the file stable when
+  // a key is added and later removed, instead of growing by one empty line per
+  // round trip.
+  while (finalLines.length > 0 && finalLines[finalLines.length - 1]!.trim() === '') finalLines.pop()
   await writeFile(file, finalLines.join('\n') + '\n', 'utf8')
   return { changed, backup, file }
 }

@@ -16,7 +16,8 @@
  */
 import type { AssistantMessage } from '@deepseek-ai/dsh-llm';
 import type { Session } from '@deepseek-ai/dsh-session';
-import type { WechatConversationNode } from './core.ts';
+import type { OutboundTarget, WechatConversationNode } from './core.ts';
+import { type ChatPlatform, type PlatformId } from '../platform/index.ts';
 /** Collapse runs of blank lines to one; strips surrounding whitespace. */
 export declare function normalizeMarkdownBlocks(content: string): string;
 /** Split content into markdown blocks, keeping fenced code blocks intact. */
@@ -36,7 +37,33 @@ export declare function digestLine(session: Session, badge?: string): string;
  */
 export declare function markdownToWechat(content: string): string;
 /**
- * Send text to the current peer, chunked and throttled.
+ * The minimum a caller must offer to have a destination resolved: the real node,
+ * or one of the light stand-ins the older tests build (which have `peerId`,
+ * `platform` and `chat` but none of the node's own target bookkeeping).
+ */
+export interface TargetCapable {
+    peerId?: string | null;
+    platform?: PlatformId;
+    chat?: ChatPlatform;
+    config?: {
+        allowFrom?: string[];
+    };
+    currentTarget?: () => OutboundTarget | undefined;
+}
+/**
+ * Where this message goes: the target platform and peer, with that platform's
+ * gateway.
+ *
+ * The node owns the real answer (queue head → last peer that spoke → the primary
+ * platform's first allowlisted id, see `core.ts`). The fallback below exists for
+ * the stand-ins: they have exactly one platform, so `peerId` **is** the target.
+ * Both branches obey the same rule — a missing service means "cannot send", never
+ * "send it on the other platform", because an answer arriving on the wrong
+ * channel is worse than one that visibly failed.
+ */
+export declare function resolveOutboundTarget(node: TargetCapable): OutboundTarget | undefined;
+/**
+ * Send text to the turn's target, chunked and throttled.
  *
  * This is the single choke point for outbound chat traffic, and it is called
  * from eight places as `void sendTextToPeer(...)`. It therefore must NEVER
@@ -48,6 +75,10 @@ export declare function markdownToWechat(content: string): string;
  * So the service is read through `ctx.get()` — property access throws on a
  * torn-down context, `get()` returns undefined — and every remaining failure is
  * swallowed after a best-effort log.
+ *
+ * The target is resolved **synchronously, before the first await**: a `turn/end`
+ * elsewhere dequeues the target, and an in-flight send must keep the destination
+ * it was dispatched for.
  */
 export declare function sendTextToPeer(node: WechatConversationNode, text: string): Promise<boolean>;
 /**

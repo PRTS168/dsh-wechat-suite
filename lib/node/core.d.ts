@@ -11,7 +11,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { type ModelSelectionRef } from '@deepseek-ai/dsh-agent';
 import { SessionId, type Session } from '@deepseek-ai/dsh-session';
-import { type ChatPlatform, type PlatformEvents, type PlatformId } from '../platform/index.ts';
+import { type ChatPlatform, type PlatformCapabilities, type PlatformEvents, type PlatformId } from '../platform/index.ts';
 import type { PendingApproval } from './approvals.ts';
 import { type ContextPolicy } from './context-policy.ts';
 import type { MorningService } from './morning.ts';
@@ -54,17 +54,66 @@ export interface HostPermissionPresets {
     };
     set?(session: unknown, name: string): void;
 }
-/** Pick the newest persisted `wechat-` session, or undefined when there is none. */
+/**
+ * Pick the newest persisted session **of this platform**, or undefined if none.
+ *
+ * The prefix is a parameter, not a constant: the session store is shared with
+ * the Web GUI *and* with the other platform's profile, so "newest session on
+ * disk" is meaningless without saying whose.
+ */
+export declare function selectNewestSession(entries: readonly PersistenceEntry[], prefix: string): {
+    id: string;
+    createdAt: number;
+} | undefined;
+/** Kept for callers written before the platform seam; means "newest WeChat one". */
 export declare function selectNewestWechat(entries: readonly PersistenceEntry[]): {
     id: string;
     createdAt: number;
 } | undefined;
+/**
+ * Where one outbound message goes: which platform, which peer, and the gateway
+ * service that can actually send it.
+ *
+ * The three travel together on purpose. In a merged profile `peerId` alone is
+ * ambiguous — a WeChat `wxid_…` and a QQ `user_openid` are both just strings —
+ * and sending a QQ peer's answer through the WeChat gateway (or the reverse) is
+ * exactly the failure this type exists to make impossible.
+ */
+export interface OutboundTarget {
+    /** The platform the message belongs to. */
+    platform: PlatformId;
+    /** The peer on that platform. */
+    peerId: string;
+    /**
+     * That platform's gateway, or undefined when its service is not mounted.
+     *
+     * Undefined means "cannot send", never "send on the other platform": a reply
+     * that arrives on the wrong side is worse than a reply that did not arrive,
+     * because the owner cannot even tell it happened.
+     */
+    chat?: ChatPlatform;
+}
 /** Runtime shape of the node plugin's config (defaults applied). */
 export interface NodeConfig {
     /** Hard allowlist of WeChat sender ids allowed to drive the agent. REQUIRED. */
     allowFrom: string[];
     /** Chat platform this node serves; see platform/index.ts. */
     platform?: PlatformId;
+    /**
+     * The platform this node serves, as a list. Only ever one entry; unwritten
+     * means "just `platform`" — the behaviour every profile written before this key
+     * had.
+     */
+    platforms?: PlatformId[];
+    /**
+     * Per-platform allowlists, e.g. `{ qq: ['<user_openid>'] }`.
+     *
+     * Lookup rule: a platform with its own entry uses it, every other platform
+     * uses `allowFrom`. An entry that is an **empty list** means "this platform
+     * accepts nobody" — the strict reading, because the alternative is falling
+     * back to a WeChat id list and letting a QQ stranger through.
+     */
+    allowFromByPlatform?: Record<string, string[]>;
     /** Heartbeat interval for progress digests (seconds; 0 disables). */
     digestIntervalSec: number;
     /** Approval prompt timeout before default-deny (seconds). */
@@ -143,8 +192,16 @@ export interface NodeConfig {
 export declare class WechatConversationNode {
     /** The active session the WeChat user drives. */
     activeSessionId: SessionId | null;
-    /** The allowlisted peer outbound text goes to (last inbound sender). */
-    peerId: string | null;
+    /**
+     * The allowlisted peer outbound currently goes to — the target of the turn in
+     * flight, or the last peer that spoke (see {@link currentTarget}).
+     *
+     * Kept as a property because it predates the platform seam and a dozen call
+     * sites read it; assigning to it is the "one known peer" shortcut and means
+     * "on the primary platform". The real routing state is the target FIFO below.
+     */
+    get peerId(): string | null;
+    set peerId(value: string | null);
     /**
      * Runtime override for {@link NodeConfig.imageInput}, set by the `/识图`
      * command. Survives until the bridge process restarts; config remains the
@@ -177,9 +234,14 @@ export declare class WechatConversationNode {
     /**
      * Last gateway status seen (`wechat/status`), and when. `/status` reports it:
      * a bridge whose poller died otherwise looks identical to a quiet day.
+     *
+     * These two mirror the **primary** platform so every existing caller (and
+     * `tests`) keeps working; {@link gatewayStatusFor} reads any platform.
      */
     gatewayStatus: string;
     gatewayStatusAt: string;
+    /** Per-platform mirror of the two fields above (each platform reports its own). */
+    private readonly platformStatuses;
     readonly ctx: Context;
     readonly config: NodeConfig;
     /**
@@ -189,10 +251,103 @@ export declare class WechatConversationNode {
      * mounted under this id and emits `<platform>/…` events, so the node never
      * names a platform itself. Defaults to WeChat, which is what every existing
      * profile configured by saying nothing.
+     *
+     * In merge mode this is the **primary** platform: it names the session
+     * namespace, the default on-disk locations and the outbound fallback. The
+     * other mounted platform(s) live in {@link platforms}.
      */
     readonly platform: PlatformId;
+    /**
+     * Every platform this node is subscribed to, primary first — one element
+     * unless the profile asked for merge mode.
+     *
+     * The node subscribes to each of them (message/status/error/fatal) and each
+     * inbound message carries its own platform into the turn target, so one brain
+     * answers whichever channel the owner used, on that channel only.
+     */
+    readonly platforms: readonly PlatformId[];
+    /**
+     * Outbound targets of the turns in flight, oldest first.
+     *
+     * A turn's replies are asynchronous — heartbeats, tool calls, the final
+     * answer — while the owner can start another turn from the other platform
+     * meanwhile. Binding the target at inbound time and releasing it at `turn/end`
+     * is what keeps "QQ said something while WeChat's turn was running" from
+     * delivering the WeChat answer to QQ. Entries are pushed only when a message
+     * really becomes a turn: a command or a menu reply produces no `turn/end`, so
+     * a queued target would never drain and would misroute the next real answer.
+     */
+    private readonly turnTargets;
+    /** The last peer that spoke (any platform); the fallback when no turn is open. */
+    private lastTarget;
+    /**
+     * The gateway of one platform, or undefined while it is not mounted.
+     *
+     * Two of these are live at once in merge mode, and every outbound path has to
+     * go through the *target's* one — see {@link currentTarget}.
+     */
+    chatFor(platform: PlatformId): ChatPlatform | undefined;
+    /**
+     * What one platform can actually do (images, files, voice, reply budget), as
+     * declared by its own gateway — not by the primary's.
+     *
+     * A merged profile can hold a WeChat gateway that sends images and a QQ
+     * gateway that cannot; asking the primary would promise the QQ user a picture
+     * that the QQ API will refuse after the image was generated and paid for.
+     */
+    capabilitiesFor(platform: PlatformId): PlatformCapabilities | undefined;
     /** The active platform's service, or undefined while its gateway is unmounted. */
     get chat(): ChatPlatform | undefined;
+    /**
+     * Where this turn's outbound messages go: queue head → last peer that spoke →
+     * the primary platform's first allowlisted id.
+     *
+     * The last step is what lets a proactive push (a reminder, an admin
+     * announcement, a rotation notice) leave the bridge at all when nothing has
+     * been said yet — the owner's own allowlisted id is the only defensible
+     * recipient. Returns undefined only when there is nobody to address.
+     */
+    currentTarget(): OutboundTarget | undefined;
+    /** Queue depth of the turn targets (diagnostics and tests). */
+    pendingTurnTargets(): number;
+    /**
+     * Record where a message came from: it becomes "the peer that spoke last".
+     *
+     * Called only for messages that passed the allowlist — a stranger's message
+     * must not be able to steer where the bridge answers.
+     */
+    noteInboundTarget(platform: PlatformId, peerId: string): void;
+    /** Bind the outbound target of a turn that is about to start (FIFO tail). */
+    beginTurnTarget(platform: PlatformId, peerId: string): void;
+    /** The turn ended: its target leaves the queue (`turn/end`). */
+    endTurnTarget(): void;
+    /**
+     * The turn never started (submitting it threw), so take back the target that
+     * was just bound. Leaving it queued would misroute the next answer, because
+     * nothing will ever dequeue it.
+     */
+    dropTurnTarget(): void;
+    /**
+     * Submit a turn for the peer that spoke last, binding it as this turn's
+     * outbound target.
+     *
+     * `/new <prompt>` is the one place a chat message starts a turn from inside the
+     * node instead of from `inbound.ts`, so it has to bind the target the same way
+     * — otherwise the answer to "QQ 用户开了个新会话" would go to WeChat.
+     */
+    submitForLastTarget(submit: () => void): void;
+    /**
+     * Which platform a bare peer id belongs to — for the pushes that carry only a
+     * peer (a persisted reminder), never a platform.
+     *
+     * Explicit per-platform allowlists are the honest source: put each platform's
+     * ids in `allowFromByPlatform` and every reminder finds its way back to the
+     * channel it was asked for. Anything unrecognised falls to the primary
+     * platform, which is exactly what a single-platform profile always did.
+     */
+    platformForPeer(peerId: string): PlatformId;
+    /** Nobody has spoken yet: address the primary platform's first allowlisted id. */
+    private fallbackTarget;
     /** Events of the active platform (`<platform>/message`, `…/error`, …). */
     get events(): PlatformEvents;
     /**
@@ -212,6 +367,14 @@ export declare class WechatConversationNode {
      * real inbound message instead, so a rotation costs zero extra replies.
      */
     private pendingHandoff;
+    /**
+     * 交接摘要"真的被一条消息带走"之后要做的事（合并模式用它删掉磁盘上的
+     * `pending/<platform>.md`）。
+     *
+     * 删除**推迟到这一步**是有意的：摘要文件是那段历史的唯一副本，排进队列就删，
+     * 进程在两条消息之间退出就等于把它丢了。宁可下次启动再排一次。
+     */
+    private onHandoffTaken;
     constructor(ctx: Context, config: NodeConfig);
     /** Whether a rotation is currently in flight (used by tests and the guard). */
     isRotating(): boolean;
@@ -221,8 +384,13 @@ export declare class WechatConversationNode {
     endRotation(): void;
     /** Take the queued rotation note for the next inbound message (once). */
     consumeHandoff(): string;
-    /** Queue a rotation note for the next inbound message. */
-    setPendingHandoff(note: string | null): void;
+    /**
+     * Queue a rotation note for the next inbound message.
+     *
+     * `onTaken` 是可选的一次性回调（合并模式用它删除已消费的交接文件）；不给它
+     * 就等价于从前那版——轮换交接没有任何副作用。
+     */
+    setPendingHandoff(note: string | null, onTaken?: () => void): void;
     /** Whether a rotation note is waiting (tests and diagnostics). */
     hasPendingHandoff(): boolean;
     /** The active WeChat session, if any. Never a non-`wechat-` session: this
@@ -242,12 +410,68 @@ export declare class WechatConversationNode {
      * own namespace.
      */
     ownsAgent(agent: Agent): boolean;
-    /** Whether a session id belongs to this bridge's own WeChat sessions. */
+    /**
+     * The prefix every session of this bridge carries.
+     *
+     * Answers `wechat-` / `qq-` — the on-disk contract those profiles already
+     * have, and the namespace their sessions live in.
+     *
+     * Single source of truth: seven places ask "is this session mine?", and each of
+     * them used to hardcode `'wechat-'`. Fixing one and missing the others would
+     * take the bridge down silently — empty `/sessions`, `/use` doing nothing,
+     * outbound refusing to send, approvals all delegated, admin page blank.
+     */
+    sessionPrefix(): string;
+    /** Whether a session id belongs to this bridge (i.e. to this platform). */
+    isOwnSessionId(id: unknown): boolean;
+    /** Kept for call sites written before the platform seam; platform-correct now. */
     isWechatSessionId(id: unknown): boolean;
-    /** Whether a sender is allowlisted. */
+    /** Whether a sender is allowlisted on this node's own (primary) platform. */
     isAllowed(senderId: string): boolean;
-    /** The gateway's own account id (used for group detection). */
+    /**
+     * Whether a sender may drive the agent **on one platform**.
+     *
+     * A platform with its own `allowFromByPlatform` entry answers from it; every
+     * other platform falls back to `allowFrom`. An entry that exists but is empty
+     * allows nobody: falling back to the WeChat id list instead would mean a QQ
+     * stranger passes a gate the owner never opened for that channel.
+     */
+    isAllowedFor(platform: PlatformId, senderId: string): boolean;
+    /** The (primary) gateway's own account id (used for group detection). */
     get gatewayAccountId(): string;
+    /**
+     * One platform's own account id, or '' when its gateway does not publish one.
+     *
+     * Group detection compares the message's `to_user_id` against the account that
+     * received it, so it has to be the **source** platform's id: in a merged
+     * profile the QQ message carries the QQ AppID as `to_user_id`, and comparing
+     * that against WeChat's account id classifies every QQ单聊 message as a group
+     * message — which is dropped in silence. A platform without an account id
+     * answers '', which is the "cannot tell → not a group" default the QQ gateway
+     * already relied on.
+     */
+    gatewayAccountIdFor(platform: PlatformId): string;
+    /**
+     * Last status seen for one platform, and when ('' when none was ever seen).
+     *
+     * The primary platform also reads the two legacy fields when no status event
+     * has been recorded for it: those fields are still written from outside (a
+     * dozen callers and tests set them directly), and `/status` reading a stale
+     * internal map instead of them would silently report "unknown" forever.
+     */
+    gatewayStatusFor(platform: PlatformId): {
+        status: string;
+        at: string;
+    };
+    /**
+     * Record one platform's gateway status.
+     *
+     * Both platforms report into the same node now, so the value cannot be a single
+     * field: "QQ never came up" would be invisible behind WeChat's cheerful
+     * `connected`. The primary's status is mirrored onto {@link gatewayStatus} /
+     * {@link gatewayStatusAt} for every caller written before merge mode.
+     */
+    noteGatewayStatus(platform: PlatformId, status: string): void;
     /** Switch the active session and reply confirmation to the peer. */
     setActiveSession(session: Session): void;
     /** Pick the most recent WeChat session as the default (zero-config targeting).
@@ -374,15 +598,20 @@ export declare class WechatConversationNode {
 export declare function readContextTokens(sessionId: string): number | undefined;
 export declare function attachContextRotation(node: WechatConversationNode): () => void;
 /**
- * Watch the gateway's own health events.
+ * Watch the gateways' own health events.
  *
- * The gateway emits `wechat/status`, `wechat/error` and `wechat/fatal`, and
- * nothing in the bridge used to subscribe: a revoked credential, a 403 from a
- * competing poller, a DNS outage or a paused session all ended up in the host
- * log at best, while from the owner's side the bridge simply stopped answering.
- * From here each of them lands in the problem ledger (so `/problems` can show
- * it), a fatal one is announced once, and the last known status is kept for
- * `/status` so a silent dead gateway is visible on demand.
+ * Each gateway emits `<platform>/status`, `<platform>/error` and
+ * `<platform>/fatal`, and nothing in the bridge used to subscribe: a revoked
+ * credential, a 403 from a competing poller, a DNS outage or a paused session
+ * all ended up in the host log at best, while from the owner's side the bridge
+ * simply stopped answering. From here each of them lands in the problem ledger
+ * (so `/problems` can show it), a fatal one is announced once, and the last
+ * known status is kept per platform for `/status` so a silent dead gateway is
+ * visible on demand.
+ *
+ * Every mounted platform is watched, not just the primary: in merge mode a QQ
+ * long-poll that died would otherwise be indistinguishable from the owner not
+ * using QQ today.
  */
 export declare function attachGatewayObservability(node: WechatConversationNode): () => void;
 /**

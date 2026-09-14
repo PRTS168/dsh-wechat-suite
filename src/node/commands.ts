@@ -12,12 +12,13 @@
 
 import { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import type { WechatConversationNode } from './core.ts'
-import { sendTextToPeer } from './outbound.ts'
+import { resolveOutboundTarget, sendTextToPeer } from './outbound.ts'
 import { sessionBadge, sessionName } from './labels.ts'
 import { controlLight, type LightMode } from './light.ts'
 import { describeError } from './net.ts'
 import { formatContextReport, readCompactionPolicy, readContextUsage, readTurnCount } from './context-report.ts'
 import { formatProblems, problemsSummary } from './problems.ts'
+import { platformLabel, type PlatformId } from '../platform/index.ts'
 
 /**
  * Sessions ordered most-recent-first. Only `wechat-` prefixed sessions
@@ -28,7 +29,9 @@ import { formatProblems, problemsSummary } from './problems.ts'
  */
 export function listSessions(node: WechatConversationNode): Session[] {
   return [...node.ctx.sessions.list()]
-    .filter((s) => String(s.id).startsWith('wechat-'))
+    // 只列**本平台**的会话：会话库与 Web GUI、以及另一个平台的 profile 共用，
+    // 按 `wechat-` 硬过滤会让 QQ profile 把微信会话当成自己的列出来。
+    .filter((s) => node.isOwnSessionId(s.id))
     .sort((a, b) => {
       const diff = b.header.createdAt - a.header.createdAt
       if (diff !== 0) return diff
@@ -176,19 +179,21 @@ export async function routeCommand(node: WechatConversationNode, text: string): 
         await sendTextToPeer(node, '❌ 用法: /send <图片文件路径>')
         return true
       }
-      const peer = node.peerId
-      if (!peer) {
+      // The image goes to the turn's own peer **through that peer's gateway**:
+      // in a merged profile the primary platform's service cannot deliver to a
+      // QQ openid (and vice versa).
+      const outbound = resolveOutboundTarget(node)
+      if (!outbound) {
         await sendTextToPeer(node, '❌ 没有可回复的联系人')
         return true
       }
-      const chat = node.chat
-      if (!chat) {
-        await sendTextToPeer(node, '❌ 网关服务不可用，无法发送图片。')
+      if (!outbound.chat) {
+        await sendTextToPeer(node, `❌ ${platformLabel(outbound.platform)}网关服务不可用，无法发送图片。`)
         return true
       }
       await sendTextToPeer(node, '🖼 正在发送图片…')
       try {
-        const result = await chat.sendImage(peer, target)
+        const result = await outbound.chat.sendImage(outbound.peerId, target)
         await sendTextToPeer(node, result.success ? '✅ 图片已发送' : `❌ 发送失败: ${result.error}`)
       } catch (error) {
         await sendTextToPeer(node, `❌ 发送失败：${describeError(error)}`)
@@ -432,19 +437,33 @@ function renderSessions(node: WechatConversationNode): string {
   return `📋 会话列表（/use N 切换）\n${lines.join('\n')}`
 }
 
-/** One-line gateway health for `/status`. */
+/**
+ * One-line gateway health for `/status`, one entry per mounted platform.
+ *
+ * Single-platform profiles get exactly the line they always had. A merged
+ * profile reports **each** channel: "QQ 从未连上" is the failure the owner
+ * cannot see from a chat that is otherwise answering on WeChat.
+ */
 function gatewayLine(node: WechatConversationNode): string {
-  const status = node.gatewayStatus
-  const label: Record<string, string> = {
-    connected: '🟢 在线',
-    idle: '⚪ 未启动',
-    paused: '🟡 暂停中（登录态过期，等自动恢复）',
-    reconnecting: '🟠 重连中（网络/服务端异常）',
-    error: '🔴 已停止（需要人工处理，/problems 看原因）',
-    unknown: '❔ 未知（进程启动后还没收到状态）',
+  const line = (platform: PlatformId): string => {
+    const seen = typeof node.gatewayStatusFor === 'function'
+      ? node.gatewayStatusFor(platform)
+      // Stand-ins (tests) only carry the single-platform fields.
+      : { status: node.gatewayStatus, at: node.gatewayStatusAt }
+    const label: Record<string, string> = {
+      connected: '🟢 在线',
+      idle: '⚪ 未启动',
+      paused: '🟡 暂停中（登录态过期，等自动恢复）',
+      reconnecting: '🟠 重连中（网络/服务端异常）',
+      error: '🔴 已停止（需要人工处理，/problems 看原因）',
+      unknown: '❔ 未知（进程启动后还没收到状态）',
+    }
+    const at = seen.at ? ` · ${seen.at.slice(11, 16)}` : ''
+    return `${label[seen.status] ?? seen.status}${at}`
   }
-  const at = node.gatewayStatusAt ? ` · ${node.gatewayStatusAt.slice(11, 16)}` : ''
-  return `${label[status] ?? status}${at}`
+  const platforms = Array.isArray(node.platforms) && node.platforms.length > 0 ? node.platforms : [node.platform]
+  if (platforms.length === 1) return line(platforms[0]!)
+  return platforms.map((platform) => `${platformLabel(platform)} ${line(platform)}`).join(' / ')
 }
 
 function helpText(): string {
@@ -470,7 +489,7 @@ function helpText(): string {
   ].join('\n')
 }
 
-/** Default session id prefix for /new-created sessions. */
+/** Default session id prefix for /new-created sessions — this platform's. */
 export function newSessionId(node: WechatConversationNode): SessionId {
-  return SessionId(`wechat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`)
+  return SessionId(`${node.sessionPrefix()}${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`)
 }

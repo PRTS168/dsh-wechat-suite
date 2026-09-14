@@ -27,6 +27,18 @@ export interface Config {
      * before this key existed meant.
      */
     platform?: PlatformId;
+    /**
+     * The platform this profile serves, as a list. Only ever one entry; unwritten
+     * means "just `platform`", which is also the primary (session namespace,
+     * default paths).
+     */
+    platforms?: PlatformId[];
+    /**
+     * Per-platform allowlists, e.g. `{ qq: ['<user_openid>'] }`. A platform with
+     * its own entry uses it; every other platform uses `allowFrom`. An entry that
+     * is an empty list accepts nobody on that platform.
+     */
+    allowFromByPlatform?: Record<string, string[]>;
     /** Heartbeat interval for progress digests (seconds; 0 disables). */
     digestIntervalSec?: number;
     /** Approval prompt timeout before default-deny (seconds). */
@@ -101,6 +113,8 @@ export interface Config {
 export declare const Config: z<Schemastery.ObjectS<{
     allowFrom: z<string[], string[]>;
     platform: z<"wechat" | "qq", "wechat" | "qq">;
+    platforms: z<("wechat" | "qq")[], ("wechat" | "qq")[]>;
+    allowFromByPlatform: z<any, Record<string, string[]>>;
     digestIntervalSec: z<number, number>;
     approvalTimeoutSec: z<number, number>;
     maxMessageChars: z<number, number>;
@@ -139,6 +153,8 @@ export declare const Config: z<Schemastery.ObjectS<{
 }>, Schemastery.ObjectT<{
     allowFrom: z<string[], string[]>;
     platform: z<"wechat" | "qq", "wechat" | "qq">;
+    platforms: z<("wechat" | "qq")[], ("wechat" | "qq")[]>;
+    allowFromByPlatform: z<any, Record<string, string[]>>;
     digestIntervalSec: z<number, number>;
     approvalTimeoutSec: z<number, number>;
     maxMessageChars: z<number, number>;
@@ -193,7 +209,24 @@ export declare const name = "dsh-chatnode-wechat";
  * decoration, never a loading prerequisite.
  */
 export declare const inject: string[];
-/** Mount the conversation node on a context that already provides `wechat`. */
+/**
+ * Mount the conversation node once **every platform it serves** has a gateway.
+ *
+ * The platforms cannot appear in the static `inject` list above: they are only
+ * known from the config, at apply time. Listing `wechat` there instead meant a QQ
+ * profile mounted `ctx.qq`, `ctx.wechat` never appeared, and cordis — which
+ * treats `inject` as a wait gate — left this entire plugin inactive. The gateway
+ * still connected, so from the outside everything looked healthy while every
+ * frame it emitted (`qq/message`, `qq/error`) went nowhere: no reply, no ledger
+ * line, no reminder fired. Waiting on the resolved platform keeps WeChat's
+ * behaviour identical (it waits for `ctx.wechat`, exactly as before) and lets a
+ * QQ profile mount.
+ *
+ * The node waits for the platform it serves rather than mounting once per
+ * platform: one node owns one conversation, so it must exist exactly once — and
+ * it must not start before the gateway it subscribes to is there, or this
+ * channel's messages would have no listener at all.
+ */
 export declare function apply(ctx: Context, config: Config): void;
 /** The conversation-node plugin object (mountable via `ctx.plugin`). */
 export declare const wechatConversationNode: {
@@ -202,6 +235,8 @@ export declare const wechatConversationNode: {
     Config: z<Schemastery.ObjectS<{
         allowFrom: z<string[], string[]>;
         platform: z<"wechat" | "qq", "wechat" | "qq">;
+        platforms: z<("wechat" | "qq")[], ("wechat" | "qq")[]>;
+        allowFromByPlatform: z<any, Record<string, string[]>>;
         digestIntervalSec: z<number, number>;
         approvalTimeoutSec: z<number, number>;
         maxMessageChars: z<number, number>;
@@ -240,6 +275,8 @@ export declare const wechatConversationNode: {
     }>, Schemastery.ObjectT<{
         allowFrom: z<string[], string[]>;
         platform: z<"wechat" | "qq", "wechat" | "qq">;
+        platforms: z<("wechat" | "qq")[], ("wechat" | "qq")[]>;
+        allowFromByPlatform: z<any, Record<string, string[]>>;
         digestIntervalSec: z<number, number>;
         approvalTimeoutSec: z<number, number>;
         maxMessageChars: z<number, number>;

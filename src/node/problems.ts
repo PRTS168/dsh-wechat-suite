@@ -27,8 +27,9 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { describeError } from './net.ts'
+import { platformNamespace, type PlatformId } from '../platform/index.ts'
 
-/** Append-only problem log (one line per occurrence). */
+/** Append-only problem log (the historical WeChat name; QQ gets `qq-problems.log`). */
 export const PROBLEM_FILE = 'wechat-problems.log'
 /** Rotate once the log passes this size; one previous file is kept. */
 export const PROBLEM_LOG_LIMIT_BYTES = 256 * 1024
@@ -37,9 +38,9 @@ export const PROBLEM_MEMORY_LIMIT = 50
 /** How many occurrences of one signature the memory keeps counting. */
 export const PROBLEM_OCCURRENCE_CAP = 9_999
 
-/** Default location of the problem log. */
-export function defaultProblemFile(): string {
-  return join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), PROBLEM_FILE)
+/** Default location of the problem log — one ledger per platform. */
+export function defaultProblemFile(platform: PlatformId = 'wechat'): string {
+  return join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), `${platformNamespace(platform)}problems.log`)
 }
 
 /** One distinct problem, with how often and how recently it fired. */

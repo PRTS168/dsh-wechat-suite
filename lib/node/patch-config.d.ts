@@ -21,7 +21,7 @@ export interface ConfigField {
     /** Secrets are masked in every API/CLI response. */
     secret?: boolean;
     /** 'list' = a YAML sequence (allowFrom); 'number' = numeric scalar. */
-    kind?: 'string' | 'number' | 'list';
+    kind?: 'string' | 'number' | 'list' | 'boolean';
     default?: string;
     placeholder?: string;
     hint?: string;
@@ -32,6 +32,14 @@ export declare const KNOWN_KEYS: ReadonlySet<string>;
 export declare function maskSecret(value: string): string;
 /** Default patch path for a profile (`$DSH_HOME/profiles/<profile>/cordis.patch.yml`). */
 export declare function defaultPatchPath(profile?: string): string;
+/**
+ * One YAML scalar, always quoted.
+ *
+ * Quoting unconditionally is the safe default: a WeChat id (`…@im.wechat`) or a
+ * key (`sk-…`) is never a plain YAML scalar, and the writer has no business
+ * guessing which strings are. Booleans and numbers that must stay bare go through
+ * the `kind`-aware helpers (`scalarLine` / `nestedScalar`), which bypass this.
+ */
 export declare function yamlStr(value: string): string;
 interface ParsedPatch {
     lines: string[];

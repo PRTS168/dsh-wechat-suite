@@ -25,11 +25,22 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import type { WechatConversationNode } from './core.ts'
+import { platformNamespace, type PlatformId } from '../platform/index.ts'
 
 /** One queued instruction from the admin page. */
 export interface ControlCommand {
   /** What to do. */
   op: 'new-session' | 'switch-session' | 'forget-session'
+  /**
+   * Which platform the page was showing when this was queued.
+   *
+   * Both profiles run their own node, and both poll their own queue directory —
+   * but a command queued from the WeChat page must never be executed by the QQ
+   * bridge (it would create/switch a session in the wrong platform). Absent means
+   * "the only platform this profile serves", which is how older console builds
+   * behaved.
+   */
+  platform?: PlatformId
   /** `new-session`: optional first prompt (empty = an empty new session). */
   prompt?: string
   /** `switch-session` / `forget-session`: the target session id. */
@@ -38,9 +49,15 @@ export interface ControlCommand {
   announce?: boolean
 }
 
-/** Where the queue lives (shared with the admin page). */
-export function adminControlDir(): string {
-  return join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'wechat-admin')
+/**
+ * Where this platform's queue lives (shared with the admin page).
+ *
+ * Namespaced per platform: one shared `wechat-admin/queue` with two profiles
+ * polling it meant "whoever ticks first executes it", so a command issued on the
+ * QQ page could be run by the WeChat bridge and its receipt read by both.
+ */
+export function adminControlDir(platform: PlatformId = 'wechat'): string {
+  return join(process.env.DSH_HOME || join(homedir(), '.dsh'), `${platformNamespace(platform)}admin`)
 }
 
 /** Never-throwing log for a context that may already be torn down. */
@@ -66,7 +83,9 @@ async function run(node: WechatConversationNode, command: ControlCommand): Promi
     }
     case 'switch-session': {
       const id = String(command.sessionId ?? '')
-      if (!id.startsWith('wechat-')) return { ok: false, detail: `拒绝：${id} 不是微信会话` }
+      if (!node.isOwnSessionId(id)) {
+        return { ok: false, detail: `拒绝：${id} 不是本平台（${node.platform}）的会话` }
+      }
       const session = node.ctx.sessions.get(id as never)
       if (!session) return { ok: false, detail: `会话不存在：${id}` }
       node.activeSessionId = session.id
@@ -101,8 +120,8 @@ async function run(node: WechatConversationNode, command: ControlCommand): Promi
  * lifetime, this poller must never be the reason it stays alive.
  */
 export function attachAdminControl(node: WechatConversationNode, options: { intervalMs?: number } = {}): () => void {
-  const queueDir = join(adminControlDir(), 'queue')
-  const doneDir = join(adminControlDir(), 'done')
+  const queueDir = join(adminControlDir(node.platform), 'queue')
+  const doneDir = join(adminControlDir(node.platform), 'done')
   let busy = false
 
   const tick = async (): Promise<void> => {
@@ -137,6 +156,13 @@ export function attachAdminControl(node: WechatConversationNode, options: { inte
           } catch { /* leave it */ }
           note(node, `丢弃无法解析的指令 ${name}: ${error instanceof Error ? error.message : String(error)}`)
           node.problems.report('admin/command', error, { notify: false, detail: `file=${name}` })
+          continue
+        }
+        // 队列已按平台分目录，但指令里仍带 platform：即使有人把某个平台的队列
+        // 目录复制/软链过来，别的平台也不会替它执行。**跳过而不是删除** —— 删掉
+        // 那条指令就永远不会有人执行它了。
+        if (command.platform !== undefined && command.platform !== node.platform) {
+          note(node, `跳过不属于本平台（${node.platform}）的指令 ${name}（platform=${command.platform}）`)
           continue
         }
         let result: { ok: boolean; detail: string }

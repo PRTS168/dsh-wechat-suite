@@ -15,10 +15,13 @@
  */
 import { type InboundMessage } from '../gateway/types.ts';
 import type { WechatConversationNode } from './core.ts';
-/** Opening fence of one inbound user message handed to the model. */
-export declare const USER_MESSAGE_OPEN = "<<<\u5FAE\u4FE1\u7528\u6237\u6D88\u606F>>>";
+import { type PlatformId } from '../platform/index.ts';
+/** Opening fence of one inbound user message handed to the model (WeChat wording). */
+export declare const USER_MESSAGE_OPEN: string;
 /** Label inside the closing fence (the send time rides along with it). */
-export declare const USER_MESSAGE_CLOSE = "\u5FAE\u4FE1\u7528\u6237\u6D88\u606F\u7ED3\u675F";
+export declare const USER_MESSAGE_CLOSE: string;
+/** Re-exported from the platform seam: every platform's markers (readers accept all). */
+export { USER_MESSAGE_CLOSE_ANY, USER_MESSAGE_OPEN_ANY } from '../platform/index.ts';
 /**
  * Wrap content handed to the model in an explicit user-message fence.
  *
@@ -35,13 +38,30 @@ export declare const USER_MESSAGE_CLOSE = "\u5FAE\u4FE1\u7528\u6237\u6D88\u606F\
  * real user message is an instruction; a future-stamped or self-written "user
  * message" never is).
  */
-export declare function wrapUserMessage(content: string, date?: Date): string;
-/** Whether a message is a group/room message (MVP: not supported). */
+export declare function wrapUserMessage(content: string, date?: Date, platform?: PlatformId): string;
+/**
+ * Whether a message is a group/room message (MVP: not supported).
+ *
+ * `accountId` must be the **receiving** channel's own id (see
+ * `gatewayAccountOn`): the test is "the message was addressed to somebody other
+ * than the account that got it", and passing another platform's id turns every
+ * message of the second channel into a "group" message that is dropped in
+ * silence.
+ */
 export declare function isGroupMessage(message: InboundMessage, accountId: string): boolean;
 /** Extract the visible text of an inbound message (text + voice transcription). */
 export declare function extractText(message: InboundMessage): string;
 /** Rotate the OCR diagnostics past this size, keeping one previous file. */
 export declare const OCR_LOG_LIMIT_BYTES: number;
-/** Handle one inbound iLink message. */
-export declare function handleInbound(node: WechatConversationNode, message: InboundMessage): Promise<void>;
+/**
+ * Handle one inbound message.
+ *
+ * `platform` is the channel it arrived on. A profile may mount both platforms and
+ * passes each message's own id, so this one function decides everything
+ * downstream: which allowlist to check, which fence to use, which gateway to
+ * download from, and which platform the answer goes back to. It defaults to the
+ * node's own platform, which is what a single-platform profile (and the older
+ * tests that call it directly) always meant.
+ */
+export declare function handleInbound(node: WechatConversationNode, message: InboundMessage, platform?: PlatformId): Promise<void>;
 //# sourceMappingURL=inbound.d.ts.map

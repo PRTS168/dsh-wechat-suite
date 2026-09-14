@@ -17,14 +17,15 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { ChatPlatform } from '../platform/index.ts'
 import type { PlatformId } from '../platform/index.ts'
+import { normalizeAllowFromByPlatform, platformLabel, resolvePlatformPlan } from '../platform/index.ts'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { MAX_MESSAGE_CHARS } from '../gateway/types.ts'
-import { WechatConversationNode, attachMemoryCompactionWatch, type NodeConfig } from './core.ts'
-import { sendTextToPeer } from './outbound.ts'
+import { WechatConversationNode, attachMemoryCompactionWatch, type NodeConfig, type OutboundTarget } from './core.ts'
+import { resolveOutboundTarget, sendTextToPeer } from './outbound.ts'
 import { ReminderStore } from './reminders.ts'
 import { MorningService } from './morning.ts'
-import { MEMORY_SECTIONS, MemoryService, applyPatch, factCount } from './memory.ts'
+import { MEMORY_SECTIONS, MemoryService, applyPatch, defaultMemoryFile, factCount } from './memory.ts'
 import { generateImage } from './image-gen.ts'
 import { synthesizeSpeech } from './tts.ts'
 import { sendEmail } from './email.ts'
@@ -37,11 +38,47 @@ import { lightToolDefinition } from './light.ts'
  * "cannot get required service … in inactive context" once the scope is torn
  * down, and on 2026-09-12 an escaped version of exactly that killed the host.
  * Going through the resolved service keeps the failure inside the tool call.
+ *
+ * A tool call belongs to the platform of the **turn** that asked for it, so its
+ * result must go back there — a QQ user's picture sent through the WeChat gateway
+ * would reach a stranger or nobody. A profile serves one platform, but the target
+ * is still resolved per turn because a session can be handed over between them.
  */
-function chatOrThrow(node: { chat?: ChatPlatform }): ChatPlatform {
-  const chat = node.chat
-  if (!chat) throw new Error('网关服务不可用：当前平台没有挂载网关')
-  return chat
+function targetOrThrow(node: WechatConversationNode): OutboundTarget & { chat: ChatPlatform } {
+  const target = resolveOutboundTarget(node)
+  if (!target?.chat) {
+    throw new Error(
+      target
+        ? `${platformLabel(target.platform)}网关服务不可用：目标平台没有挂载网关`
+        : '网关服务不可用：当前平台没有挂载网关',
+    )
+  }
+  return target as OutboundTarget & { chat: ChatPlatform }
+}
+
+/**
+ * A target that can also *deliver media*, or a thrown error.
+ *
+ * The capability is read from the **target platform's own gateway**: WeChat
+ * declares images/voice, QQ's official API declares neither until its three-step
+ * upload exists. Without this the answer to a QQ user's "画张图" was generated
+ * (and paid for) and only then discovered to be undeliverable.
+ */
+function mediaTargetOrThrow(
+  node: WechatConversationNode,
+  kind: 'media' | 'voice',
+): OutboundTarget & { chat: ChatPlatform } {
+  const target = targetOrThrow(node)
+  // Read from the node (not from the primary platform, and not assumed).
+  const capabilities = node.capabilitiesFor(target.platform)
+  const supported = kind === 'voice' ? (capabilities?.voice ?? true) : (capabilities?.media ?? true)
+  if (!supported) {
+    const what = kind === 'voice' ? '语音' : '图片与文件'
+    throw new Error(
+      `${platformLabel(target.platform)}网关声明自己不能发送${what}，已在生成/发送之前拒绝（没有产生费用）`,
+    )
+  }
+  return target
 }
 
 /** Plugin config. `allowFrom` is REQUIRED and validated at apply time. */
@@ -55,6 +92,18 @@ export interface Config {
    * before this key existed meant.
    */
   platform?: PlatformId
+  /**
+   * The platform this profile serves, as a list. Only ever one entry; unwritten
+   * means "just `platform`", which is also the primary (session namespace,
+   * default paths).
+   */
+  platforms?: PlatformId[]
+  /**
+   * Per-platform allowlists, e.g. `{ qq: ['<user_openid>'] }`. A platform with
+   * its own entry uses it; every other platform uses `allowFrom`. An entry that
+   * is an empty list accepts nobody on that platform.
+   */
+  allowFromByPlatform?: Record<string, string[]>
   /** Heartbeat interval for progress digests (seconds; 0 disables). */
   digestIntervalSec?: number
   /** Approval prompt timeout before default-deny (seconds). */
@@ -130,6 +179,10 @@ export interface Config {
 export const Config = z.object({
   allowFrom: z.array(z.string()).default([]),
   platform: z.union([z.const('wechat'), z.const('qq')]).default('wechat'),
+  // 单平台列表。故意不给默认值：写没写要能区分开，解析规则在 resolvePlatformPlan()。
+  platforms: z.array(z.union([z.const('wechat'), z.const('qq')])),
+  // `z.transform`, not `z.dict`, on purpose — see normalizeAllowFromByPlatform.
+  allowFromByPlatform: z.transform(z.any(), normalizeAllowFromByPlatform),
   digestIntervalSec: z.number().default(300),
   approvalTimeoutSec: z.number().default(600),
   maxMessageChars: z.number().default(MAX_MESSAGE_CHARS),
@@ -192,11 +245,57 @@ export const name = 'dsh-chatnode-wechat'
  * fall back to the first user message (see `labels.ts`), so the title is a
  * decoration, never a loading prerequisite.
  */
-export const inject = ['wechat', 'sessions', 'agents', 'approval', 'tools']
+export const inject = ['sessions', 'agents', 'approval', 'tools']
 
-/** Mount the conversation node on a context that already provides `wechat`. */
+/**
+ * Mount the conversation node once **every platform it serves** has a gateway.
+ *
+ * The platforms cannot appear in the static `inject` list above: they are only
+ * known from the config, at apply time. Listing `wechat` there instead meant a QQ
+ * profile mounted `ctx.qq`, `ctx.wechat` never appeared, and cordis — which
+ * treats `inject` as a wait gate — left this entire plugin inactive. The gateway
+ * still connected, so from the outside everything looked healthy while every
+ * frame it emitted (`qq/message`, `qq/error`) went nowhere: no reply, no ledger
+ * line, no reminder fired. Waiting on the resolved platform keeps WeChat's
+ * behaviour identical (it waits for `ctx.wechat`, exactly as before) and lets a
+ * QQ profile mount.
+ *
+ * The node waits for the platform it serves rather than mounting once per
+ * platform: one node owns one conversation, so it must exist exactly once — and
+ * it must not start before the gateway it subscribes to is there, or this
+ * channel's messages would have no listener at all.
+ */
 export function apply(ctx: Context, config: Config): void {
-  const node = new WechatConversationNode(ctx, config as NodeConfig)
+  // The allowlist is the security boundary, and this check has to happen HERE,
+  // synchronously: a failed mount must reject `ctx.plugin(...)` so the operator
+  // sees it. Left to the node's constructor it would throw inside the deferred
+  // `ctx.inject` callback below, where cordis swallows it — the plugin would
+  // simply not mount, and a missing allowlist would look exactly like a quiet
+  // profile. (The constructor still re-checks; this is the mount-time gate.)
+  if (!Array.isArray(config.allowFrom) || config.allowFrom.length === 0) {
+    throw new Error(
+      'dsh-chatnode-wechat: allowFrom is REQUIRED and must list at least one sender id ' +
+      '(WeChat sender id, or the QQ user_openid). An agent that accepts instructions from ' +
+      'any contact is a prompt-injection front door.',
+    )
+  }
+  const plan = resolvePlatformPlan(config.platforms, config.platform)
+  ctx.inject(plan.platforms, (nodeCtx) => {
+    mountConversationNode(nodeCtx, config)
+  })
+}
+
+/**
+ * The node itself, mounted on a context where every platform's gateway is present.
+ *
+ * The config is handed over as written — `platform` and `platforms` included —
+ * so the node resolves the very same plan this apply resolved (see
+ * `resolvePlatformPlan`, which is deterministic), and there is exactly one place
+ * that decides what the primary platform is.
+ */
+function mountConversationNode(ctx: Context, config: Config): void {
+  const node = new WechatConversationNode(ctx, { ...config } as NodeConfig)
+  const platform = node.platform
   /** One call shape for every swallowed failure in the bridge. */
   const report = (kind: string, error: unknown, detail?: string): void => {
     node.problems.report(kind, error, detail === undefined ? {} : { detail })
@@ -224,18 +323,25 @@ export function apply(ctx: Context, config: Config): void {
   // Registered as tools so the agent can answer natural-language requests
   // ("30 分钟后提醒我喝水") with real tool calls. Persisted to a JSON file so
   // reminders survive restarts; the store pushes due alerts to their peer.
-  const reminderStore = new ReminderStore(ctx, config.reminderFile, report, config.platform ?? 'wechat')
+  // The store's own file stays the primary platform's (its format and default
+  // path are an existing on-disk contract), but delivery follows the peer: a
+  // reminder set from QQ is pushed back through the QQ gateway, not WeChat's.
+  const reminderStore = new ReminderStore(ctx, config.reminderFile, report, platform, (peerId) => node.platformForPeer(peerId))
   void reminderStore.start().catch((error) => report('reminders/start', error))
   ctx.effect(() => {
     return () => reminderStore.stop()
   })
 
   // ---- morning greeting: daily weather push, toggled via /早安 ------------
+  // A proactive push has no turn to read a target from, so it stays on the
+  // profile's own platform (its file, its gateway, its subset of the allowlist) —
+  // the behaviour single-platform profiles always had. The per-platform filter is
+  // what keeps a QQ openid from being pushed at the WeChat API.
   const morningService = new MorningService(ctx, {
     onProblem: (kind, error) => report(kind, error),
     file: config.morningFile,
-    targets: () => [...(config.allowFrom ?? [])],
-    platform: config.platform ?? 'wechat',
+    targets: () => (config.allowFrom ?? []).filter((peer) => node.platformForPeer(peer) === platform),
+    platform,
   })
   node.morningService = morningService
   void morningService.start().catch((error) => report('morning/start', error))
@@ -248,7 +354,9 @@ export function apply(ctx: Context, config: Config): void {
   // consolidation asks for the reasoning the bridge already knows how to do:
   // active session + its routed model.
   const memoryService = new MemoryService(ctx, {
-    file: config.memoryFile,
+    // 记忆按平台分开：默认路径带平台前缀，否则两个 profile 会互相把对方的事实
+    // 注入到自己的对话里。
+    file: config.memoryFile ?? defaultMemoryFile(platform),
     onProblem: report,
     injectEvery: config.memoryInjectEvery,
     consolidateAt: config.memoryConsolidateTime,
@@ -289,7 +397,7 @@ export function apply(ctx: Context, config: Config): void {
         text: {
           type: 'string',
           required: true,
-          description: 'The fact itself, third person, at most 300 characters, e.g. "主人有两个邮箱：主 a@x.com、副 b@y.com"',
+          description: 'The fact itself, third person, at most 300 characters, e.g. "主人喜欢在早上喝咖啡"',
         },
         section: {
           type: 'string',
@@ -392,13 +500,28 @@ export function apply(ctx: Context, config: Config): void {
     throw new Error('set_reminder: provide inMinutes (relative) or atTime ("HH:MM", today/tomorrow)')
   }
 
+  /**
+   * 媒体工具的名字。
+   *
+   * 用户的要求是"**微信侧不变，QQ 去微信化**"：跑单平台微信的 profile 必须与今天
+   * 逐字一致（人设、习惯、历史里都写着 `wechat_send_*`），而 QQ 单平台与合并模式
+   * 下模型不该看到"发给微信 peer"这种与当前渠道不符的名字。合并模式下一套工具要
+   * 同时服务两条渠道，所以取中性名。
+   */
+  const neutralToolNames = !(platform === 'wechat' && !(Array.isArray(config.platforms) && config.platforms.length > 1))
+  const mediaToolName = (base: 'send_image' | 'send_file' | 'send_video'): string =>
+    neutralToolNames ? base : `wechat_${base}`
+  const imageTool = mediaToolName('send_image')
+  const fileTool = mediaToolName('send_file')
+  const videoTool = mediaToolName('send_video')
+
   const unregisterSendImage = ctx.tools.register(
     defineTool({
-      name: 'wechat_send_image',
+      name: imageTool,
       description:
-        'Send a local image file to the current WeChat peer through the chatnode-wechat bridge. ' +
-        'The peer is the last WeChat contact who messaged the bot, so at least one inbound WeChat ' +
-        'message must have arrived since the profile started. Pass the absolute path of the image file.',
+        'Send a local image file to the current chat peer through this bridge (the peer is whoever ' +
+        'messaged the bot most recently, so at least one inbound message must have arrived since the ' +
+        'profile started). Pass the absolute path of the image file.',
       parameters: {
         path: { type: 'string', required: true, description: 'Absolute path to the image file (jpg/png/webp/gif).' },
       },
@@ -408,17 +531,11 @@ export function apply(ctx: Context, config: Config): void {
       },
       execute: async (args) => {
         const path = typeof args.path === 'string' ? args.path.trim() : ''
-        if (!path) throw new Error('wechat_send_image: path is required')
-        const peer = node.peerId
-        if (!peer) {
-          throw new Error(
-            'wechat_send_image: no WeChat peer yet — send the bot a WeChat message first ' +
-            'so the bridge knows who to reply to',
-          )
-        }
-        const result = await chatOrThrow(node).sendImage(peer, path)
-        if (!result.success) throw new Error(`wechat_send_image: ${result.error}`)
-        return `✅ 图片已发送到微信: ${path}`
+        if (!path) throw new Error(`${imageTool}: path is required`)
+        const target = mediaTargetOrThrow(node, 'media')
+        const result = await target.chat.sendImage(target.peerId, path)
+        if (!result.success) throw new Error(`${imageTool}: ${result.error}`)
+        return `✅ 图片已发送到${platformLabel(target.platform)}: ${path}`
       },
       timeoutMs: 180_000,
     }),
@@ -428,14 +545,14 @@ export function apply(ctx: Context, config: Config): void {
   })
 
   // wechat_send_file — send any local file (documents, archives, …) to the peer.
+  // 文件工具（名字随平台：见上面的 neutralToolNames）
   const unregisterSendFile = ctx.tools.register(
     defineTool({
-      name: 'wechat_send_file',
+      name: fileTool,
       description:
-        'Send a local file (document, archive, pdf, mp3, …) to the current WeChat peer through the ' +
-        'chatnode-wechat bridge. The peer is the last WeChat contact who messaged the bot, so at least ' +
-        'one inbound WeChat message must have arrived since the profile started. ' +
-        'Pass the absolute path of the file. WeChat receives it as a downloadable file attachment.',
+        'Send a local file (document, archive, pdf, mp3, …) to the current chat peer through this ' +
+        'bridge (the peer is whoever messaged the bot most recently, so at least one inbound message ' +
+        'must have arrived since the profile started). Pass the absolute path of the file.',
       parameters: {
         path: { type: 'string', required: true, description: 'Absolute path of the file to send.' },
       },
@@ -445,17 +562,11 @@ export function apply(ctx: Context, config: Config): void {
       },
       execute: async (args) => {
         const path = typeof args.path === 'string' ? args.path.trim() : ''
-        if (!path) throw new Error('wechat_send_file: path is required')
-        const peer = node.peerId
-        if (!peer) {
-          throw new Error(
-            'wechat_send_file: no WeChat peer yet — send the bot a WeChat message first ' +
-            'so the bridge knows who to reply to',
-          )
-        }
-        const result = await chatOrThrow(node).sendFile(peer, path)
-        if (!result.success) throw new Error(`wechat_send_file: ${result.error}`)
-        return `✅ 文件已发送到微信: ${path}`
+        if (!path) throw new Error(`${fileTool}: path is required`)
+        const target = mediaTargetOrThrow(node, 'media')
+        const result = await target.chat.sendFile(target.peerId, path)
+        if (!result.success) throw new Error(`${fileTool}: ${result.error}`)
+        return `✅ 文件已发送到${platformLabel(target.platform)}: ${path}`
       },
       timeoutMs: 180_000,
     }),
@@ -468,14 +579,15 @@ export function apply(ctx: Context, config: Config): void {
   // iLink gateway has no reliable native video bubble, so like voice replies
   // the clip is delivered as a playable file attachment (mp4 opens and plays
   // directly in WeChat).
+  // 视频工具：iLink 没有原生视频气泡，所以按可播放的附件发（QQ 侧同理，见能力门禁）。
   const unregisterSendVideo = ctx.tools.register(
     defineTool({
-      name: 'wechat_send_video',
+      name: videoTool,
       description:
-        'Send a local video file (mp4/mov/webm/…) to the current WeChat peer through the chatnode-wechat ' +
-        'bridge. The peer is the last WeChat contact who messaged the bot, so at least one inbound WeChat ' +
-        'message must have arrived since the profile started. Pass the absolute path of the video file. ' +
-        'Note: the iLink gateway has no native video bubble, so the clip arrives as a playable file attachment.',
+        'Send a local video file (mp4/mov/webm/…) to the current chat peer through this bridge (the ' +
+        'peer is whoever messaged the bot most recently, so at least one inbound message must have ' +
+        'arrived since the profile started). Pass the absolute path of the video file. Note: this ' +
+        'bridge has no native video bubble, so the clip arrives as a playable file attachment.',
       parameters: {
         path: { type: 'string', required: true, description: 'Absolute path of the video file (mp4/mov/webm/…).' },
       },
@@ -485,17 +597,11 @@ export function apply(ctx: Context, config: Config): void {
       },
       execute: async (args) => {
         const path = typeof args.path === 'string' ? args.path.trim() : ''
-        if (!path) throw new Error('wechat_send_video: path is required')
-        const peer = node.peerId
-        if (!peer) {
-          throw new Error(
-            'wechat_send_video: no WeChat peer yet — send the bot a WeChat message first ' +
-            'so the bridge knows who to reply to',
-          )
-        }
-        const result = await chatOrThrow(node).sendFile(peer, path)
-        if (!result.success) throw new Error(`wechat_send_video: ${result.error}`)
-        return `✅ 视频已发送到微信: ${path}`
+        if (!path) throw new Error(`${videoTool}: path is required`)
+        const target = mediaTargetOrThrow(node, 'media')
+        const result = await target.chat.sendFile(target.peerId, path)
+        if (!result.success) throw new Error(`${videoTool}: ${result.error}`)
+        return `✅ 视频已发送到${platformLabel(target.platform)}: ${path}`
       },
       timeoutMs: 180_000,
     }),
@@ -509,7 +615,7 @@ export function apply(ctx: Context, config: Config): void {
     defineTool({
       name: 'generate_image',
       description:
-        'Generate an image from a text prompt (SiliconFlow text-to-image) and send it to the current WeChat peer. ' +
+        'Generate an image from a text prompt (SiliconFlow text-to-image) and send it to the current chat peer. ' +
         'Use when the user asks to 画/生成/绘一张图, an illustration, a picture of something. ' +
         'Describe the subject, style, and composition in the prompt. The image is sent automatically; returns confirmation.',
       parameters: {
@@ -522,18 +628,17 @@ export function apply(ctx: Context, config: Config): void {
       execute: async (args) => {
         const prompt = typeof args.prompt === 'string' ? args.prompt.trim() : ''
         if (!prompt) throw new Error('generate_image: prompt is required')
-        const peer = node.peerId
-        if (!peer) throw new Error('generate_image: no WeChat peer yet — the user must message the bot first')
+        const target = mediaTargetOrThrow(node, 'media')
         const apiKey = config.imageGenApiKey ?? config.ocrApiKey ?? ''
         if (!apiKey) throw new Error('generate_image: no SiliconFlow key configured (set imageGenApiKey or ocrApiKey)')
-        await chatOrThrow(node).sendTyping(peer, 1).catch(() => {})
-        await chatOrThrow(node).sendText(peer, `🎨 正在画图：${prompt.slice(0, 120)}`).catch(() => {})
+        await target.chat.sendTyping(target.peerId, 1).catch(() => {})
+        await target.chat.sendText(target.peerId, `🎨 正在画图：${prompt.slice(0, 120)}`).catch(() => {})
         const outDir = config.imageGenDir ?? (config.mediaDir ? `${config.mediaDir}/generated` : undefined)
         const result = await generateImage(
           { apiKey, model: config.imageGenModel, outDir, baseUrl: config.ocrBaseUrl },
           prompt,
         )
-        const sendResult = await chatOrThrow(node).sendImage(peer, result.path)
+        const sendResult = await target.chat.sendImage(target.peerId, result.path)
         if (!sendResult.success) throw new Error(`图片生成成功但发送失败: ${sendResult.error}`)
         return `✅ 图已生成并发送`
       },
@@ -564,13 +669,12 @@ export function apply(ctx: Context, config: Config): void {
       execute: async (args) => {
         const text = typeof args.text === 'string' ? args.text.trim() : ''
         if (!text) throw new Error('speak: text is required')
-        const peer = node.peerId
-        if (!peer) throw new Error('speak: no WeChat peer yet — the user must message the bot first')
+        const target = mediaTargetOrThrow(node, 'voice')
         const apiKey = config.ttsApiKey ?? config.ocrApiKey ?? ''
         const voice = config.ttsVoice ?? ''
         if (!apiKey || !voice) throw new Error('speak: TTS not configured (set ttsApiKey and ttsVoice)')
-        await chatOrThrow(node).sendTyping(peer, 1).catch(() => {})
-        await chatOrThrow(node).sendText(peer, '🎙 正在说话…').catch(() => {})
+        await target.chat.sendTyping(target.peerId, 1).catch(() => {})
+        await target.chat.sendText(target.peerId, '🎙 正在说话…').catch(() => {})
         // 1) mp3 via SiliconFlow TTS.
         const mp3 = await synthesizeSpeech({ apiKey, model: config.ttsModel, voice, baseUrl: config.ocrBaseUrl }, text)
         // 2) persist mp3 and send as a file attachment (plays on tap).
@@ -581,7 +685,7 @@ export function apply(ctx: Context, config: Config): void {
         const name = `voice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`
         const absPath = join(dir ?? process.cwd(), name)
         await writeFile(absPath, Buffer.from(mp3))
-        const result = await chatOrThrow(node).sendFile(peer, absPath, name)
+        const result = await target.chat.sendFile(target.peerId, absPath, name)
         if (!result.success) throw new Error(`语音文件发送失败: ${result.error}`)
         return '✅ 语音文件已发送'
       },
@@ -615,10 +719,12 @@ export function apply(ctx: Context, config: Config): void {
       execute: async (args) => {
         const text = typeof args.text === 'string' ? args.text.trim() : ''
         if (!text) throw new Error('set_reminder: text is required')
-        const peer = node.peerId
-        if (!peer) throw new Error('set_reminder: no WeChat peer yet — the user must message the bot first')
+        // The peer is the one whose turn this is: a reminder set from QQ must
+        // wake its owner on QQ, and the store remembers only the id it is given.
+        const target = resolveOutboundTarget(node)
+        if (!target) throw new Error('set_reminder: no peer yet — the user must message the bot first')
         const at = resolveTarget(args)
-        const reminder = await reminderStore.add({ at, text, peerId: peer })
+        const reminder = await reminderStore.add({ at, text, peerId: target.peerId })
         // A reminder that only lives in memory fires fine today and is gone
         // after a restart; a plain "✅ 已设置" would promise more than the
         // bridge can keep.
@@ -646,7 +752,7 @@ export function apply(ctx: Context, config: Config): void {
         render: (_args, value: string) => [{ type: 'text', text: value }],
       },
       execute: async () => {
-        const peer = node.peerId
+        const peer = resolveOutboundTarget(node)?.peerId
         if (!peer) return '（还没有收到过你的消息，无法确认会话）'
         const mine = reminderStore.list().filter((r) => r.peerId === peer)
         if (mine.length === 0) return '📭 当前没有待触发的提醒。'
@@ -676,7 +782,7 @@ export function apply(ctx: Context, config: Config): void {
       execute: async (args) => {
         const id = typeof args.id === 'string' ? args.id.trim() : ''
         if (!id) throw new Error('cancel_reminder: id is required')
-        const peer = node.peerId
+        const peer = resolveOutboundTarget(node)?.peerId
         const mine = reminderStore.list().find((r) => r.id === id && r.peerId === peer)
         if (!mine) return `❌ 未找到提醒 ${id}（只能取消你自己的提醒）。可用 list_reminders 查看。`
         await reminderStore.remove(id)

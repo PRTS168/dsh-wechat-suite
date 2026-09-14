@@ -19,13 +19,14 @@ import { existsSync, renameSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
-import { ITEM_TEXT, ITEM_VOICE, ITEM_IMAGE, ITEM_FILE, ITEM_VIDEO, type InboundMessage, type WireItem } from '../gateway/types.ts'
+import { ITEM_TEXT, ITEM_VOICE, ITEM_IMAGE, ITEM_VIDEO, type InboundMessage, type WireItem } from '../gateway/types.ts'
 import { imageExt } from '../gateway/media.ts'
 import { ocrImage } from './ocr.ts'
 import { transcribeSpeech } from './stt.ts'
 import type { WechatConversationNode } from './core.ts'
 import { routeCommand, routePickerReply } from './commands.ts'
 import { sendTextToPeer } from './outbound.ts'
+import { isPlatformId, platformLabel, userFence, type ChatPlatform, type PlatformId } from '../platform/index.ts'
 import {
   buildImageBlock,
   parseRoute,
@@ -46,11 +47,14 @@ function sendStamp(date = new Date()): string {
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}`
 }
 
-/** Opening fence of one inbound user message handed to the model. */
-export const USER_MESSAGE_OPEN = '<<<微信用户消息>>>'
+/** Opening fence of one inbound user message handed to the model (WeChat wording). */
+export const USER_MESSAGE_OPEN = userFence('wechat').open
 
 /** Label inside the closing fence (the send time rides along with it). */
-export const USER_MESSAGE_CLOSE = '微信用户消息结束'
+export const USER_MESSAGE_CLOSE = userFence('wechat').close
+
+/** Re-exported from the platform seam: every platform's markers (readers accept all). */
+export { USER_MESSAGE_CLOSE_ANY, USER_MESSAGE_OPEN_ANY } from '../platform/index.ts'
 
 /**
  * Wrap content handed to the model in an explicit user-message fence.
@@ -68,8 +72,9 @@ export const USER_MESSAGE_CLOSE = '微信用户消息结束'
  * real user message is an instruction; a future-stamped or self-written "user
  * message" never is).
  */
-export function wrapUserMessage(content: string, date = new Date()): string {
-  return `${USER_MESSAGE_OPEN}\n${content}\n<<<${USER_MESSAGE_CLOSE}｜发送于 ${sendStamp(date)}>>>`
+export function wrapUserMessage(content: string, date = new Date(), platform: PlatformId = 'wechat'): string {
+  const fence = userFence(platform)
+  return `${fence.open}\n${content}\n<<<${fence.close}｜发送于 ${sendStamp(date)}>>>`
 }
 
 /**
@@ -79,11 +84,41 @@ export function wrapUserMessage(content: string, date = new Date()): string {
  * The briefing stays outside deliberately — the persona's hard rule is that only
  * fenced content counts as a user message, so background facts must not ride
  * inside it.
+ *
+ * `platform` is the **source** channel of this message, not the node's primary:
+ * the fence is how the model (and the persona's rules) can tell which channel the
+ * owner is speaking from.
  */
-function wrapForModel(node: WechatConversationNode, content: string): string {
+function wrapForModel(node: WechatConversationNode, content: string, platform: PlatformId): string {
+  // 记忆简报走的是同一条"用户消息之前附背景块"的路，不另开注入通道。
   const brief = node.memoryPreamble()
-  const wrapped = wrapUserMessage(content)
-  return brief ? `${brief}\n\n${wrapped}` : wrapped
+  const wrapped = wrapUserMessage(content, new Date(), platform)
+  // 渠道与能力告知（放在围栏外，和记忆简报同一位置：它是背景事实，不是主人的话）。
+  return [brief, channelNotice(node, platform), wrapped].filter(Boolean).join('\n\n')
+}
+
+/**
+ * 告诉模型这条消息来自哪条渠道、该渠道**能不能收图片/语音**。
+ *
+ * 两条渠道的能力并不一样（QQ 官方接口现在还发不了图片与语音）。不说明的话，模型会照着
+ * 微信那边的成功经验去发图，然后撞墙；而"撞墙"的表现是一句英文报错，从主人那边看就是
+ * "它突然不会发图了"。
+ *
+ * 只描述事实，不下命令：真正的拦截在工具侧（目标平台不支持时在生成之前拒绝），
+ * 这里只是让它**不用白跑一趟**。
+ */
+function channelNotice(node: WechatConversationNode, platform: PlatformId): string {
+  const label = platformLabel(platform)
+  const caps = node.capabilitiesFor(platform)
+  const lacks: string[] = []
+  if (caps?.media === false) lacks.push('图片与文件')
+  if (caps?.voice === false) lacks.push('语音')
+  const total = node.platforms?.length ?? 1
+  if (lacks.length === 0) {
+    // 单平台时连这一行都不加：保持微信侧输出与从前逐字一致。
+    return total > 1 ? `【这条来自 ${label}】` : ''
+  }
+  return `【这条来自 ${label}；${label} 目前收不到${lacks.join('、')}，别用发图/语音工具，改用文字或链接】`
 }
 
 /**
@@ -100,13 +135,86 @@ function withHandoff(node: WechatConversationNode, content: string): string {
   return note ? `${note}\n\n${content}` : content
 }
 
-/** Whether a message is a group/room message (MVP: not supported). */
+/**
+ * Whether a message is a group/room message (MVP: not supported).
+ *
+ * `accountId` must be the **receiving** channel's own id (see
+ * `gatewayAccountOn`): the test is "the message was addressed to somebody other
+ * than the account that got it", and passing another platform's id turns every
+ * message of the second channel into a "group" message that is dropped in
+ * silence.
+ */
 export function isGroupMessage(message: InboundMessage, accountId: string): boolean {
   const roomId = String(message.room_id ?? message.chat_room_id ?? '').trim()
   if (roomId) return true
   const toUserId = String(message.to_user_id ?? '').trim()
-  const sender = String(message.from_user_id ?? '').trim()
   return Boolean(toUserId && accountId && toUserId !== accountId && message.msg_type === 1)
+}
+
+// ---------------------------------------------------------------------------
+// Source-platform plumbing
+//
+// The three helpers below are the seam between "a message arrived on platform P"
+// and the node's per-platform bookkeeping. Each checks for the real node's method
+// before using it: the media tests drive this module with a light stand-in that
+// has only the single-platform surface (`peerId`, `chat`, `isAllowed`), and a
+// missing method must degrade to the single-platform behaviour, never crash the
+// one path whose whole job is to answer.
+// ---------------------------------------------------------------------------
+
+/** Whether a sender may drive the agent on the platform the message arrived on. */
+function isAllowedOn(node: WechatConversationNode, platform: PlatformId, sender: string): boolean {
+  if (typeof node.isAllowedFor === 'function') return node.isAllowedFor(platform, sender)
+  return node.isAllowed(sender)
+}
+
+/** The gateway the message arrived on — downloads go through **that** one. */
+function chatOn(node: WechatConversationNode, platform: PlatformId): ChatPlatform | undefined {
+  if (typeof node.chatFor === 'function') return node.chatFor(platform)
+  return node.chat
+}
+
+/**
+ * The account id of the platform this message arrived on, for group detection.
+ *
+ * It must be the source channel's own id: a QQ message carries the QQ AppID in
+ * `to_user_id`, and comparing that against WeChat's account id would classify
+ * every QQ single-chat message as a group message and drop it without a word.
+ */
+function gatewayAccountOn(node: WechatConversationNode, platform: PlatformId): string {
+  if (typeof node.gatewayAccountIdFor === 'function') return node.gatewayAccountIdFor(platform)
+  return node.gatewayAccountId
+}
+
+/** Remember where this message came from (see `core.noteInboundTarget`). */
+function noteInbound(node: WechatConversationNode, platform: PlatformId, sender: string): void {
+  if (typeof node.noteInboundTarget === 'function') node.noteInboundTarget(platform, sender)
+  else node.peerId = sender
+}
+
+/**
+ * Hand one inbound message to the agent, binding its platform as the outbound
+ * target of the turn that starts here.
+ *
+ * A turn's replies are asynchronous, so the binding must happen exactly when the
+ * turn starts and be released at `turn/end`. If submitting throws, the binding is
+ * taken back: that turn never started, so nothing would ever release it, and the
+ * stale head would answer the *next* message on the wrong channel.
+ */
+function submitTurn(
+  node: WechatConversationNode,
+  platform: PlatformId,
+  sender: string,
+  submit: () => void,
+): void {
+  const tracked = typeof node.beginTurnTarget === 'function'
+  if (tracked) node.beginTurnTarget(platform, sender)
+  try {
+    submit()
+  } catch (error) {
+    if (tracked) node.dropTurnTarget()
+    throw error
+  }
 }
 
 /** Extract the visible text of an inbound message (text + voice transcription). */
@@ -158,10 +266,12 @@ function extractAttachment(message: InboundMessage): { item: WireItem; kind: 'fi
   return null
 }
 
-/** Directory inbound images are saved to (configurable, defaults under $DSH_HOME). */
-function inboundMediaDir(node: WechatConversationNode): string {
+/** Directory inbound media is saved to (configurable, defaults under $DSH_HOME).
+ *  Namespaced by the **source** platform: with both channels mounted, WeChat
+ *  pictures and QQ pictures stay in separate drawers. */
+function inboundMediaDir(node: WechatConversationNode, platform: PlatformId): string {
   return node.config.mediaDir
-    ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'attachments', 'wechat')
+    ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'attachments', platform)
 }
 
 /** Rotate the OCR diagnostics past this size, keeping one previous file. */
@@ -195,6 +305,11 @@ async function reportMediaFailure(
   reason: string,
 ): Promise<void> {
   node.ctx.logger?.warn?.('[dsh-chatnode-wechat] %s inbound dropped: %s', kind, reason)
+  // 上面那句注释写的是"两个平面"，但本宿主的 logger 落不到任何能事后翻看的文件 ——
+  // 于是少了台账这一面：单条失败用户还能看到一句"请重试"，而"最近所有图片都没进来"
+  // 这种批量故障在 /problems 与管理台诊断页上完全看不出来，运维无从判断。
+  // （可选访问只为测试替身：真实节点的 problems 在构造时就必然存在。）
+  node.problems?.report(`inbound/${kind}`, new Error(reason), { notify: false, detail: 'media dropped' })
   const notice: Record<'image' | 'file' | 'video' | 'unsupported', string> = {
     image: '❌ 图片下载失败，请重试。',
     file: '❌ 文件下载失败，请重试。',
@@ -209,18 +324,23 @@ async function reportMediaFailure(
  * the file path to the active agent so its `read_image`/vision tool can decode
  * it (the default model is text-only and reads images by path, not inline).
  */
-async function handleInboundImage(node: WechatConversationNode, sender: string, message: InboundMessage): Promise<void> {
+async function handleInboundImage(
+  node: WechatConversationNode,
+  platform: PlatformId,
+  sender: string,
+  message: InboundMessage,
+): Promise<void> {
   const imageItem = extractImageItem(message)
   if (!imageItem) return
 
-  // The peer must be known BEFORE anything can fail: `sendTextToPeer` is a no-op
-  // without a peer id, so a failure notice issued earlier simply vanished —
-  // which is how "❌ 图片下载失败，请重试。" never reached anyone.
-  node.peerId = sender
+  // The peer must be known BEFORE anything can fail: `sendTextToPeer` resolves
+  // its destination from the node, and a failure notice issued earlier simply
+  // vanished — which is how "❌ 图片下载失败，请重试。" never reached anyone.
+  noteInbound(node, platform, sender)
 
   let downloaded: { bytes: Uint8Array; mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' } | null
   try {
-    downloaded = (await node.chat?.downloadImage(imageItem)) ?? null
+    downloaded = (await chatOn(node, platform)?.downloadImage(imageItem)) ?? null
   } catch (error) {
     node.ctx.logger?.warn?.(
       '[dsh-chatnode-wechat] image download failed from %s: %s',
@@ -234,13 +354,13 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
     return
   }
 
-  const dir = inboundMediaDir(node)
+  const dir = inboundMediaDir(node, platform)
   try {
     await mkdir(dir, { recursive: true })
   } catch {
     // directory may already exist; writeFile below still reports real failures
   }
-  const name = `wechat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${imageExt(downloaded.mediaType)}`
+  const name = `${platform}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${imageExt(downloaded.mediaType)}`
   const absPath = join(dir, name)
   try {
     await writeFile(absPath, downloaded.bytes)
@@ -311,7 +431,7 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
       node.ctx.logger?.warn?.('[dsh-chatnode-wechat] DeepSeek-OCR failed: %s', reason)
       node.problems.report('inbound/ocr', error, { notify: false, detail: `image=${absPath}` })
       try {
-        const log = join(inboundMediaDir(node), 'ocr-error.log')
+        const log = join(inboundMediaDir(node, platform), 'ocr-error.log')
         rotateIfLarge(log, OCR_LOG_LIMIT_BYTES)
         await appendFile(log, `${new Date().toISOString()} ${absPath}: ${reason}\n`)
       } catch {
@@ -331,7 +451,7 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
   const layoutNote = imageBlock
     ? ''
     : '\n\n【图片交付】当前模型未接收原生图片，以上为其磁盘路径（可用读图工具查看）。'
-  const text = wrapForModel(node, withHandoff(node, `[微信图片] ${absPath}\n${lead}${ocrSection}${layoutNote}`))
+  const text = wrapForModel(node, withHandoff(node, `[${platformLabel(platform)}图片] ${absPath}\n${lead}${ocrSection}${layoutNote}`), platform)
 
   const content: ContentBlock[] = imageBlock
     ? [{ type: 'text', text }, imageBlock]
@@ -341,8 +461,8 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
     content,
     source: { kind: 'user' },
   })
-  agent.followup(messageValue)
-  await node.chat?.sendTyping(sender, 1).catch(() => {})
+  submitTurn(node, platform, sender, () => agent.followup(messageValue))
+  await chatOn(node, platform)?.sendTyping(sender, 1).catch(() => {})
 }
 
 /**
@@ -351,7 +471,12 @@ async function handleInboundImage(node: WechatConversationNode, sender: string, 
  * agent. When STT is not configured, the note degrades to a short notice
  * instead of being silently dropped.
  */
-async function handleInboundVoice(node: WechatConversationNode, sender: string, message: InboundMessage): Promise<void> {
+async function handleInboundVoice(
+  node: WechatConversationNode,
+  platform: PlatformId,
+  sender: string,
+  message: InboundMessage,
+): Promise<void> {
   const items = Array.isArray(message.item_list) ? message.item_list : []
   const voice = items.find((item) => item?.type === ITEM_VOICE && item.voice_item?.media)
   if (!voice) return
@@ -362,11 +487,11 @@ async function handleInboundVoice(node: WechatConversationNode, sender: string, 
     return
   }
 
-  node.peerId = sender
+  noteInbound(node, platform, sender)
   await sendTextToPeer(node, '🎙 正在听…')
   let bytes: Uint8Array | null = null
   try {
-    bytes = (await node.chat?.downloadVoice(voice)) ?? null
+    bytes = (await chatOn(node, platform)?.downloadVoice(voice)) ?? null
   } catch (error) {
     node.ctx.logger?.warn?.('[dsh-chatnode-wechat] voice download failed: %s', error instanceof Error ? error.message : String(error))
   }
@@ -402,11 +527,11 @@ async function handleInboundVoice(node: WechatConversationNode, sender: string, 
     return
   }
   const messageValue = createUserMessage({
-    content: [{ type: 'text', text: wrapForModel(node, withHandoff(node, `[语音转写]\n${transcribed.trim()}`)) }],
+    content: [{ type: 'text', text: wrapForModel(node, withHandoff(node, `[语音转写]\n${transcribed.trim()}`), platform) }],
     source: { kind: 'user' },
   })
-  agent.followup(messageValue)
-  await node.chat?.sendTyping(sender, 1).catch(() => {})
+  submitTurn(node, platform, sender, () => agent.followup(messageValue))
+  await chatOn(node, platform)?.sendTyping(sender, 1).catch(() => {})
 }
 
 /**
@@ -418,13 +543,14 @@ async function handleInboundVoice(node: WechatConversationNode, sender: string, 
  */
 async function handleInboundFile(
   node: WechatConversationNode,
+  platform: PlatformId,
   sender: string,
   message: InboundMessage,
   kind: 'file' | 'video',
 ): Promise<void> {
-  // Set the peer FIRST: every failure below reports through sendTextToPeer,
-  // which is a no-op when no peer is known.
-  node.peerId = sender
+  // Record the source FIRST: every failure below reports through sendTextToPeer,
+  // which has no destination until the node knows who spoke.
+  noteInbound(node, platform, sender)
   const found = extractAttachment(message)
   if (!found) {
     // Called with no usable payload (an item whose media block is missing both
@@ -436,7 +562,7 @@ async function handleInboundFile(
 
   let downloaded: { bytes: Uint8Array; fileName?: string } | null
   try {
-    downloaded = (await node.chat?.downloadAttachment(found.item)) ?? null
+    downloaded = (await chatOn(node, platform)?.downloadAttachment(found.item)) ?? null
   } catch (error) {
     node.ctx.logger?.warn?.(
       '[dsh-chatnode-wechat] attachment download failed: %s',
@@ -450,7 +576,7 @@ async function handleInboundFile(
     return
   }
 
-  const dir = inboundMediaDir(node)
+  const dir = inboundMediaDir(node, platform)
   try {
     await mkdir(dir, { recursive: true })
   } catch {
@@ -467,7 +593,7 @@ async function handleInboundFile(
     if (dot > 0 && base.length - dot <= 10) ext = base.slice(dot)
   }
   if (!ext) ext = kind === 'video' ? '.mp4' : '.bin'
-  const name = `wechat-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`
+  const name = `${platform}-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`
   const absPath = join(dir, name)
   try {
     await writeFile(absPath, downloaded.bytes)
@@ -486,31 +612,60 @@ async function handleInboundFile(
     await sendTextToPeer(node, '💤 没有活动会话。发送 /new <prompt> 开始一个新会话，或 /sessions 查看已有会话。')
     return
   }
-  const label = kind === 'video' ? '[微信视频]' : '[微信文件]'
+  const label = kind === 'video' ? `[${platformLabel(platform)}视频]` : `[${platformLabel(platform)}文件]`
   const nameNote = wireName ? `（${wireName}）` : ''
   const messageValue = createUserMessage({
-    content: [{ type: 'text', text: wrapForModel(node, withHandoff(node, `${label} ${absPath}${nameNote}`)) }],
+    content: [{ type: 'text', text: wrapForModel(node, withHandoff(node, `${label} ${absPath}${nameNote}`), platform) }],
     source: { kind: 'user' },
   })
-  agent.followup(messageValue)
-  await node.chat?.sendTyping(sender, 1).catch(() => {})
+  submitTurn(node, platform, sender, () => agent.followup(messageValue))
+  await chatOn(node, platform)?.sendTyping(sender, 1).catch(() => {})
 }
 
-/** Handle one inbound iLink message. */
-export async function handleInbound(node: WechatConversationNode, message: InboundMessage): Promise<void> {
+/**
+ * Handle one inbound message.
+ *
+ * `platform` is the channel it arrived on. A profile may mount both platforms and
+ * passes each message's own id, so this one function decides everything
+ * downstream: which allowlist to check, which fence to use, which gateway to
+ * download from, and which platform the answer goes back to. It defaults to the
+ * node's own platform, which is what a single-platform profile (and the older
+ * tests that call it directly) always meant.
+ */
+export async function handleInbound(
+  node: WechatConversationNode,
+  message: InboundMessage,
+  platform: PlatformId = node.platform,
+): Promise<void> {
+  const source: PlatformId = isPlatformId(platform) ? platform : 'wechat'
   const sender = String(message.from_user_id ?? '').trim()
   if (!sender) return
 
   // ---- allowlist gate: the security boundary ------------------------------
-  if (!node.isAllowed(sender)) {
+  if (!isAllowedOn(node, source, sender)) {
+    // 与 QQ 侧同一姿态（见 src/qq/index.ts 的白名单分支）：非白名单投递**必须留痕**。
+    // 这里曾经只写 ctx.logger，而本宿主的 logger 落不到任何能事后翻看的文件 —— 于是
+    // allowFrom 里只要有一个过期 id（QQ 的 user_openid 是 per-AppID 的，绑定前必然
+    // 过期一次），主人的每条消息都会被丢掉，台账却干干净净，从外面看与"网关死了"
+    // 完全同形，而且会把人引去查网关 —— 真正的问题在配置。
+    // 每个平台各有一份名单，所以要指出是哪一条渠道的名单挡了它。
+    const where = node.platforms.length > 1 ? `${source} 的名单（allowFromByPlatform.${source} 或 allowFrom）` : 'allowFrom'
+    node.problems.report('inbound/allowlist', new Error(
+      `忽略了一条非白名单消息：sender=${sender}。若这是你自己，把这个 id 加进 ${where} 即可。`,
+    ), { notify: false, detail: `platform=${source}` })
     node.ctx.logger?.info?.(
-      '[dsh-chatnode-wechat] ignoring message from non-allowlisted sender %s (never fed to the model)',
+      '[dsh-chatnode-wechat] ignoring non-allowlisted %s message from %s (never fed to the model)',
+      source,
       sender,
     )
     return
   }
-  if (isGroupMessage(message, node.gatewayAccountId)) {
-    node.ctx.logger?.info?.('[dsh-chatnode-wechat] ignoring group message from %s (MVP: no group support)', sender)
+  if (isGroupMessage(message, gatewayAccountOn(node, source))) {
+    node.ctx.logger?.info?.(
+      '[dsh-chatnode-wechat] ignoring %s group message from %s (MVP: no group support)',
+      source,
+      sender,
+    )
     return
   }
 
@@ -519,16 +674,16 @@ export async function handleInbound(node: WechatConversationNode, message: Inbou
     // No usable text: prefer STT on a downloadable voice note, then images,
     // then file/video attachments.
     if (hasDownloadableVoice(message)) {
-      await handleInboundVoice(node, sender, message)
+      await handleInboundVoice(node, source, sender, message)
       return
     }
     if (extractImageItem(message)) {
-      await handleInboundImage(node, sender, message)
+      await handleInboundImage(node, source, sender, message)
       return
     }
     const att = extractAttachment(message)
     if (att) {
-      await handleInboundFile(node, sender, message, att.kind)
+      await handleInboundFile(node, source, sender, message, att.kind)
       return
     }
     // Media-only message that yielded no usable payload: it carried items, but
@@ -540,9 +695,9 @@ export async function handleInbound(node: WechatConversationNode, message: Inbou
       .map((item) => item?.type)
       .filter((type): type is number => typeof type === 'number')
     if (itemTypes.length > 0) {
-      // The peer is not known yet on this branch (the text path sets it later),
-      // and sendTextToPeer is a no-op without one — set it before reporting.
-      node.peerId = sender
+      // Nothing before this point recorded who spoke, and the notice below has
+      // no destination without a peer — record it before reporting.
+      noteInbound(node, source, sender)
       await reportMediaFailure(node, 'unsupported', `类型 ${[...new Set(itemTypes)].join(', ')}`)
     } else {
       node.ctx.logger?.info?.('[dsh-chatnode-wechat] ignoring empty message from %s', sender)
@@ -550,7 +705,7 @@ export async function handleInbound(node: WechatConversationNode, message: Inbou
     return
   }
 
-  node.peerId = sender
+  noteInbound(node, source, sender)
 
   // ---- local command handling ---------------------------------------------
   if (await routeCommand(node, text)) return
@@ -571,9 +726,9 @@ export async function handleInbound(node: WechatConversationNode, message: Inbou
   }
 
   const messageValue = createUserMessage({
-    content: [{ type: 'text', text: wrapForModel(node, withHandoff(node, text)) }],
+    content: [{ type: 'text', text: wrapForModel(node, withHandoff(node, text), source) }],
     source: { kind: 'user' },
   })
-  agent.followup(messageValue)
-  await node.chat?.sendTyping(sender, 1).catch(() => {})
+  submitTurn(node, source, sender, () => agent.followup(messageValue))
+  await chatOn(node, source)?.sendTyping(sender, 1).catch(() => {})
 }

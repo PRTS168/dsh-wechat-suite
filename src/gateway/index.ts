@@ -83,13 +83,10 @@ export function capLongPollWindow(suggestedMs: number, configuredMs: number): nu
   return suggestedMs > 0 ? Math.min(suggestedMs, configuredMs) : configuredMs
 }
 
-export type GatewayStatus =
-  | 'idle'        // no credentials configured; not polling
-  | 'starting'    // poll loop starting
-  | 'connected'   // poll loop active
-  | 'reconnecting'// transient failure, backing off
-  | 'paused'      // session expired; waiting out the pause window
-  | 'error'       // fatal (e.g. exclusive-lock 403); polling stopped
+// `GatewayStatus` lives in types.ts now: both platforms share one status axis,
+// and the node only relays the string.
+import type { GatewayStatus } from './types.ts'
+export type { GatewayStatus }
 
 /** Outcome of one outbound text delivery. */
 export interface SendResult {
@@ -265,6 +262,15 @@ export class WechatGateway extends Service {
   /** The bot account id. */
   get accountId(): string {
     return this.c.accountId
+  }
+
+  /**
+   * What this gateway can do. WeChat's iLink API sends images, files and voice
+   * bubbles, so all of it is available; there is no per-inbound reply cap (the
+   * rate limiter is time-based, not count-based).
+   */
+  get capabilities(): { media: boolean; voice: boolean } {
+    return { media: true, voice: true }
   }
 
   /** The resolved gateway base url. */

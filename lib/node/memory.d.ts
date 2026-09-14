@@ -20,6 +20,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { Session } from '@deepseek-ai/dsh-session';
+import { type PlatformId } from '../platform/index.ts';
 /** Directory (under `$DSH_HOME`) holding the memory file and its bookkeeping. */
 export declare const MEMORY_DIR = "wechat-memory";
 /** The facts file itself. Markdown, hand-editable, capped. */
@@ -30,7 +31,7 @@ export declare const MEMORY_LOG = "memory-log.md";
 export declare const MEMORY_LOG_LIMIT_BYTES: number;
 /** Scheduler bookkeeping (last run, last seen sequence). */
 export declare const MEMORY_STATE = "state.json";
-/** Hard cap; past this, new facts are skipped until something is merged away. */
+/** Hard cap; past this, new facts are skipped until something is retired away. */
 export declare const MEMORY_LIMIT_CHARS = 4000;
 /** How many sessions keep their injection bookkeeping before the oldest is dropped. */
 export declare const MAX_TRACKED_SESSIONS = 64;
@@ -67,8 +68,8 @@ export interface MemoryApplyResult {
     expired: number;
     skipped: string[];
 }
-/** Default location of the facts file. */
-export declare function defaultMemoryFile(): string;
+/** Default location of the facts file — one memory namespace per platform. */
+export declare function defaultMemoryFile(platform?: PlatformId): string;
 /** Read the facts file; empty string when missing or unreadable. */
 export declare function readMemory(file: string): string;
 /**
@@ -291,4 +292,17 @@ export declare class MemoryService {
     /** How many facts are on file (used by `/context`). */
     factCount(): number;
 }
+/**
+ * One model call outside a turn, assembled to text. Retries once on failure.
+ *
+ * Extracted from {@link MemoryService} so every caller talks to the current
+ * model the **same** way instead of inventing a second one: same `llm.stream`
+ * shape, same plugin-sourced user message, same one-retry-then-throw policy.
+ * `sessionId` is attribution only — a session that is no longer live is a
+ * legitimate value.
+ */
+export declare function askSessionModel(ctx: Context, route: {
+    provider: string;
+    model: string;
+}, sessionId: string, prompt: string, maxTokens?: number): Promise<string>;
 //# sourceMappingURL=memory.d.ts.map

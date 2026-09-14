@@ -18,14 +18,21 @@ import {
   readTurnCount,
 } from '../src/node/context-report.ts'
 
-/** The real shape the host writes for one WeChat session (values sampled live). */
+/**
+ * The shape the host writes for one session.
+ *
+ * A fixed fixture: the tests below assert these exact numbers, so they read as
+ * "this row in, that report out" rather than a snapshot of any live profile.
+ * (`seq` is synthetic; the rest are ordinary round numbers a context-pressure
+ * row would carry.)
+ */
 const LIVE_ROW = {
   version: 5,
   record: {
     rows: {
-      contextPressure: { ver: 4, seq: 2322, val: { contextWindow: 1000000, pressureTokens: 15947, surfaceTokens: 3547, sampledSurfaceTokens: 3386 } },
-      contextBreakdown: { ver: 2, seq: 2322, val: { systemTokens: 2055, toolsTokens: 9262, messageTokens: 3547 } },
-      sessionStats: { ver: 1, seq: 2322, val: { turns: 1, steps: 6 } },
+      contextPressure: { ver: 4, seq: 1000, val: { contextWindow: 1000000, pressureTokens: 15947, surfaceTokens: 3547, sampledSurfaceTokens: 3386 } },
+      contextBreakdown: { ver: 2, seq: 1000, val: { systemTokens: 2055, toolsTokens: 9262, messageTokens: 3547 } },
+      sessionStats: { ver: 1, seq: 1000, val: { turns: 1, steps: 6 } },
     },
   },
 }

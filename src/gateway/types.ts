@@ -157,6 +157,21 @@ export interface InboundMessage {
   [key: string]: unknown
 }
 
+/**
+ * 网关连接状态。
+ *
+ * 两个平台共用同一条状态轴：节点只把它当字符串转述给 `/status` 与台账，平台各说各的
+ * 只会让 `/status` 需要分支。定义放在这一层（而不是某个平台里），正因为它属于平台之间的
+ * 契约。
+ */
+export type GatewayStatus =
+  | 'idle'        // 没有凭据，不轮询
+  | 'starting'    // 正在起轮询 / 连接
+  | 'connected'   // 已连接
+  | 'reconnecting'// 瞬时失败，退避中
+  | 'paused'      // 会话过期，等待恢复窗口
+  | 'error'       // 致命（如 iLink 独占锁 403），已停止
+
 /** getUpdates response envelope. */
 export interface GetUpdatesResponse {
   ret?: number

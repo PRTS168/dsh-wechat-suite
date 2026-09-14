@@ -35,7 +35,8 @@ export declare const EMPTY_POLL_PAUSE_MS = 200;
  * suggests. A non-positive suggestion means "no suggestion": keep the current one.
  */
 export declare function capLongPollWindow(suggestedMs: number, configuredMs: number): number;
-export type GatewayStatus = 'idle' | 'starting' | 'connected' | 'reconnecting' | 'paused' | 'error';
+import type { GatewayStatus } from './types.ts';
+export type { GatewayStatus };
 /** Outcome of one outbound text delivery. */
 export interface SendResult {
     success: boolean;
@@ -226,6 +227,15 @@ export declare class WechatGateway extends Service {
     get configured(): boolean;
     /** The bot account id. */
     get accountId(): string;
+    /**
+     * What this gateway can do. WeChat's iLink API sends images, files and voice
+     * bubbles, so all of it is available; there is no per-inbound reply cap (the
+     * rate limiter is time-based, not count-based).
+     */
+    get capabilities(): {
+        media: boolean;
+        voice: boolean;
+    };
     /** The resolved gateway base url. */
     get baseUrl(): string;
     /** Replace credentials at runtime and restart the poll loop. */

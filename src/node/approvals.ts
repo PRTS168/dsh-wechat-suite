@@ -28,8 +28,9 @@ import { join } from 'node:path'
 
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { WechatConversationNode } from './core.ts'
-import { sendTextToPeer } from './outbound.ts'
+import { resolveOutboundTarget, sendTextToPeer } from './outbound.ts'
 import { sessionBadge } from './labels.ts'
+import { platformNamespace, type PlatformId } from '../platform/index.ts'
 
 /** Rename a log aside once it passes the cap, keeping one previous file. */
 function rotateIfLarge(path: string, limit: number): void {
@@ -50,16 +51,27 @@ export interface PendingApproval {
   timer: ReturnType<typeof setTimeout>
 }
 
-/** `$DSH_HOME/wechat-approval.log` — one line per approval decision. */
+/** `$DSH_HOME/wechat-approval.log` — one line per approval decision (WeChat name). */
 export const APPROVAL_TRACE_FILE = 'wechat-approval.log'
 /** Rotate the trace past this size, keeping one previous file. */
 export const TRACE_LIMIT_BYTES = 256 * 1024
 
+/**
+ * Diagnostics path for one platform.
+ *
+ * The env override stays a single explicit path (tests point it at a scratch
+ * file), but the default is namespaced: two profiles share a `$DSH_HOME`, and a
+ * shared trace means an approval problem cannot even be attributed to a platform
+ * while debugging.
+ */
+function approvalTracePath(platform: PlatformId): string {
+  return join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), `${platformNamespace(platform)}approval.log`)
+}
+
 /** Append one diagnostics line; never affects the decision. */
-function trace(line: string): void {
+function traceDecision(node: WechatConversationNode, line: string): void {
   try {
-    const path = process.env.WECHAT_APPROVAL_TRACE
-      ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), APPROVAL_TRACE_FILE)
+    const path = process.env.WECHAT_APPROVAL_TRACE ?? approvalTracePath(node.platform)
     // One line per decision, forever, is how a diagnostics file becomes a
     // multi-megabyte one; rotate at the same cap the problem ledger uses.
     rotateIfLarge(path, TRACE_LIMIT_BYTES)
@@ -83,17 +95,21 @@ export function attachApprovalBridge(node: WechatConversationNode): () => void {
     const sessionId = session?.id === undefined ? '' : String(session.id)
     const active = node.activeSessionId === null ? '(null)' : String(node.activeSessionId)
     const owns = node.isWechatSessionId(sessionId)
-    trace(`request tool=${req.toolName ?? '?'} session=${sessionId || '(none)'} active=${active} owns=${owns} peer=${node.peerId ?? '(none)'}`)
+    // Where this request would be asked: the turn's own target (see
+    // core.currentTarget). A two-platform profile has two channels, and the
+    // prompt has to appear on the one whose turn is waiting — the other peer
+    // never saw the request at all. Resolved before the trace so the trace
+    // names that channel.
+    const target = resolveOutboundTarget(node)
+    const peer = target?.peerId
+    traceDecision(node, `request tool=${req.toolName ?? '?'} session=${sessionId || '(none)'} active=${active} owns=${owns} target=${target ? `${target.platform}:${peer}` : '(none)'}`)
 
     if (!owns) {
-      trace('-> delegated: not a bridge session')
+      traceDecision(node, '-> delegated: not a bridge session')
       return next()
     }
-    // The peer is normally known from the inbound message that started the turn;
-    // the allowlist is the bridge's own definition of who may be asked.
-    const peer = node.peerId ?? node.config.allowFrom?.[0]
-    if (!peer) {
-      trace('-> delegated: no peer to ask')
+    if (!target || !peer) {
+      traceDecision(node, '-> delegated: no peer to ask')
       return next()
     }
 
@@ -104,7 +120,7 @@ export function attachApprovalBridge(node: WechatConversationNode): () => void {
         try {
           return sessionBadge(node, session as never)
         } catch (error) {
-          trace(`label failed: ${reason(error)}`)
+          traceDecision(node, `label failed: ${reason(error)}`)
           return `【${sessionId}】`
         }
       })()
@@ -119,10 +135,10 @@ export function attachApprovalBridge(node: WechatConversationNode): () => void {
       // Ask FIRST and await the send: the user cannot answer what they cannot
       // see. The trace must not claim "asked" when the prompt never left — that
       // would make a timed-out "已拒绝" look like the owner ignored a question
-      // he was never shown.
-      node.peerId = peer
+      // he was never shown. `sendTextToPeer` resolves the same target, so the
+      // prompt and the decision land on the channel that is waiting.
       const asked = await sendTextToPeer(node, prompt)
-      trace(asked ? `-> asked #${number} via ${peer}` : `-> prompt send FAILED for #${number} (will time out)`)
+      traceDecision(node, asked ? `-> asked #${number} via ${target.platform}:${peer}` : `-> prompt send FAILED for #${number} (will time out)`)
       if (!asked) {
         node.problems.report('approvals/prompt', new Error('审批提示没能发出去，主人看不到这条请求'), {
           detail: `#${number} tool=${req.toolName}`,
@@ -139,12 +155,12 @@ export function attachApprovalBridge(node: WechatConversationNode): () => void {
       })
 
       const label = outcome === 'allowed-once' ? '✅ 已同意' : outcome === 'rejected' ? '❌ 已拒绝' : `⏳ ${outcome}`
-      trace(`-> outcome ${outcome} (#${number})`)
+      traceDecision(node, `-> outcome ${outcome} (#${number})`)
       void sendTextToPeer(node, `${label} ${badge}（#${number}）`)
       return outcome
     } catch (error) {
       const why = reason(error)
-      trace(`-> ERROR ${why}`)
+      traceDecision(node, `-> ERROR ${why}`)
       void sendTextToPeer(node, `❌ 审批桥内部错误：${why}`)
       return next()
     }

@@ -30,7 +30,7 @@ export interface PendingApproval {
     resolve: (outcome: ApprovalOutcome) => void;
     timer: ReturnType<typeof setTimeout>;
 }
-/** `$DSH_HOME/wechat-approval.log` — one line per approval decision. */
+/** `$DSH_HOME/wechat-approval.log` — one line per approval decision (WeChat name). */
 export declare const APPROVAL_TRACE_FILE = "wechat-approval.log";
 /** Rotate the trace past this size, keeping one previous file. */
 export declare const TRACE_LIMIT_BYTES: number;

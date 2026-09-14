@@ -13,12 +13,13 @@ import { sanitizeAssistantText, scheduleDigests, FIRST_DIGEST_DELAY_MS } from '.
 import { MEMORY_CLOSE, MEMORY_OPEN } from '../src/node/memory.ts'
 
 test('an echoed user turn is cut, and the real answer survives', () => {
-  // Shape of a real incident (session seq 1879, 2026-09-13): the model answered,
-  // then wrote the owner's NEXT message — fences included — and answered that
-  // too. Addresses are placeholders; the structure is what matters.
-  const real = '记下了，主邮箱 owner@example.com，副邮箱 alt@example.com\n'
+  // Shape of an incident seen in production: the model answered, then wrote the
+  // owner's NEXT message — fences included — and answered that too. The wording,
+  // addresses, session sequence and timestamp are synthetic; the structure is
+  // what the guard is about.
+  const real = '记下了，主邮箱 primary@example.com，副邮箱 secondary@example.com\n'
     + '\n是要我给你发东西吗？还是先放着备用\n\n'
-    + 'user<<<微信用户消息>>>\n先放着，以后有用\n<<<微信用户消息结束｜发送于 2026-09-13 14:15>>>\n\n好'
+    + 'user<<<微信用户消息>>>\n先放着，以后有用\n<<<微信用户消息结束｜发送于 2026-01-01 09:00>>>\n\n好'
   const { text, echoed } = sanitizeAssistantText(real)
   assert.equal(echoed, true)
   assert.match(text, /记下了，主邮箱/)

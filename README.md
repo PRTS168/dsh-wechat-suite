@@ -71,23 +71,27 @@ health report names what is missing.
 
 ---
 
-## ✨ v4.1 highlights
+## ✨ v5.0 highlights
 
-- **The gateway transport self-heals** — after a connection-level failure the next request takes a
-  **brand-new connection** (no pool, no global proxy dispatcher), so recovery no longer needs a
-  process restart. It targets a failure mode where every outbound request fails for minutes on end
-  and only a restart clears it (machines behind a system proxy or a TUN interface hit it most).
-- **Long-poll window capped** — the server's suggested window can no longer override
-  `longPollTimeoutMs` without limit; the smaller of the two wins and both numbers are logged. If the
-  server only answers when a window expires, that window *is* the delay between pressing send and the
-  bridge seeing the message.
-- **No more silent long turns** — the first progress line lands in about **20 seconds** (it used to
-  wait a full `digestIntervalSec`, 300s by default), which is the difference between "slow" and "frozen".
-- **Upgrading from v0.3.x?** Light control **no longer ships a built-in address**; add
-  `esp32BaseUrl` to the profile (see the [release notes](releases/v4.1-release-notes.md)).
+- **QQ is a second platform, not a fork** — the bridge now speaks both WeChat and QQ. The platform
+  seam (`src/platform/index.ts`) is the only place that knows which channel a session belongs to, and
+  each platform keeps **its own** allowlist, memory file, problem ledger and session namespace. Two
+  conversations on two channels never share a context, and nothing is mirrored between them.
+- **One console, both platforms** — the admin console serves several profiles under one URL
+  (`--profiles wechat,qq`) with a platform switcher. Every path the console looks at is derived from
+  the **platform id**, so a profile named `web` that serves WeChat finds `wechat-memory/MEMORY.md`
+  and `wechat-*` sessions instead of rendering empty pages over data that is right there.
+- **The console can no longer be walked out of its directory** — `?platform=` used to reach the path
+  builder unchecked, so a crafted name read and wrote `cordis.patch.yml` files outside `profiles/`.
+  It is now validated at one choke point, with regression tests that assert the refusal.
+- **Front-end edits land immediately** — `admin/index.html` is read per request, so a change shows up
+  on refresh instead of hiding until the next console restart.
+- **A save can no longer break a profile** — YAML scalars are quoted by field *kind*: a QQ AppID like
+  `"1234567890"` stays a string instead of being written as a number and rejected by the schema on the
+  next load.
 
-The previous release's headline work (context management, long-term memory, admin console, problem
-ledger) is in the [v4.0 release notes](releases/v4.0-release-notes.md). Every change:
+The previous release's headline work (gateway transport self-healing, long-poll window cap, earlier
+long-turn progress) is in the [v4.1 release notes](releases/v4.1-release-notes.md). Every change:
 [CHANGELOG.md](CHANGELOG.md) · older: [releases/](releases/)
 
 ---
@@ -170,14 +174,14 @@ retired-facts ledger:
 
 ```markdown
 ## 关于主人
-- 主人有两个邮箱：主 owner@example.com、副 alt@example.com（2026-09-13）
+- 主人有两个邮箱：主 primary@example.com、副 secondary@example.com
 
 ## 偏好与习惯
 ## 常用设备与环境
 ## 待办与承诺
 ## 重要决定
 ## 已过期
-- 主人在 Example City（作废 2026-09-13）
+- 主人在 Example City（已作废）
 ```
 
 - **How facts get in**: ① the model calls `remember_fact` when the owner says "记一下…", which
@@ -489,6 +493,28 @@ pnpm setup          # interactive config wizard
 ## 📚 Version history
 
 <details open>
+<summary><b>v5.0</b> — QQ as a second platform · one console for both · console path guard</summary>
+
+- **Two platforms, one bridge**: WeChat and QQ, each with its own allowlist, memory file, problem
+  ledger and session namespace. A per-platform seam decides which channel a turn belongs to, so an
+  answer always goes back to the channel it came from.
+- **Multi-platform admin console**: serve several profiles under one URL and switch between them;
+  every file the console reads is keyed by platform id, so sessions, memory and the problem ledger
+  actually show up instead of rendering empty.
+- **Security**: the console's `?platform=` value is validated before it can become a path — unknown or
+  traversing names are refused with a 4xx, and the profile list is validated at startup. Both are
+  covered by regression tests.
+- **Fixed**: string-typed numeric values (a QQ AppID) are no longer written as bare YAML numbers,
+  which used to make a saved profile fail to load on the next start.
+- **Fixed**: the problem ledger and the console's command queue are addressed by platform id rather
+  than by profile name.
+- 294 offline unit tests.
+
+See [`releases/v5.0-release-notes.md`](releases/v5.0-release-notes.md).
+
+</details>
+
+<details>
 <summary><b>v4.1</b> — gateway transport self-heals · long-poll window capped · earlier progress</summary>
 
 - **Transport self-heals**: after a connection-level failure the next request takes a brand-new

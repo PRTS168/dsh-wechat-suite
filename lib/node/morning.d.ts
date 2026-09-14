@@ -80,7 +80,7 @@ export declare class MorningService {
     constructor(ctx: Context, opts: {
         file?: string;
         targets: () => string[];
-        onProblem?: (kind: string, error: unknown) => void;
+        onProblem?: (kind: string, error: unknown, detail?: string) => void;
         platform?: PlatformId;
     });
     /**
